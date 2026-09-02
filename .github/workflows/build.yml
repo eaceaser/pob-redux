@@ -1,0 +1,69 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis
+          - os: ubuntu-22.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned PoB commit
+        id: pin
+        shell: bash
+        run: echo "commit=$(grep '^commit' pob-sync.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PathOfBuilding-PoE2
+        uses: actions/checkout@v4
+        with:
+          repository: PathOfBuildingCommunity/PathOfBuilding-PoE2
+          ref: ${{ steps.pin.outputs.commit }}
+          path: upstream/PathOfBuilding-PoE2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Vendor Path of Building
+        run: cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets
+
+      - name: Build installers
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pob-redux-${{ runner.os }}
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

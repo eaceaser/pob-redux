@@ -1,0 +1,31 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node
+node_modules
+/dist
+.env
+.env.*
+!.env.example
+vite.config.*.timestamp-*
+
+# Tauri
+/src-tauri/gen/schemas
+
+# Vendored Path of Building program + data (regenerate with `pnpm sync`)
+/src-tauri/resources/pob/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea
+*.swp
+*.log
+
+# Local working files, not part of the public repo
+/docs
+/scripts/*.ps1
+CLAUDE.md
+.claude/
+.mcp.json

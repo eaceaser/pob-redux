@@ -1,0 +1,18 @@
+[package]
+name = "pob-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Vendors the Path of Building (PoE2) Lua program and game data into the app's resources."
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+walkdir.workspace = true
+toml = "0.8"
+zstd = "0.13"
+image_dds = { version = "0.7", default-features = false, features = ["ddsfile", "image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+webp = { version = "0.3", default-features = false }

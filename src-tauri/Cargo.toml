@@ -1,0 +1,35 @@
+[package]
+name = "pob-redux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Path of Building for Path of Exile 2, rebuilt: Rust + Tauri shell around PoB's real calculation engine."
+authors = ["Judd <ipajudd@gmail.com>"]
+
+[lib]
+name = "pob_redux_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# `tauri dev` runs with --no-default-features; plain cargo release builds embed the frontend
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pob-engine = { path = "../crates/pob-engine", default-features = false }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true
+walkdir.workspace = true
+rmcp = { version = "3.2", default-features = false, features = ["server", "transport-streamable-http-server"] }
+axum = "0.8"
+tokio = { version = "1", features = ["net", "rt", "sync"] }

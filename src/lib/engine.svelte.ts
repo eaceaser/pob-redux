@@ -1,0 +1,806 @@
+import { invoke } from "@tauri-apps/api/core";
+import { untrack } from "svelte";
+
+/** Mirrors pob_engine::EngineStatus. */
+export interface EngineStatus {
+  state: "booting" | "ready" | "error" | "stopped";
+  message: string | null;
+  boot_ms: number | null;
+  pob_root: string;
+  user_dir: string;
+}
+
+export interface CallResult<T> {
+  result: T;
+  elapsed_ms: number;
+}
+
+export class EngineError extends Error {
+  constructor(
+    public method: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "EngineError";
+  }
+}
+
+/** Telemetry for the status bar: last call, its cost, and running count. */
+export const telemetry = $state({
+  lastMethod: "",
+  lastMs: 0,
+  calls: 0,
+  inflight: 0,
+});
+
+export async function call<T = unknown>(method: string, params?: unknown): Promise<T> {
+  // untrack: read-modify-writes of telemetry must never become dependencies of
+  // whatever effect happens to be calling the engine (infinite update loops).
+  untrack(() => telemetry.inflight++);
+  try {
+    const r = await invoke<CallResult<T>>("engine_call", { method, params: params ?? null });
+    untrack(() => {
+      telemetry.lastMethod = method;
+      telemetry.lastMs = r.elapsed_ms;
+      telemetry.calls++;
+    });
+    return r.result;
+  } catch (e) {
+    throw new EngineError(method, typeof e === "string" ? e : String(e));
+  } finally {
+    untrack(() => telemetry.inflight--);
+  }
+}
+
+export function status(): Promise<EngineStatus> {
+  return invoke<EngineStatus>("engine_status");
+}
+
+export interface AppPaths {
+  pob_root: string;
+  user_dir: string;
+  builds_dir: string;
+  sync: {
+    upstream_commit: string;
+    upstream_commit_date: string;
+    upstream_version: string;
+    pinned_commit: string | null;
+    synced_at_unix: number;
+    files: number;
+    bytes: number;
+  } | null;
+  open_on_start: string | null;
+  initial_view: string | null;
+}
+
+export function appPaths(): Promise<AppPaths> {
+  return invoke<AppPaths>("app_paths");
+}
+
+export interface BuildEntry {
+  path: string;
+  name: string;
+  folder: string;
+  class_name: string | null;
+  ascend_class_name: string | null;
+  level: number | null;
+  modified: number;
+}
+
+export function listBuilds(): Promise<BuildEntry[]> {
+  return invoke<BuildEntry[]>("list_builds");
+}
+
+export function readTreeJson(version: string): Promise<string> {
+  return invoke<string>("read_tree_json", { version });
+}
+
+export function readTextFile(path: string): Promise<string> {
+  return invoke<string>("read_text_file", { path });
+}
+
+export function writeTextFile(path: string, contents: string): Promise<void> {
+  return invoke<void>("write_text_file", { path, contents });
+}
+
+export interface PoolStatus {
+  size: number;
+  spawned: number;
+  ready: number;
+}
+
+export function poolStatus(): Promise<PoolStatus> {
+  return invoke<PoolStatus>("pool_status");
+}
+
+/** Push the current build to the worker pool in the background. */
+export function poolPresync(): Promise<void> {
+  return invoke<void>("pool_presync");
+}
+
+/** Node power scored across the worker pool (falls back to PoB's sequential builder). */
+export function powerScanParallel(stat: string | null, maxDepth: number | null): Promise<{ result: TreePower; elapsed_ms: number }> {
+  return invoke<{ result: TreePower; elapsed_ms: number }>("power_scan_parallel", { stat, maxDepth });
+}
+
+/** Warm the gem DPS cache for a group across the pool; best effort. */
+export function gemDpsParallel(groupIndex: number): Promise<{ result: unknown; elapsed_ms: number }> {
+  return invoke<{ result: unknown; elapsed_ms: number }>("gem_dps_parallel", { groupIndex });
+}
+
+export function fetchBuildCode(url: string): Promise<{ site: string; code: string }> {
+  return invoke<{ site: string; code: string }>("fetch_build_code", { url });
+}
+
+export function renameBuild(path: string, newName: string): Promise<string> {
+  return invoke<string>("rename_build", { path, newName });
+}
+
+export function moveBuild(path: string, folder: string): Promise<string> {
+  return invoke<string>("move_build", { path, folder });
+}
+
+export function deleteBuild(path: string): Promise<void> {
+  return invoke<void>("delete_build", { path });
+}
+
+export function createBuildFolder(folder: string): Promise<void> {
+  return invoke<void>("create_build_folder", { folder });
+}
+
+export function listBuildFolders(): Promise<string[]> {
+  return invoke<string[]>("list_build_folders");
+}
+
+export interface GameBuildList {
+  dir: string;
+  exists: boolean;
+  builds: { path: string; name: string; author: string | null; modified: number }[];
+}
+
+export function listGameBuilds(dir?: string): Promise<GameBuildList> {
+  return invoke<GameBuildList>("list_game_builds", { dir: dir || null });
+}
+
+// ---------------------------------------------------------------------------
+// Typed bridge methods (see crates/pob-engine/lua/bridge.lua)
+// ---------------------------------------------------------------------------
+
+export interface Points {
+  used: number;
+  max: number;
+  ascUsed: number;
+  ascMax: number;
+  weaponSet1Used: number;
+  weaponSet2Used: number;
+  weaponSetMax: number;
+  socketsUsed: number;
+  requiredLevelText: string | null;
+  act: string | null;
+}
+
+export interface BuildInfo {
+  name: string;
+  file: string | null;
+  level: number;
+  levelAuto: boolean;
+  classId: number;
+  className: string;
+  ascendClassId: number;
+  ascendClassName: string | null;
+  mainSocketGroup: number;
+  treeVersion: string;
+  rev: number;
+  unsaved: boolean;
+  title: string;
+  points: Points;
+  targetVersion: string;
+}
+
+export interface SidebarRow {
+  h: number;
+  lhs: string | null;
+  rhs: string | null;
+  breakdown: string | null;
+  hasBreakdown: boolean;
+  align: string | null;
+}
+
+export type BreakdownSection =
+  | { type: "text"; size: number; lines: string[] }
+  | { type: "table"; label: string | null; footer: string | null; cols: { label: string; key: string; right: boolean }[]; rows: Record<string, string>[] }
+  | { type: "radius"; radius: number };
+
+export interface CalcCell {
+  index: number;
+  text: string;
+  hasBreakdown: boolean;
+}
+
+export interface CalcRow {
+  index: number;
+  label: string | null;
+  cells: CalcCell[];
+}
+
+export interface CalcSubSection {
+  index: number;
+  label: string;
+  extra: string | null;
+  rows: CalcRow[];
+}
+
+export interface CalcSection {
+  index: number;
+  group: number | null;
+  colour: string | null;
+  enabled: boolean;
+  subSections: CalcSubSection[];
+}
+
+export interface Sidebar {
+  rows: SidebarRow[];
+  warnings: string[];
+  rev: number;
+}
+
+export interface SocketedJewel {
+  nodeId: number;
+  itemId: number;
+  name: string;
+  title: string | null;
+  baseName: string | null;
+  rarity: string | null;
+  radiusIndex: number | null;
+  radiusLabel: string | null;
+}
+
+export interface NodeOverride {
+  name: string | null;
+  icon: string | null;
+  stats: string[];
+  overlay: { alloc: string; path: string; unalloc: string } | null;
+}
+
+export interface TreeState {
+  treeVersion: string;
+  classId: number;
+  className: string;
+  ascendClassId: number;
+  ascendClassName: string | null;
+  allocatedNodes: number[];
+  allocatedNodeCount: number;
+  pointsUsed: number;
+  /** Nodes whose live content differs from tree.json (switched attributes, ascendancy variants). */
+  overrides: Record<string, NodeOverride>;
+  sockets: SocketedJewel[];
+  rev: number;
+}
+
+export interface TreeClickResult extends Partial<TreeState> {
+  needsConfirm?: "class_change";
+  needsAttribute?: boolean;
+  className?: string;
+  ascendClassName?: string | null;
+  id?: number;
+}
+
+export interface HoverInfo {
+  id: number;
+  allocated: boolean;
+  path: number[];
+  depends: number[];
+  cost?: number;
+}
+
+export interface SpecInfo {
+  index: number;
+  title: string;
+  className: string;
+  ascendClassName: string | null;
+  allocatedNodeCount: number;
+  treeVersion: string;
+  active: boolean;
+}
+
+export interface JewelRadius {
+  inner: number;
+  outer: number;
+  color: string;
+  label: string;
+}
+
+export interface PowerStat {
+  stat: string | null;
+  label: string;
+}
+
+export interface NodePower {
+  s: number | null;
+  o: number | null;
+  d: number | null;
+  p: number | null;
+  dist: number | null;
+}
+
+export interface PowerReportRow {
+  id: number;
+  name: string;
+  power: number;
+  powerStr: string;
+  pathPower: number;
+  pathPowerStr: string;
+  allocated: boolean;
+  pathDist: number | null;
+  type: string | null;
+}
+
+export interface TreePower {
+  stat: string | null;
+  label: string;
+  nodes: Record<string, NodePower>;
+  max: { singleStat: number; offence: number; defence: number; offencePerPoint: number; defencePerPoint: number };
+  report: PowerReportRow[];
+  ms: number;
+  rev: number;
+}
+
+export interface ClassInfo {
+  id: number;
+  name: string;
+  ascendancies: { id: number; name: string }[];
+}
+
+export interface GemInfo {
+  index: number;
+  nameSpec: string | null;
+  name: string | null;
+  gemId: string | null;
+  skillId: string | null;
+  level: number | null;
+  maxLevel: number;
+  quality: number | null;
+  enabled: boolean;
+  support: boolean;
+  /** PoB colour escape for the gem name (Str/Dex/Int). */
+  color: string | null;
+  count: number | null;
+  errMsg: string | null;
+}
+
+/** One skill granted by a socket group; selector fields only on the chosen one. */
+export interface SkillEntry {
+  index: number;
+  name: string;
+  parts?: { name: string; stages: boolean }[];
+  part?: number;
+  statSets?: string[];
+  statSet?: number;
+  hasStages?: boolean;
+  stageCount?: number;
+  hasMines?: boolean;
+  mineCount?: number | null;
+  minions?: { id: string; name: string }[];
+  minion?: string | null;
+  minionSkills?: string[];
+  minionSkill?: number;
+}
+
+export interface SocketGroup {
+  index: number;
+  label: string | null;
+  displayLabel: string | null;
+  enabled: boolean;
+  includeInFullDPS: boolean;
+  slot: string | null;
+  source: string | null;
+  mainActiveSkill: number | null;
+  gems: GemInfo[];
+  skills: SkillEntry[];
+  isMainSkill: boolean;
+}
+
+export interface SkillSetInfo {
+  id: number;
+  title: string;
+  active: boolean;
+}
+
+export interface Skills {
+  socketGroups: SocketGroup[];
+  mainSocketGroup: number | null;
+  skillSets: SkillSetInfo[];
+  activeSkillSet: number | null;
+}
+
+export interface GemSearchRow {
+  gemId: string;
+  name: string;
+  support: boolean;
+  valid: boolean;
+  color: string;
+  tags: string | null;
+  family: string | null;
+  gemType: string | null;
+  maxLevel: number;
+  tier: number | null;
+  legacy: boolean;
+  dps?: number;
+  dpsDiff?: number;
+}
+
+export interface SkillsOptions {
+  defaultGemLevel: string;
+  defaultGemQuality: number;
+  sortGemsByDPSField: string;
+}
+
+export interface TooltipLine {
+  size: number;
+  text: string;
+  center: boolean;
+  sep: boolean;
+}
+
+export interface SlotInfo {
+  slot: string;
+  label: string | null;
+  itemId: number;
+  itemName: string | null;
+  itemRarity: string | null;
+  nodeId: number | null;
+  weaponSet: number | null;
+  shown: boolean;
+  inactive: boolean;
+}
+
+export interface SlotsResponse {
+  slots: SlotInfo[];
+  activeItemSet: number;
+  useSecondWeaponSet: boolean;
+}
+
+export interface ItemInfo {
+  id: number;
+  name: string;
+  title: string | null;
+  baseName: string | null;
+  type: string | null;
+  rarity: string | null;
+  raw: string;
+  corrupted: boolean;
+  quality: number | null;
+  itemLevel: number | null;
+  primarySlot: string | null;
+  equippedSlot: string | null;
+}
+
+export interface ItemDbRow {
+  name: string;
+  rarity: string | null;
+  type: string;
+  baseName: string | null;
+  slot: string | null;
+  league: string | null;
+  variants: number;
+  upgrade: boolean;
+}
+
+export interface ItemSetInfo {
+  id: number;
+  title: string;
+  active: boolean;
+}
+
+export interface CraftBase {
+  name: string;
+  label: string | null;
+  subType: string | null;
+}
+
+export interface AffixOption {
+  modId: string;
+  affix: string | null;
+  label: string;
+  level: number | null;
+  haveRange: boolean;
+}
+
+export interface AffixSlot {
+  index: number;
+  modId: string;
+  range: number;
+  label: string | null;
+  affix: string | null;
+  options: AffixOption[];
+}
+
+export interface ItemAffixes {
+  crafted: boolean;
+  affixLimit?: number;
+  prefixes: AffixSlot[];
+  suffixes: AffixSlot[];
+}
+
+export interface RuneOption {
+  name: string;
+  label: string | null;
+  lines: string[];
+  req: number | null;
+  type: string | null;
+  limit: number | null;
+}
+
+export interface ItemRunes {
+  socketCount: number;
+  runes: string[];
+  options: RuneOption[];
+}
+
+export interface ConfigOption {
+  var: string;
+  label: string | null;
+  type: "check" | "count" | "list" | "text" | "integer" | string | null;
+  section: string | null;
+  tooltip: string | null;
+  defaultState: unknown;
+  list?: { val: unknown; label: string }[];
+  ifSkill: unknown;
+  ifFlag: unknown;
+  ifCond: unknown;
+  ifMod: unknown;
+}
+
+export interface ConfigState {
+  config: Record<string, unknown>;
+  placeholder: Record<string, unknown>;
+  activeConfigSet: number;
+  sets: { id: number; title: string | null; active: boolean }[];
+}
+
+export interface LoadoutState {
+  loadouts: string[];
+  active: string | null;
+}
+
+export interface AppOptions {
+  showThousandsSeparators: boolean;
+  thousandsSeparator: string;
+  decimalSeparator: string;
+  defaultGemQuality: number;
+  defaultCharLevel: number;
+  defaultItemAffixQuality: number;
+}
+
+export interface GameBuildImportResult {
+  info: BuildInfo;
+  allocated: number;
+  requested: number;
+  missingPassives: string[];
+  skillGroups: number;
+  missingSkills: string[];
+  gearItems: number;
+  gearHints: number;
+  warnings: string[];
+}
+
+export interface AnointInfo {
+  anointable: boolean;
+  current: string[];
+  slots: number;
+  nodes: { id: number; name: string; stats: string[]; recipe: string[]; allocated: boolean }[];
+}
+
+export interface CorruptionInfo {
+  corruptible: boolean;
+  corrupted: boolean;
+  enchantNum: number;
+  mods: { id: string; label: string; group: string | null }[];
+  specialMods: { id: string; label: string; group: string | null }[];
+  ranges: { index: number; line: string; current: number }[];
+}
+
+export interface SharedItem {
+  index: number;
+  name: string;
+  baseName: string | null;
+  rarity: string | null;
+  raw: string;
+}
+
+export interface PartyBox {
+  text: string;
+  summary: string;
+}
+
+export interface PartyState {
+  partyMemberStats: PartyBox;
+  auras: PartyBox;
+  warcries: PartyBox;
+  links: PartyBox;
+  enemyConditions: PartyBox;
+  enemyMods: PartyBox;
+  curses: PartyBox;
+  enableExportBuffs: boolean;
+}
+
+export type PartyKind = "partyMemberStats" | "auras" | "warcries" | "links" | "enemyConditions" | "enemyMods" | "curses";
+
+export interface CustomModBlock {
+  index: number;
+  title: string | null;
+  enabled: boolean;
+  text: string;
+  lines: { text: string; status: "ok" | "partial" | "none" | "empty" }[];
+}
+
+export const engine = {
+  version: () =>
+    call<{ pobVersion: string; treeVersions: string[]; latestTreeVersion: string; userPath: string; buildPath: string }>(
+      "version",
+    ),
+  newBuild: (name?: string) => call<BuildInfo>("new_build", { name }),
+  loadBuildXml: (xml: string, name?: string) => call<BuildInfo>("load_build_xml", { xml, name }),
+  loadBuildCode: (code: string, name?: string) => call<BuildInfo>("load_build_code", { code, name }),
+  loadBuildFile: (path: string) => call<BuildInfo>("load_build_file", { path }),
+  saveBuildXml: () => call<{ xml: string }>("save_build_xml"),
+  saveBuildCode: () => call<{ code: string }>("save_build_code"),
+  saveBuildFile: (path?: string) => call<{ ok: boolean; path: string }>("save_build_file", path ? { path } : undefined),
+  getBuild: () => call<BuildInfo>("get_build"),
+  getSidebar: () => call<Sidebar>("get_sidebar"),
+  sidebarBreakdown: (rowIndex: number) => call<{ sections: BreakdownSection[]; rev: number }>("sidebar_breakdown", { rowIndex }),
+  calcSections: (actor?: "player" | "minion") => call<{ sections: CalcSection[]; rev: number }>("calc_sections", { actor }),
+  calcCellBreakdown: (ref: { section: number; sub: number; row: number; col: number; actor?: string }) =>
+    call<{ sections: BreakdownSection[]; rev: number }>("calc_cell_breakdown", ref),
+  configVisibility: () => call<{ visibility: Record<string, boolean>; rev: number }>("config_visibility"),
+  getStats: (fields?: string[]) => call<{ stats: Record<string, number | string | boolean>; rev: number }>("get_stats", fields ? { fields } : undefined),
+  setLevel: (level: number) => call<BuildInfo>("set_level", { level }),
+  listClasses: () => call<{ classes: ClassInfo[] }>("list_classes"),
+  selectClass: (classId?: number, ascendClassId?: number) => call<BuildInfo>("select_class", { classId, ascendClassId }),
+  getTreeState: () => call<TreeState>("get_tree_state"),
+  allocNode: (id: number) => call<TreeState>("alloc_node", { id }),
+  deallocNode: (id: number) => call<TreeState>("dealloc_node", { id }),
+  nodePath: (id: number) => call<{ id: number; path: number[]; cost: number; allocated: boolean }>("node_path", { id }),
+  nodeInfo: (id: number) => call<Record<string, unknown>>("node_info", { id }),
+  nodeHover: (id: number) => call<HoverInfo>("node_hover", { id }),
+  treeClick: (id: number, opts?: { attribute?: number; confirm?: "reset" | "connect" }) =>
+    call<TreeClickResult>("tree_click", { id, ...opts }),
+  switchAttribute: (id: number, attribute: number) => call<TreeState>("switch_attribute", { id, attribute }),
+  treeUndo: () => call<TreeState>("tree_undo"),
+  treeRedo: () => call<TreeState>("tree_redo"),
+  exportTreeUrl: () => call<{ url: string }>("export_tree_url"),
+  importTreeUrl: (url: string) => call<TreeState>("import_tree_url", { url }),
+  jewelRadii: () => call<{ radii: JewelRadius[] }>("jewel_radii"),
+  specAlloc: (index: number) => call<{ index: number; allocatedNodes: number[] }>("spec_alloc", { index }),
+  allocTrace: (ids: number[]) => call<TreeState>("alloc_trace", { ids }),
+  socketNodes: (id: number, radiusIndex: number) =>
+    call<{ id: number; radiusIndex: number | null; nodes: number[] }>("socket_nodes", { id, radiusIndex }),
+  powerStats: () => call<{ stats: PowerStat[] }>("power_stats"),
+  treePower: (stat: string | null, maxDepth: number | null) => call<TreePower>("tree_power", { stat, maxDepth }),
+  treePowerStart: (stat: string | null, maxDepth: number | null) =>
+    call<{ done: boolean; progress: number }>("tree_power_start", { stat, maxDepth }),
+  treePowerStep: (budgetMs = 150) => call<{ done: boolean; progress: number }>("tree_power_step", { budgetMs }),
+  treePowerResult: () => call<TreePower>("tree_power_result"),
+  listSpecs: () => call<{ specs: SpecInfo[]; activeSpec: number }>("list_specs"),
+  selectSpec: (index: number) => call<{ specs: SpecInfo[]; activeSpec: number }>("select_spec", { index }),
+  createSpec: (title?: string) => call<{ specs: SpecInfo[]; activeSpec: number }>("create_spec", { title }),
+  copySpec: (index?: number, title?: string) => call<{ specs: SpecInfo[]; activeSpec: number }>("copy_spec", { index, title }),
+  renameSpec: (index: number, title: string) => call<{ specs: SpecInfo[]; activeSpec: number }>("rename_spec", { index, title }),
+  deleteSpec: (index: number) => call<{ specs: SpecInfo[]; activeSpec: number }>("delete_spec", { index }),
+  convertTree: (opts?: { all?: boolean; replace?: boolean; version?: string }) =>
+    call<{ specs: SpecInfo[]; activeSpec: number }>("convert_tree", opts ?? {}),
+  getSkills: () => call<Skills>("get_skills"),
+  setMainSkill: (index: number) => call<Skills>("set_main_skill", { index }),
+  setMainSkillOptions: (
+    groupIndex: number,
+    patch: { mainActiveSkill?: number; part?: number; statSet?: number; stageCount?: number; mineCount?: number; minionId?: string; minionSkill?: number },
+  ) => call<Skills>("set_main_skill_options", { groupIndex, ...patch }),
+  addSocketGroup: (label?: string) => call<{ ok: boolean; groupIndex: number }>("add_socket_group", { label }),
+  removeSocketGroup: (index: number) => call<Skills>("remove_socket_group", { index }),
+  moveSocketGroup: (from: number, to: number) => call<Skills>("move_socket_group", { from, to }),
+  addGem: (groupIndex: number, gemId: string, level?: number, quality?: number) =>
+    call<Skills>("add_gem", { groupIndex, gemId, level, quality }),
+  removeGem: (groupIndex: number, gemIndex: number) => call<Skills>("remove_gem", { groupIndex, gemIndex }),
+  moveGem: (groupIndex: number, from: number, to: number) => call<Skills>("move_gem", { groupIndex, from, to }),
+  gemSearch: (opts: { groupIndex?: number; query?: string; onlySupports?: boolean; limit?: number; sortByDps?: boolean }) =>
+    call<{ gems: GemSearchRow[]; total: number; truncated: boolean; baseDps: number | null }>("gem_search", opts),
+  getSkillsOptions: () => call<SkillsOptions>("get_skills_options"),
+  setSkillsOptions: (patch: Partial<SkillsOptions>) => call<SkillsOptions>("set_skills_options", patch),
+  copySocketGroup: (index: number) => call<{ text: string }>("copy_socket_group", { index }),
+  pasteSocketGroup: (text: string) => call<Skills>("paste_socket_group", { text }),
+  gemTooltip: (groupIndex: number, gemIndex: number) => call<{ lines: TooltipLine[] }>("gem_tooltip", { groupIndex, gemIndex }),
+  selectSkillSet: (id: number) => call<Skills>("select_skill_set", { id }),
+  createSkillSet: (title?: string) => call<Skills>("create_skill_set", { title }),
+  copySkillSet: (id?: number, title?: string) => call<Skills>("copy_skill_set", { id, title }),
+  renameSkillSet: (id: number, title: string) => call<Skills>("rename_skill_set", { id, title }),
+  deleteSkillSet: (id: number) => call<Skills>("delete_skill_set", { id }),
+  setSocketGroup: (index: number, patch: Partial<Pick<SocketGroup, "enabled" | "includeInFullDPS" | "label" | "slot" | "mainActiveSkill">>) =>
+    call<Skills>("set_socket_group", { index, ...patch }),
+  setGem: (groupIndex: number, gemIndex: number, patch: Partial<Pick<GemInfo, "level" | "quality" | "enabled" | "count">>) =>
+    call<Skills>("set_gem", { groupIndex, gemIndex, ...patch }),
+  listSlots: () => call<SlotsResponse>("list_slots"),
+  getItems: () => call<{ items: ItemInfo[] }>("get_items"),
+  equipItemRaw: (text: string, slot?: string) => call<{ ok: boolean; itemId: number; slot: string; itemName: string }>("equip_item_raw", { text, slot }),
+  equipItem: (slot: string, itemId: number) => call<SlotsResponse>("equip_item", { slot, itemId }),
+  deleteItem: (itemId: number) => call<{ items: ItemInfo[] }>("delete_item", { itemId }),
+  itemDbList: (opts: { db: "unique" | "rare"; query?: string; type?: string; limit?: number; offset?: number }) =>
+    call<{ items: ItemDbRow[]; total: number; offset: number; types: { type: string; count: number }[] }>("item_db_list", opts),
+  itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; raw?: string; slotName?: string | false }) =>
+    call<{ lines: TooltipLine[]; rarity: string | null }>("item_tooltip", opts),
+  itemDbEquip: (db: "unique" | "rare", name: string, slotName?: string) =>
+    call<{ ok: boolean; itemId: number; slot: string; itemName: string }>("item_db_equip", { db, name, slotName }),
+  itemRaw: (itemId: number) => call<{ raw: string }>("item_raw", { itemId }),
+  itemEdit: (text: string, itemId?: number) => call<{ ok: boolean; itemId: number; name: string }>("item_edit", { text, itemId }),
+  setWeaponSet: (set: 1 | 2) => call<SlotsResponse>("set_weapon_set", { set }),
+  craftBases: () => call<{ types: string[]; bases: Record<string, CraftBase[]> }>("craft_bases"),
+  craftItem: (opts: { type: string; baseName: string; rarity?: string; title?: string; equip?: boolean }) =>
+    call<{ ok: boolean; itemId: number; name: string; crafted: boolean }>("craft_item", opts),
+  itemAffixes: (itemId: number) => call<ItemAffixes>("item_affixes", { itemId }),
+  setItemAffix: (itemId: number, table: "prefixes" | "suffixes", index: number, modId: string, range?: number) =>
+    call<ItemAffixes>("set_item_affix", { itemId, table, index, modId, range }),
+  itemRunes: (itemId: number) => call<ItemRunes>("item_runes", { itemId }),
+  setItemRune: (itemId: number, index: number, name: string) => call<ItemRunes>("set_item_rune", { itemId, index, name }),
+  setItemProps: (itemId: number, patch: { quality?: number; itemLevel?: number; corrupted?: boolean; catalyst?: number; catalystQuality?: number }) =>
+    call<{ ok: boolean }>("set_item_props", { itemId, ...patch }),
+  listItemSets: () => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("list_item_sets"),
+  selectItemSet: (id: number) => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("select_item_set", { id }),
+  createItemSet: (title?: string) => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("create_item_set", { title }),
+  copyItemSet: (id?: number, title?: string) => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("copy_item_set", { id, title }),
+  renameItemSet: (id: number, title: string) => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("rename_item_set", { id, title }),
+  deleteItemSet: (id: number) => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("delete_item_set", { id }),
+  listConfigOptions: () => call<{ options: ConfigOption[] }>("list_config_options"),
+  getConfig: () => call<ConfigState>("get_config"),
+  setConfig: (v: string, value: unknown) => call<ConfigState>("set_config", { var: v, value }),
+  selectConfigSet: (id: number) => call<ConfigState>("select_config_set", { id }),
+  createConfigSet: (title?: string) => call<ConfigState>("create_config_set", title ? { title } : undefined),
+  copyConfigSet: (id?: number, title?: string) => call<ConfigState>("copy_config_set", { id, title }),
+  renameConfigSet: (id: number, title: string) => call<ConfigState>("rename_config_set", { id, title }),
+  deleteConfigSet: (id: number) => call<ConfigState>("delete_config_set", { id }),
+  getLoadouts: () => call<LoadoutState>("get_loadouts"),
+  selectLoadout: (name: string) => call<LoadoutState>("select_loadout", { name }),
+  newLoadout: (name: string) => call<LoadoutState>("new_loadout", { name }),
+  copyLoadout: (source: string, name: string) => call<LoadoutState>("copy_loadout", { source, name }),
+  renameLoadout: (name: string, newName: string) => call<LoadoutState>("rename_loadout", { name, newName }),
+  deleteLoadout: (name: string) => call<LoadoutState>("delete_loadout", { name }),
+  catalystInfo: (itemId: number) => call<{ usable: boolean; names: string[]; catalyst: number; quality: number }>("catalyst_info", { itemId }),
+  itemAnoints: (itemId: number, withNodes = false) => call<AnointInfo>("item_anoints", { itemId, withNodes }),
+  setItemAnoint: (itemId: number, nodeId: number | null, slot?: number) => call<AnointInfo>("set_item_anoint", { itemId, nodeId, slot }),
+  itemCorruptions: (itemId: number) => call<CorruptionInfo>("item_corruptions", { itemId }),
+  corruptItem: (p: { itemId: number; modIds?: string[]; ranges?: { index: number; value: number }[] }) => call<{ ok: boolean }>("corrupt_item", p),
+  getSharedItems: () => call<{ items: SharedItem[] }>("get_shared_items"),
+  addSharedItem: (p: { itemId?: number; raw?: string }) => call<{ items: SharedItem[] }>("add_shared_item", p),
+  removeSharedItem: (index: number) => call<{ items: SharedItem[] }>("remove_shared_item", { index }),
+  equipSharedItem: (index: number, slotName?: string) => call<unknown>("equip_shared_item", { index, slotName }),
+  tradeSearchStart: (p: {
+    slotName: string;
+    statWeights?: { stat: string; weightMult: number }[];
+    includeCorrupted?: boolean;
+    includeRunes?: boolean;
+    includeMirrored?: boolean;
+    maxLevel?: number;
+    sockets?: number;
+    jewelType?: string;
+  }) => call<{ started: boolean }>("trade_search_start", p),
+  tradeSearchStep: (steps?: number) => call<{ done: boolean }>("trade_search_step", { steps }),
+  tradeSearchResult: () => call<{ query: string }>("trade_search_result"),
+  tradeLeagues: () => call<{ leagues: { id: string; text: string }[] }>("trade_leagues"),
+  importGameBuild: (json: string, name?: string) => call<GameBuildImportResult>("import_game_build", { json, name }),
+  exportGameBuild: () => call<{ json: string; name: string; passives: number; skills: number; gear: number }>("export_game_build"),
+  getParty: () => call<PartyState>("get_party"),
+  setPartyText: (kind: PartyKind, text: string) => call<PartyState>("set_party_text", { kind, text }),
+  partyImport: (p: { code?: string; xml?: string; append?: boolean }) => call<PartyState>("party_import", p),
+  partyClear: () => call<PartyState>("party_clear"),
+  partyRebuild: () => call<PartyState>("party_rebuild"),
+  partySetExport: (enabled: boolean) => call<PartyState>("party_set_export", { enabled }),
+  getAppOptions: () => call<{ options: AppOptions }>("get_app_options"),
+  setAppOptions: (options: Partial<AppOptions>) => call<{ options: AppOptions }>("set_app_options", options),
+  getCustomMods: () => call<{ blocks: CustomModBlock[] }>("get_custom_mods"),
+  setCustomModBlock: (index: number, patch: { title?: string; enabled?: boolean; text?: string }) =>
+    call<{ blocks: CustomModBlock[] }>("set_custom_mod_block", { index, ...patch }),
+  addCustomModBlock: (title?: string) => call<{ blocks: CustomModBlock[] }>("add_custom_mod_block", title ? { title } : undefined),
+  deleteCustomModBlock: (index: number) => call<{ blocks: CustomModBlock[] }>("delete_custom_mod_block", { index }),
+  customModBrowser: () => call<{ mods: { text: string; sources: string[] }[] }>("custom_mod_browser"),
+  getNotes: () => call<{ text: string }>("get_notes"),
+  setNotes: (text: string) => call<{ ok: boolean }>("set_notes", { text }),
+  takeClipboard: () => call<{ text: string | null }>("take_clipboard"),
+};

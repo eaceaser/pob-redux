@@ -1,0 +1,7 @@
+# Upstream Path of Building (PoE2) checkout that pob-sync vendors into
+# src-tauri/resources/pob. Override with --source or POB_SOURCE.
+#
+# Bump `commit` deliberately: it is the upstream revision the engine has been
+# validated against. pob-sync warns when the checkout's HEAD differs.
+source_path = "../PathOfBuilding-PoE2"
+commit = "97cb973f8a114d32010bc1a4195c170628771714"

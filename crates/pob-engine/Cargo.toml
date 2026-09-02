@@ -1,0 +1,31 @@
+[package]
+name = "pob-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless Path of Building (PoE2) calculation engine: embeds PoB's Lua under LuaJIT."
+
+[lib]
+name = "pob_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pobctl"
+path = "src/bin/pobctl.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:env_logger"]
+
+[dependencies]
+mlua = { version = "0.12", features = ["luajit", "vendored", "serde", "error-send"] }
+flate2 = "1"
+glob = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "blocking"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+clap = { workspace = true, optional = true }
+env_logger = { workspace = true, optional = true }
