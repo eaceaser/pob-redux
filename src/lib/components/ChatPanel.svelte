@@ -3,6 +3,7 @@
   import { chat, MAX_WIDTH, MIN_WIDTH, type ToolTurn } from "$lib/state/chat.svelte";
   import ProviderSettings from "$lib/components/ProviderSettings.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
   let scroller = $state<HTMLDivElement | undefined>();
   let box = $state<HTMLTextAreaElement | undefined>();
@@ -99,6 +100,22 @@
     }
   }
 
+  let copied = $state(-1);
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  async function copyText(index: number, text: string) {
+    try {
+      await writeText(text);
+      copied = index;
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => (copied = -1), 1400);
+    } catch (e) {
+      chat.error = `Could not copy: ${e}`;
+    }
+  }
+
+  // Token counts run to five figures quickly; k keeps the row from wrapping.
+  const tokens = (n: number) => (n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString());
+
   const summary = (t: ToolTurn) => {
     const a = t.args as Record<string, unknown> | null;
     if (!a) return "";
@@ -177,7 +194,18 @@
             title="Edit and send again. Replies after it are discarded."
           >{turn.text}</button>
         {:else if turn.kind === "assistant"}
-          <div class="turn bot">{turn.text}</div>
+          <div class="botwrap">
+            <div class="turn bot">{turn.text}</div>
+            <button
+              class="copy"
+              class:done={copied === i}
+              onclick={() => copyText(i, turn.text)}
+              title={copied === i ? "Copied" : "Copy this reply"}
+              aria-label="Copy this reply"
+            >
+              <Icon name={copied === i ? "check" : "copy"} size={13} />
+            </button>
+          </div>
         {:else}
           <div class="tool" class:err={turn.status === "error"}>
             <div class="tline">
@@ -198,6 +226,7 @@
         {/if}
       {/each}
       {#if chat.busy}<div class="dim thinking">working…</div>{/if}
+      {#if chat.notice}<div class="notice">{chat.notice}</div>{/if}
       {#if chat.error}
         <div class="failed">
           <div class="terr">{chat.error}</div>
@@ -309,6 +338,13 @@
         {/if}
       </div>
       {#if chat.modelsError}<div class="terr small">{chat.modelsError}</div>{/if}
+      {#if chat.usage.input || chat.usage.output}
+        <div class="usage" title="Tokens for this conversation. Cached input is billed at a lower rate.">
+          <span class="num">{tokens(chat.usage.input)}</span> in
+          <span class="num">{tokens(chat.usage.output)}</span> out
+          {#if chat.usage.cacheRead}<span class="num">{tokens(chat.usage.cacheRead)}</span> cached{/if}
+        </div>
+      {/if}
     </div>
   {/if}
 </aside>
@@ -438,8 +474,43 @@
   .failed .terr {
     flex: 1;
   }
+  /* The button overlaps the text, so it only appears on hover or focus. */
+  .botwrap {
+    position: relative;
+  }
   .bot {
     color: var(--fg-0);
+  }
+  .copy {
+    position: absolute;
+    top: -2px;
+    right: 0;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 20px;
+    padding: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-1);
+    color: var(--fg-3);
+    /* Faint rather than hidden: a hover-only control goes unfound. */
+    opacity: 0.3;
+    transition: opacity 90ms linear;
+    cursor: pointer;
+  }
+  .botwrap:hover .copy,
+  .copy:focus-visible,
+  .copy.done {
+    opacity: 1;
+  }
+  .copy:hover {
+    color: var(--fg-0);
+    border-color: var(--line-2);
+  }
+  .copy.done {
+    color: var(--ok);
+    border-color: var(--ok);
   }
   .tool {
     border-left: 2px solid var(--line-2);
@@ -496,6 +567,23 @@
     color: var(--bad);
     font-size: var(--fs-xs);
     word-break: break-word;
+  }
+  .notice {
+    color: var(--warn);
+    font-size: var(--fs-xs);
+    line-height: 1.45;
+  }
+  .usage {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    padding: 0 8px 6px;
+    color: var(--fg-3);
+    font-size: var(--fs-2xs);
+  }
+  .usage .num {
+    font-family: var(--font-mono);
+    color: var(--fg-2);
   }
   .terr.small {
     font-size: var(--fs-2xs);

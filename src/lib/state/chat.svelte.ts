@@ -92,6 +92,13 @@ class ChatStore {
   models = $state<ModelInfo[]>([]);
   modelsError = $state<string | null>(null);
   settingsOpen = $state(false);
+  /** Cumulative tokens for this conversation. Cache counts are Anthropic-only. */
+  usage = $state({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  /**
+   * Why the last run ended, when it ended for a reason worth saying out loud.
+   * A run that finishes normally leaves this null.
+   */
+  notice = $state<string | null>(null);
   /** Panel width in px, dragged by the grip on its left edge. */
   width = $state(400);
   /** Skip the approval prompt for the rest of this conversation. */
@@ -237,6 +244,8 @@ class ChatStore {
     this.turns = [];
     this.history = [];
     this.error = null;
+    this.notice = null;
+    this.usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     this.allowWrites = false;
   }
 
@@ -273,6 +282,7 @@ class ChatStore {
     if (!text || this.busy) return;
     this.input = "";
     this.error = null;
+    this.notice = null;
     this.turns = [...this.turns, { kind: "user", text, mark: this.history.length }];
     // The snapshot rides with the question rather than the instructions, so the
     // cached prefix stays byte-identical between turns.
@@ -344,6 +354,9 @@ class ChatStore {
       const model = this.buildModel(kind);
       const providerOptions = this.supportsEffort ? effortOptions(kind, this.effort) : undefined;
       const instructions = (await invoke<string>("ai_instructions").catch(() => "")) + STYLE;
+      // Set when the model itself ends the turn, so exhausting the step budget
+      // can be told apart from finishing.
+      let done = false;
 
       for (let step = 0; step < MAX_STEPS; step++) {
         const result = streamText({
@@ -378,8 +391,29 @@ class ChatStore {
           }
         }
 
+        const u = await result.usage;
+        this.usage = {
+          input: this.usage.input + (u.inputTokens ?? 0),
+          output: this.usage.output + (u.outputTokens ?? 0),
+          cacheRead: this.usage.cacheRead + (u.inputTokenDetails?.cacheReadTokens ?? 0),
+          cacheWrite: this.usage.cacheWrite + (u.inputTokenDetails?.cacheWriteTokens ?? 0),
+        };
+
         this.history.push(...(await result.responseMessages));
-        if ((await result.finishReason) !== "tool-calls") break;
+        const finish = await result.finishReason;
+        if (finish !== "tool-calls") {
+          // Anything other than a plain stop ended the answer early, and saying
+          // so is the difference between "finished" and "gave up quietly".
+          if (finish === "length") {
+            this.notice = "The reply hit the model's output limit and was cut off.";
+          } else if (finish === "content-filter") {
+            this.notice = "The provider's content filter stopped the reply.";
+          } else if (finish === "error" || finish === "other") {
+            this.notice = `The model stopped early (${finish}).`;
+          }
+          done = true;
+          break;
+        }
 
         const calls = await result.toolCalls;
         const outputs: ToolResultPart[] = [];
@@ -428,6 +462,12 @@ class ChatStore {
           this.turns = [...this.turns];
         }
         this.history.push({ role: "tool", content: outputs });
+      }
+
+      if (!done) {
+        this.notice =
+          `Stopped after ${MAX_STEPS} tool steps without finishing. Ask again to carry on, ` +
+          "or narrow the question.";
       }
     } catch (e) {
       if (!String(e).includes("AbortError")) this.error = String(e);
