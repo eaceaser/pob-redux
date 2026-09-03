@@ -29,3 +29,6 @@ thiserror.workspace = true
 log.workspace = true
 clap = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -75,6 +75,11 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # svelte-check was never run in CI. It needs no PoB data, so it goes
+      # before the slow steps and fails fast. `check` passes --fail-on-warnings.
+      - name: Type-check the frontend
+        run: bun run check
+
       - name: Vendor Path of Building
         if: steps.pob.outputs.cache-hit != 'true'
         run: cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets

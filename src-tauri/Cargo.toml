@@ -39,3 +39,6 @@ tokio = { version = "1", features = ["net", "rt", "sync"] }
 # The updater has no mobile target, so it is scoped to desktop.
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
+
+[lints]
+workspace = true

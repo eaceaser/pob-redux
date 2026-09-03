@@ -12,6 +12,18 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/juddisjudd/pob-redux"
 
+# Applies to this workspace's crates only — dependencies keep Cargo's own lint
+# cap. Set here rather than via RUSTFLAGS, which also hits dependency build
+# scripts and breaks mlua-sys.
+[workspace.lints.rust]
+warnings = "deny"
+# LuaJIT is built by luajit-src's msvcbuild.bat, which omits /MD and so links
+# the static CRT while Rust uses the dynamic one, producing LNK4098. The crate
+# exposes no CRT option and the batch file hardcodes its compiler flags, so
+# this is not fixable from here. Tracked as a real mismatch, not dismissed:
+# revisit if Lua-allocated memory ever crosses into Rust's allocator.
+linker_messages = "allow"
+
 [workspace.dependencies]
 anyhow = "1"
 thiserror = "2"
