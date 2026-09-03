@@ -74,6 +74,12 @@ jobs:
       - name: Type-check the frontend
         run: bun run check
 
+      # tauri::generate_context! reads frontendDist at compile time, so the
+      # bundle has to exist before anything touches the Rust side. `tauri build`
+      # used to do this through beforeBuildCommand; nothing here does.
+      - name: Build the frontend
+        run: bun run build
+
       - name: Vendor Path of Building
         if: steps.pob.outputs.cache-hit != 'true'
         run: cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets
