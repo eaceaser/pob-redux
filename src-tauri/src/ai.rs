@@ -436,7 +436,11 @@ pub async fn ai_chat_stream(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut req = client.post(format!("{base}{path}")).body(body);
+    // The base and the caller's path are concatenated, so exactly one of them
+    // carries the version segment. Collapse it if both do: the request would
+    // otherwise 404 with nothing to say why.
+    let url = format!("{base}{path}").replace("/v1/v1/", "/v1/");
+    let mut req = client.post(url).body(body);
     for (name, value) in headers {
         if FORWARDABLE.contains(&name.to_ascii_lowercase().as_str()) {
             req = req.header(name, value);
@@ -581,6 +585,24 @@ mod tests {
         };
         assert_eq!(iso.sort_key(), 20_251_001);
         assert!(iso.sort_key() > iso_older.sort_key());
+    }
+
+    #[test]
+    fn a_doubled_version_segment_collapses() {
+        let join = |base: &str, path: &str| format!("{base}{path}").replace("/v1/v1/", "/v1/");
+        assert_eq!(
+            join("http://localhost:11434/v1", "/v1/chat/completions"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        // The correct shapes are left alone.
+        assert_eq!(
+            join("http://localhost:11434/v1", "/chat/completions"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            join("https://api.anthropic.com", "/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
     }
 
     #[test]

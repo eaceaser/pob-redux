@@ -309,9 +309,16 @@ class ChatStore {
   }
 
   /**
-   * The key is injected in Rust, so the SDKs only need a placeholder. `baseURL`
-   * is nominal too — `proxyFetch` sends the path to Rust, which resolves the
-   * real host from the provider's own configuration.
+   * The key is injected in Rust, so the SDKs only need a placeholder. The host
+   * is nominal too: `proxyFetch` sends only the path onward and Rust joins it
+   * to the provider's configured base.
+   *
+   * That join is a plain concatenation, so exactly one side must carry the
+   * version segment. Anthropic's base in ai.rs has none and its SDK default
+   * baseURL supplies `/v1`. OpenAI-compatible bases already end in `/v1`
+   * (`http://localhost:11434/v1`), so the placeholder here must not repeat it —
+   * doing so produced `/v1/v1/chat/completions` and a 404 from every provider
+   * of that kind.
    */
   private buildModel(kind: "anthropic" | "open-ai-compatible"): LanguageModel {
     const fetch = proxyFetch(this.provider);
@@ -320,7 +327,7 @@ class ChatStore {
     }
     return createOpenAICompatible({
       name: this.provider,
-      baseURL: "https://managed-by-host/v1",
+      baseURL: "https://managed-by-host",
       apiKey: "managed-by-host",
       fetch,
     })(this.model);
