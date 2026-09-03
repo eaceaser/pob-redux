@@ -79,6 +79,36 @@ Read before you write. Do not say you changed something unless the tool call
 returned successfully. If a call fails or the user declines it, say so plainly
 and stop; do not retry the same call.`;
 
+/**
+ * Turn a provider failure into something worth reading.
+ *
+ * Neither Anthropic nor OpenAI lets a normal API key query a balance — that
+ * needs an admin key with organisation-wide scope — so running dry cannot be
+ * warned about in advance. What can be done is to name it clearly when it
+ * happens, rather than showing the raw provider JSON.
+ */
+function explainError(e: unknown, providerLabel: string): string {
+  const raw = String(e);
+  const t = raw.toLowerCase();
+
+  if (t.includes("credit balance is too low") || t.includes("insufficient_quota") || t.includes("exceeded your current quota") || t.includes("402")) {
+    return `${providerLabel} rejected the request for billing: the account is out of credit. Top it up, then try again.`;
+  }
+  if (t.includes("401") || t.includes("authentication_error") || t.includes("invalid api key") || t.includes("invalid_api_key")) {
+    return `${providerLabel} rejected the key. Check it in provider settings.`;
+  }
+  if (t.includes("429") || t.includes("rate_limit")) {
+    return `${providerLabel} is rate limiting this key. Wait a moment and try again.`;
+  }
+  if (t.includes("model is unavailable") || t.includes("model_not_found") || t.includes("does not exist")) {
+    return `${providerLabel} cannot serve this model. Pick another in the model list.`;
+  }
+  if (t.includes("fetch failed") || t.includes("connection") || t.includes("econnrefused")) {
+    return `Could not reach ${providerLabel}. For a local provider, check it is running.`;
+  }
+  return raw;
+}
+
 class ChatStore {
   open = $state(false);
   turns = $state<Turn[]>([]);
@@ -470,7 +500,9 @@ class ChatStore {
           "or narrow the question.";
       }
     } catch (e) {
-      if (!String(e).includes("AbortError")) this.error = String(e);
+      if (!String(e).includes("AbortError")) {
+        this.error = explainError(e, this.current?.label ?? this.provider);
+      }
     } finally {
       this.busy = false;
       this.abort = null;

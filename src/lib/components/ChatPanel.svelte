@@ -510,7 +510,6 @@
   }
   .copy.done {
     color: var(--ok);
-    border-color: var(--ok);
   }
   .tool {
     border-left: 2px solid var(--line-2);
