@@ -1141,6 +1141,18 @@ M.path_plan = function(p)
 		return { id = node.id, name = opt(node.dn or node.name), already_allocated = true,
 			path = array({}), points = 0, shortest = 0, extra = 0, score = 0, attribute_nodes = 0 }
 	end
+
+	-- Anointing an amulet grants a notable outright ("Allocates <notable>"),
+	-- which reaches the build as a GrantedPassive mod rather than a tree
+	-- allocation. The calculation counts it, the spec does not, so pathing to
+	-- one would spend points on something already held. Granted notables are
+	-- still not walkable: nothing connects them to the tree.
+	local granted = build.calcsTab and build.calcsTab.mainEnv and build.calcsTab.mainEnv.grantedPassives
+	if granted and granted[node.id] then
+		return { id = node.id, name = opt(node.dn or node.name), already_granted = true,
+			granted_by = "an anointment or other item that allocates it",
+			path = array({}), points = 0, shortest = 0, extra = 0, score = 0, attribute_nodes = 0 }
+	end
 	if not node.path then error("node " .. node.id .. " cannot be reached from the current tree", 0) end
 
 	local shortest = #node.path
@@ -1363,7 +1375,7 @@ end
 
 M.create_spec = function(p)
 	ensureBuild()
-	local spec = new("PassiveSpec", build, build.spec.treeVersion)
+	local spec = new("PassiveSpec"):PassiveSpec(build, build.spec.treeVersion)
 	spec.title = (p and p.title) or "New Tree"
 	spec:SelectClass(build.spec.curClassId)
 	spec:SelectAscendClass(build.spec.curAscendClassId)
@@ -1483,7 +1495,7 @@ end
 
 M.parse_item = function(p)
 	if not p or type(p.text) ~= "string" then error("params.text is required", 0) end
-	local item = new("Item", p.text)
+	local item = new("Item"):Item(p.text)
 	if not item.base then
 		return { ok = false, error = "unrecognised item text" }
 	end
@@ -1495,7 +1507,7 @@ end
 M.equip_item_raw = function(p)
 	ensureBuild()
 	if not p or type(p.text) ~= "string" then error("params.text (raw item text) is required", 0) end
-	local item = new("Item", p.text)
+	local item = new("Item"):Item(p.text)
 	if not item.base then error("could not parse item text (unrecognised base type or format)", 0) end
 	build.itemsTab:AddItem(item, true)
 	local slotName = p.slot
