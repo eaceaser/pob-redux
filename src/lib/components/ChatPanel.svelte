@@ -168,9 +168,14 @@
     </div>
   {:else}
     <div class="log" bind:this={scroller}>
-      {#each chat.turns as turn}
+      {#each chat.turns as turn, i}
         {#if turn.kind === "user"}
-          <div class="turn user">{turn.text}</div>
+          <button
+            class="turn user"
+            onclick={() => chat.rewindTo(i)}
+            disabled={chat.busy}
+            title="Edit and send again. Replies after it are discarded."
+          >{turn.text}</button>
         {:else if turn.kind === "assistant"}
           <div class="turn bot">{turn.text}</div>
         {:else}
@@ -193,7 +198,12 @@
         {/if}
       {/each}
       {#if chat.busy}<div class="dim thinking">working…</div>{/if}
-      {#if chat.error}<div class="terr">{chat.error}</div>{/if}
+      {#if chat.error}
+        <div class="failed">
+          <div class="terr">{chat.error}</div>
+          <button class="btn sm ghost" onclick={() => chat.retryLast()} disabled={chat.busy}>Try again</button>
+        </div>
+      {/if}
       {#if !chat.turns.length && !chat.busy}
         <div class="dim empty">
           Ask about the open build. Every number comes from Path of Building's own engine.
@@ -388,6 +398,7 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* A button so it is reachable by keyboard, styled as the message bubble. */
   .user {
     align-self: flex-end;
     max-width: 88%;
@@ -395,6 +406,26 @@
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
     padding: 6px 9px;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .user:hover:not(:disabled),
+  .user:focus-visible {
+    border-color: var(--focus);
+    outline: none;
+  }
+  .user:disabled {
+    cursor: default;
+  }
+  .failed {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .failed .terr {
+    flex: 1;
   }
   .bot {
     color: var(--fg-0);

@@ -36,7 +36,8 @@ export interface ToolTurn {
 }
 
 export type Turn =
-  | { kind: "user"; text: string }
+  /** `mark` is the history length before this message, so rewinding to it is exact. */
+  | { kind: "user"; text: string; mark: number }
   | { kind: "assistant"; text: string }
   | ToolTurn;
 
@@ -272,11 +273,39 @@ class ChatStore {
     if (!text || this.busy) return;
     this.input = "";
     this.error = null;
-    this.turns = [...this.turns, { kind: "user", text }];
+    this.turns = [...this.turns, { kind: "user", text, mark: this.history.length }];
     // The snapshot rides with the question rather than the instructions, so the
     // cached prefix stays byte-identical between turns.
     this.history.push({ role: "user", content: `${await this.context()}\n\n${text}` });
     await this.run();
+  }
+
+  /**
+   * Rewind to a user message: its text goes back in the composer and everything
+   * from it onward is dropped, from the visible log and from what the model
+   * sees. Without the second part the model would still be carrying the reply
+   * being replaced.
+   */
+  rewindTo(index: number) {
+    const turn = this.turns[index];
+    if (turn?.kind !== "user" || this.busy) return;
+    this.stop();
+    this.input = turn.text;
+    this.turns = this.turns.slice(0, index);
+    this.history = this.history.slice(0, turn.mark);
+    this.error = null;
+  }
+
+  /** Send the last message again, dropping whatever it produced. */
+  async retryLast() {
+    if (this.busy) return;
+    for (let i = this.turns.length - 1; i >= 0; i--) {
+      if (this.turns[i].kind === "user") {
+        this.rewindTo(i);
+        await this.send();
+        return;
+      }
+    }
   }
 
   /**
