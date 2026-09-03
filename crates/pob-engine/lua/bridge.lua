@@ -562,6 +562,31 @@ M.alloc_trace = function(p)
 		if not n then error("unknown node id " .. tostring(id), 0) end
 		nodes[i] = n
 	end
+	-- PoB takes an explicit path on trust: GetEffectiveAllocationPath returns
+	-- altPath unchecked, and a chain that never reaches the tree is then
+	-- dropped by BuildAllDependsAndPaths. The call reports success having
+	-- allocated nothing, so connectivity is checked here instead.
+	local first = nodes[1]
+	if not first.alloc then
+		local rooted = false
+		for _, other in ipairs(first.linked or {}) do
+			if other.alloc then rooted = true break end
+		end
+		if not rooted then
+			error("node " .. first.id .. " does not touch the allocated tree, so this path has no root", 0)
+		end
+	end
+	for i = 2, #nodes do
+		local prev, cur = nodes[i - 1], nodes[i]
+		local linked = false
+		for _, other in ipairs(prev.linked or {}) do
+			if other.id == cur.id then linked = true break end
+		end
+		if not linked then
+			error("nodes " .. prev.id .. " and " .. cur.id .. " are not connected", 0)
+		end
+	end
+
 	local target = nodes[#nodes]
 	if not target.path then error("target node cannot be reached", 0) end
 	spec:AllocNode(target, nodes)
