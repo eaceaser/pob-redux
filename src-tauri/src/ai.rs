@@ -229,6 +229,8 @@ pub struct ModelInfo {
     supports_effort: bool,
     /// Current-generation, or one generation back. The UI groups these first.
     recommended: bool,
+    /// Costs nothing to call, where the provider says so.
+    free: bool,
 }
 
 #[derive(Deserialize)]
@@ -237,7 +239,8 @@ struct ModelList {
 }
 
 /// Covers every provider's shape: OpenAI-compatible lists use `id` + numeric
-/// `created`; Anthropic uses `display_name` + an RFC 3339 `created_at`.
+/// `created`; Anthropic uses `display_name` + an RFC 3339 `created_at`;
+/// OpenRouter adds `pricing`.
 #[derive(Deserialize)]
 struct RawModel {
     id: String,
@@ -247,6 +250,34 @@ struct RawModel {
     created_at: Option<String>,
     #[serde(default)]
     display_name: Option<String>,
+    #[serde(default)]
+    pricing: Option<Pricing>,
+}
+
+/// OpenRouter quotes per-token prices as decimal strings.
+#[derive(Deserialize)]
+struct Pricing {
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    completion: Option<String>,
+}
+
+/// Whether a model costs nothing to call.
+///
+/// OpenRouter publishes prices, and they are the authority: it lists models
+/// that cost nothing without marking the id, so the suffix alone undercounts.
+/// OpenCode Zen publishes no prices and marks free models with a `-free` id.
+/// Ollama publishes neither, so nothing there is reported free.
+fn is_free(m: &RawModel) -> bool {
+    if let Some(p) = &m.pricing {
+        let zero = |v: &Option<String>| v.as_deref().and_then(|s| s.parse::<f64>().ok()).is_some_and(|n| n == 0.0);
+        if zero(&p.prompt) && zero(&p.completion) {
+            return true;
+        }
+    }
+    let l = m.id.to_ascii_lowercase();
+    l.ends_with(":free") || l.ends_with("-free")
 }
 
 impl RawModel {
@@ -383,6 +414,7 @@ pub async fn ai_models(app: AppHandle, provider: String) -> Result<Vec<ModelInfo
         .map(|m| ModelInfo {
             supports_effort: effort_capable(&m.id),
             recommended: is_recommended(&m.id),
+            free: is_free(&m),
             label: m.display_name.unwrap_or_else(|| m.id.clone()),
             id: m.id,
         })
@@ -572,9 +604,9 @@ mod tests {
             id: "a".into(),
             created: Some(1_700_000_000),
             created_at: None,
-            display_name: None,
+            display_name: None, pricing: None,
         };
-        let older = super::RawModel { id: "b".into(), created: Some(1_600_000_000), created_at: None, display_name: None };
+        let older = super::RawModel { id: "b".into(), created: Some(1_600_000_000), created_at: None, display_name: None, pricing: None };
         assert!(numeric.sort_key() > older.sort_key());
 
         // Anthropic's RFC 3339 string reduces to YYYYMMDD.
@@ -582,16 +614,48 @@ mod tests {
             id: "c".into(),
             created: None,
             created_at: Some("2025-10-01T00:00:00Z".into()),
-            display_name: None,
+            display_name: None, pricing: None,
         };
         let iso_older = super::RawModel {
             id: "d".into(),
             created: None,
             created_at: Some("2024-06-20T00:00:00Z".into()),
-            display_name: None,
+            display_name: None, pricing: None,
         };
         assert_eq!(iso.sort_key(), 20_251_001);
         assert!(iso.sort_key() > iso_older.sort_key());
+    }
+
+    #[test]
+    fn free_models_are_recognised_per_provider() {
+        let priced = |id: &str, p: &str, c: &str| super::RawModel {
+            id: id.into(),
+            created: None,
+            created_at: None,
+            display_name: None,
+            pricing: Some(super::Pricing { prompt: Some(p.into()), completion: Some(c.into()) }),
+        };
+        let bare = |id: &str| super::RawModel {
+            id: id.into(),
+            created: None,
+            created_at: None,
+            display_name: None,
+            pricing: None,
+        };
+
+        // OpenRouter publishes prices, and they outrank the id: it lists models
+        // that cost nothing without marking the id.
+        assert!(super::is_free(&priced("some/model", "0", "0")));
+        assert!(!super::is_free(&priced("anthropic/claude-sonnet-5", "0.000003", "0.000015")));
+        assert!(super::is_free(&priced("deepseek/deepseek-r1:free", "0", "0")));
+
+        // OpenCode Zen publishes no prices and marks free models in the id.
+        assert!(super::is_free(&bare("nemotron-3-ultra-free")));
+        assert!(super::is_free(&bare("deepseek/deepseek-r1:free")));
+        assert!(!super::is_free(&bare("claude-opus-5")));
+
+        // "free" inside a name is not a marker.
+        assert!(!super::is_free(&bare("freedom-model-v2")));
     }
 
     /// A gateway that stamps every model with the same date must not have its
@@ -603,15 +667,15 @@ mod tests {
             id: id.into(),
             created: Some(1_788_416_612),
             created_at: None,
-            display_name: None,
+            display_name: None, pricing: None,
         };
         let raw = vec![same("claude-fable-5"), same("claude-opus-5"), same("claude-sonnet-5")];
         let differ = raw.len() > 1 && raw.iter().any(|m| m.sort_key() != raw[0].sort_key());
         assert!(!differ, "identical timestamps must not be treated as orderable");
 
         let mixed = vec![
-            super::RawModel { id: "old".into(), created: Some(1), created_at: None, display_name: None },
-            super::RawModel { id: "new".into(), created: Some(2), created_at: None, display_name: None },
+            super::RawModel { id: "old".into(), created: Some(1), created_at: None, display_name: None, pricing: None },
+            super::RawModel { id: "new".into(), created: Some(2), created_at: None, display_name: None, pricing: None },
         ];
         let differ = mixed.iter().any(|m| m.sort_key() != mixed[0].sort_key());
         assert!(differ, "real timestamps must still sort");

@@ -258,15 +258,26 @@
           disabled={!chat.models.length}
         >
           {#if chat.models.length}
-            {@const top = chat.models.filter((m) => m.recommended)}
-            {@const rest = chat.models.filter((m) => !m.recommended)}
-            {#if top.length && rest.length}
-              <optgroup label="Latest">
-                {#each top as m}<option value={m.id}>{m.label}</option>{/each}
-              </optgroup>
-              <optgroup label="All models ({rest.length})">
-                {#each rest as m}<option value={m.id}>{m.label}</option>{/each}
-              </optgroup>
+            <!-- Each model lands in exactly one group, so nothing appears twice. -->
+            {@const free = chat.models.filter((m) => m.free)}
+            {@const latest = chat.models.filter((m) => m.recommended && !m.free)}
+            {@const rest = chat.models.filter((m) => !m.recommended && !m.free)}
+            {#if [free, latest, rest].filter((g) => g.length).length > 1}
+              {#if latest.length}
+                <optgroup label="Latest">
+                  {#each latest as m}<option value={m.id}>{m.label}</option>{/each}
+                </optgroup>
+              {/if}
+              {#if free.length}
+                <optgroup label="Free ({free.length})">
+                  {#each free as m}<option value={m.id}>{m.label}</option>{/each}
+                </optgroup>
+              {/if}
+              {#if rest.length}
+                <optgroup label="All models ({rest.length})">
+                  {#each rest as m}<option value={m.id}>{m.label}</option>{/each}
+                </optgroup>
+              {/if}
             {:else}
               {#each chat.models as m}<option value={m.id}>{m.label}</option>{/each}
             {/if}

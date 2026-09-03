@@ -26,6 +26,8 @@ export interface ModelInfo {
   supports_effort: boolean;
   /** Current generation or one back — the UI groups these first. */
   recommended: boolean;
+  /** Costs nothing to call, where the provider says so. */
+  free: boolean;
 }
 
 export const listProviders = () => invoke<ProviderStatus[]>("ai_providers");
