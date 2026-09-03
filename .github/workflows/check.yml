@@ -1,8 +1,13 @@
-name: build
+name: check
 
-# Tags are handled by release.yml, which also signs and publishes. Building them
-# here too would compile the whole tree (LuaJIT included) a second time for no
-# extra coverage.
+# Fast validation for ordinary commits. Installers are built and published only
+# by release.yml, on a tag.
+#
+# This used to build both platforms' installers on every push, which cost about
+# 24 billed minutes a time (Windows bills at 2x) to produce artifacts nobody
+# installed. Compiling and testing on Linux catches the same class of mistake
+# for a fraction of that; anything Windows-specific surfaces on the tag build,
+# which publishes a draft and so cannot ship broken without review.
 on:
   push:
     branches: [main]
@@ -10,16 +15,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            bundles: nsis
-          - os: ubuntu-22.04
-            bundles: deb,appimage
-    runs-on: ${{ matrix.os }}
+  check:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
 
@@ -28,9 +25,9 @@ jobs:
         shell: bash
         run: echo "commit=$(grep '^commit' pob-sync.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
 
-      # ~84 MB of vendored Lua and decoded tree atlases. The output is a pure
-      # function of the pinned upstream commit and pob-sync itself, so a hit
-      # skips both the upstream clone and the DDS -> WebP decode.
+      # Shared with release.yml. The vendored tree is a pure function of the
+      # pinned upstream commit and pob-sync, so a hit skips the clone and the
+      # DDS -> WebP decode.
       - name: Cache vendored Path of Building
         id: pob
         uses: actions/cache@v6
@@ -60,23 +57,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          # Shared with release.yml so a tag build starts warm instead of
-          # rebuilding LuaJIT from scratch under its own job-scoped key.
           shared-key: pob-redux
           cache-on-failure: true
           # Pull requests restore the cache but must not overwrite main's.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Linux dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
 
       - run: bun install --frozen-lockfile
 
-      # svelte-check was never run in CI. It needs no PoB data, so it goes
-      # before the slow steps and fails fast. `check` passes --fail-on-warnings.
+      # Needs no PoB data, so it runs first and fails in seconds.
+      # `check` passes --fail-on-warnings.
       - name: Type-check the frontend
         run: bun run check
 
@@ -84,19 +78,9 @@ jobs:
         if: steps.pob.outputs.cache-hit != 'true'
         run: cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets
 
-      # createUpdaterArtifacts is on in tauri.conf.json, so a build signs the
-      # bundles and fails without the private key. This workflow has no key and
-      # must not: it runs on pull requests, and forks cannot read secrets.
-      # release.yml owns signed artifacts; here we only prove the app bundles.
-      - name: Build installers
-        shell: bash
-        run: bun run tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      # Warnings are denied via [workspace.lints.rust], so this fails on them.
+      - name: Compile the workspace
+        run: cargo check --workspace --all-targets
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pob-redux-${{ runner.os }}
-          path: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/deb/*.deb
-            target/release/bundle/appimage/*.AppImage
-          if-no-files-found: error
+      - name: Test
+        run: cargo test -p pob-redux --lib
