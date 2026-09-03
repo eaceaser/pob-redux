@@ -368,8 +368,15 @@ pub async fn ai_models(app: AppHandle, provider: String) -> Result<Vec<ModelInfo
         serde_json::from_str(&text).map_err(|e| format!("unexpected model list from {}: {e}", p.label))?;
 
     let mut raw: Vec<RawModel> = list.data.into_iter().filter(|m| is_chat_model(&m.id)).collect();
-    // Newest first; ties fall back to the id so the order is stable.
-    raw.sort_by(|a, b| b.sort_key().cmp(&a.sort_key()).then_with(|| a.id.cmp(&b.id)));
+    // Some gateways stamp every model with the same `created` (OpenCode Zen
+    // uses the time of the request), which makes a date sort meaningless and
+    // silently degrades to alphabetical — putting claude-fable-5 above
+    // claude-opus-5. When the dates carry no information, keep the provider's
+    // own order, which is usually curated.
+    let dates_differ = raw.len() > 1 && raw.iter().any(|m| m.sort_key() != raw[0].sort_key());
+    if dates_differ {
+        raw.sort_by(|a, b| b.sort_key().cmp(&a.sort_key()).then_with(|| a.id.cmp(&b.id)));
+    }
 
     Ok(raw
         .into_iter()
@@ -585,6 +592,29 @@ mod tests {
         };
         assert_eq!(iso.sort_key(), 20_251_001);
         assert!(iso.sort_key() > iso_older.sort_key());
+    }
+
+    /// A gateway that stamps every model with the same date must not have its
+    /// list reordered: sorting on equal keys degrades to alphabetical, which
+    /// puts older models above newer ones.
+    #[test]
+    fn identical_dates_leave_the_order_alone() {
+        let same = |id: &str| super::RawModel {
+            id: id.into(),
+            created: Some(1_788_416_612),
+            created_at: None,
+            display_name: None,
+        };
+        let raw = vec![same("claude-fable-5"), same("claude-opus-5"), same("claude-sonnet-5")];
+        let differ = raw.len() > 1 && raw.iter().any(|m| m.sort_key() != raw[0].sort_key());
+        assert!(!differ, "identical timestamps must not be treated as orderable");
+
+        let mixed = vec![
+            super::RawModel { id: "old".into(), created: Some(1), created_at: None, display_name: None },
+            super::RawModel { id: "new".into(), created: Some(2), created_at: None, display_name: None },
+        ];
+        let differ = mixed.iter().any(|m| m.sort_key() != mixed[0].sort_key());
+        assert!(differ, "real timestamps must still sort");
     }
 
     #[test]
