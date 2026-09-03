@@ -28,7 +28,18 @@ jobs:
         shell: bash
         run: echo "commit=$(grep '^commit' pob-sync.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
 
+      # ~84 MB of vendored Lua and decoded tree atlases. The output is a pure
+      # function of the pinned upstream commit and pob-sync itself, so a hit
+      # skips both the upstream clone and the DDS -> WebP decode.
+      - name: Cache vendored Path of Building
+        id: pob
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/pob
+          key: pob-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('crates/pob-sync/**/*.rs', 'crates/pob-sync/Cargo.toml', 'pob-sync.toml') }}
+
       - name: Checkout PathOfBuilding-PoE2
+        if: steps.pob.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: PathOfBuildingCommunity/PathOfBuilding-PoE2
@@ -46,6 +57,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # Shared with release.yml so a tag build starts warm instead of
+          # rebuilding LuaJIT from scratch under its own job-scoped key.
+          shared-key: pob-redux
+          cache-on-failure: true
+          # Pull requests restore the cache but must not overwrite main's.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Linux dependencies
         if: runner.os == 'Linux'
@@ -56,6 +73,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Vendor Path of Building
+        if: steps.pob.outputs.cache-hit != 'true'
         run: cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets
 
       - name: Build installers
