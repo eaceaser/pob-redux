@@ -38,7 +38,7 @@ jobs:
       - name: Read pinned PoB commit
         id: pin
         shell: bash
-        run: echo "commit=$(grep '^commit' pob-sync.toml | cut -d'\"' -f2)" >> "$GITHUB_OUTPUT"
+        run: echo "commit=$(grep '^commit' pob-sync.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
 
       # Same cache as build.yml, so a tag usually reuses the vendored tree that
       # main already produced for this pinned commit.
