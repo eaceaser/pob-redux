@@ -558,7 +558,10 @@
   }
   .pill {
     appearance: none;
-    background: none;
+    /* Matches the composer behind it, so it still reads as flat while giving
+       the open dropdown a solid dark ground. `background: none` left it
+       transparent and the platform painted the list white. */
+    background-color: var(--bg-2);
     border: 1px solid transparent;
     border-radius: var(--r-1);
     color: var(--fg-2);
