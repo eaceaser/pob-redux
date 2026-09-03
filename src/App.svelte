@@ -12,11 +12,13 @@
   import PartyView from "$lib/views/PartyView.svelte";
   import ImportView from "$lib/views/ImportView.svelte";
   import OptionsModal from "$lib/components/OptionsModal.svelte";
+  import ChatPanel from "$lib/components/ChatPanel.svelte";
   import logo from "$lib/assets/logo.png";
   import { engine, status as engineStatus, appPaths, type EngineStatus, type AppPaths } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { appOptions } from "$lib/state/options.svelte";
   import { mcp } from "$lib/state/mcp.svelte";
+  import { chat } from "$lib/state/chat.svelte";
 
   let status = $state<EngineStatus | null>(null);
   let paths = $state<AppPaths | null>(null);
@@ -25,6 +27,14 @@
   onMount(() => {
     let timer = 0;
     const tick = window.setInterval(() => (bootDots = (bootDots + 1) % 4), 400);
+    // Ctrl+K toggles the assistant. Single letters belong to the tree view.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        chat.toggle();
+      }
+    };
+    window.addEventListener("keydown", onKey);
     const poll = async () => {
       try {
         status = await engineStatus();
@@ -38,6 +48,7 @@
         paths = await appPaths().catch(() => null);
         await appOptions.init().catch(() => {});
         await mcp.init().catch(() => {});
+        await chat.init(paths?.chat_open).catch(() => {});
         // shared items added in this app are ours to restore (PoB's own
         // settings file, which also holds shared items, is never written)
         try {
@@ -50,12 +61,19 @@
           await build.run(async () => {}, { sync: true });
         }
         build.view = (paths?.initial_view as typeof build.view) || "tree";
+        if (paths?.chat_ask) {
+          chat.input = paths.chat_ask;
+          // A value starting with "/" only fills the box, so the tool menu can
+          // be inspected without spending a request.
+          if (!paths.chat_ask.startsWith("/")) void chat.send();
+        }
       }
     };
     poll();
     return () => {
       clearTimeout(timer);
       clearInterval(tick);
+      window.removeEventListener("keydown", onKey);
     };
   });
 </script>
@@ -103,6 +121,7 @@
         <ImportView {paths} />
       {/if}
     </main>
+    {#if chat.open && status?.state === "ready"}<ChatPanel />{/if}
   </div>
   <StatusBar {status} {paths} />
   <OptionsModal />

@@ -16,12 +16,15 @@
     "ctl": "cargo run -p pob-engine --bin pobctl --"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.47",
+    "@ai-sdk/openai-compatible": "^3.0.42",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-clipboard-manager": "^2",
     "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "ai": "^7.0.89"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",

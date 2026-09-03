@@ -71,6 +71,8 @@ export interface AppPaths {
   } | null;
   open_on_start: string | null;
   initial_view: string | null;
+  chat_open: string | null;
+  chat_ask: string | null;
 }
 
 export function appPaths(): Promise<AppPaths> {

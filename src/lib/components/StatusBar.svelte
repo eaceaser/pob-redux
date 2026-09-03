@@ -3,6 +3,8 @@
   import { build } from "$lib/state/build.svelte";
   import { appOptions } from "$lib/state/options.svelte";
   import { mcp } from "$lib/state/mcp.svelte";
+  import { chat } from "$lib/state/chat.svelte";
+  import Icon from "$lib/components/Icon.svelte";
 
   let { status, paths }: { status: EngineStatus | null; paths: AppPaths | null } = $props();
 
@@ -69,7 +71,18 @@
   {#if build.info}
     <div class="seg dim"><span>rev</span><span class="num">{build.info.rev}</span></div>
   {/if}
-  <button class="seg gear" onclick={() => (appOptions.open = true)} title="Options" disabled={!appOptions.values}>⚙</button>
+  <button
+    class="seg iconbtn"
+    class:on={chat.open}
+    onclick={() => chat.toggle()}
+    title="Assistant panel (Ctrl+K)"
+    aria-label="Assistant panel"
+  >
+    <Icon name="chat-text" size={15} />
+  </button>
+  <button class="seg iconbtn" onclick={() => (appOptions.open = true)} title="Options" aria-label="Options" disabled={!appOptions.values}>
+    <Icon name="gear" size={15} />
+  </button>
 </footer>
 
 <style>
@@ -109,12 +122,17 @@
   .pulse {
     animation: pulse 1.2s ease-in-out infinite;
   }
-  .gear {
-    cursor: pointer;
+  /* `.seg` is a flex row with side padding meant for text. For a lone icon that
+     leaves it off-axis, so centre it explicitly on a fixed width. */
+  .iconbtn {
+    justify-content: center;
+    width: 32px;
+    padding: 0;
     border-left: 1px solid var(--line-0);
     border-right: 0;
+    color: var(--fg-2);
   }
-  .gear:hover:not(:disabled) {
+  .iconbtn:hover:not(:disabled) {
     color: var(--fg-0);
     background: var(--bg-2);
   }
@@ -125,5 +143,9 @@
     max-width: 50vw;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .seg.on {
+    color: var(--fg-0);
+    background: var(--bg-hover);
   }
 </style>

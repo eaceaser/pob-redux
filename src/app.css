@@ -116,6 +116,34 @@ textarea {
   color: inherit;
 }
 
+/* Anything actually clickable gets the hand, set once here rather than per
+   component. Modal backdrops are plain divs, so they keep the default arrow. */
+button,
+select,
+summary,
+[role="button"],
+[role="tab"],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+button:disabled,
+select:disabled,
+input:disabled,
+[aria-disabled="true"] {
+  cursor: default;
+}
+/* Separate rule on purpose: one unsupported selector invalidates a whole
+   comma-separated list, and `:has` must not be able to take the block above
+   down with it on an older webview. */
+label:has(input[type="checkbox"]),
+label:has(input[type="radio"]) {
+  cursor: pointer;
+}
+label:has(input:disabled) {
+  cursor: default;
+}
+
 .btn {
   appearance: none;
   display: inline-flex;

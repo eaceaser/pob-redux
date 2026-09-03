@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 mod mcp;
+mod tools;
+mod ai;
 mod sites;
 
 use std::sync::Arc;
@@ -130,6 +132,11 @@ struct AppPaths {
     open_on_start: Option<String>,
     /// Dev hook: initial tab (POB_REDUX_VIEW), used by the screenshot harness.
     initial_view: Option<String>,
+    /// Dev hook: open the assistant panel on boot (POB_REDUX_CHAT).
+    /// Set it to "settings" to open the provider sheet too.
+    chat_open: Option<String>,
+    /// Dev hook: send one message on boot (POB_REDUX_CHAT_ASK). Costs API credit.
+    chat_ask: Option<String>,
 }
 
 fn open_on_start() -> Option<String> {
@@ -151,6 +158,8 @@ fn app_paths(state: State<'_, AppState>) -> AppPaths {
         sync,
         open_on_start: open_on_start(),
         initial_view: std::env::var("POB_REDUX_VIEW").ok(),
+        chat_open: std::env::var("POB_REDUX_CHAT").ok(),
+        chat_ask: std::env::var("POB_REDUX_CHAT_ASK").ok(),
     }
 }
 
@@ -476,6 +485,37 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| format!("{path}: {e}"))
 }
 
+/// The system instructions for the chat panel: the same text the MCP server
+/// sends to external clients.
+#[tauri::command]
+fn ai_instructions() -> &'static str {
+    tools::INSTRUCTIONS
+}
+
+/// The tool registry as JSON Schema, for the in-app chat panel. Same list the
+/// MCP server serves over `tools/list`.
+#[tauri::command]
+fn ai_tools() -> Vec<tools::ToolDef> {
+    tools::defs()
+}
+
+/// Run one tool against the open build. Goes through `tools::dispatch`, so it
+/// behaves exactly as the same call would over MCP and emits `mcp:changed`.
+#[tauri::command]
+async fn ai_call_tool(
+    app: tauri::AppHandle,
+    name: String,
+    args: Option<serde_json::Map<String, serde_json::Value>>,
+) -> Result<serde_json::Value, String> {
+    let ctx = mcp::tool_context(&app);
+    tools::dispatch(ctx, name, args.unwrap_or_default())
+        .await
+        .map(|(value, _)| value)
+        .map_err(|e| match e {
+            tools::ToolError::Invalid(m) | tools::ToolError::Failed(m) => m,
+        })
+}
+
 /// Locate the vendored PoB program: an explicit override, the bundled
 /// resources, or (dev builds) the pob-sync output next to this crate.
 fn find_pob_root(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -588,6 +628,7 @@ pub fn run() {
                 warm.warm();
             });
             app.manage(AppState { engine, pool, pob_root, user_dir, mcp: mcp::McpState::new() });
+            app.manage(ai::AiState::new(&app.handle().clone()));
             // POB_REDUX_MCP=<port> brings the MCP server up at launch (scripts, tests)
             if let Some(port) = std::env::var("POB_REDUX_MCP").ok().and_then(|v| v.parse::<u16>().ok()) {
                 let handle = app.handle().clone();
@@ -622,6 +663,15 @@ pub fn run() {
             mcp::mcp_status,
             mcp::mcp_start,
             mcp::mcp_stop,
+            ai_tools,
+            ai_instructions,
+            ai_call_tool,
+            ai::ai_providers,
+            ai::ai_key_set,
+            ai::ai_key_clear,
+            ai::ai_base_set,
+            ai::ai_models,
+            ai::ai_chat_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
