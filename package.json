@@ -13,7 +13,8 @@
     "tauri": "tauri",
     "sync": "cargo run -p pob-sync -- --tree-assets",
     "sync:fast": "cargo run -p pob-sync --",
-    "ctl": "cargo run -p pob-engine --bin pobctl --"
+    "ctl": "cargo run -p pob-engine --bin pobctl --",
+    "release:tag": "node scripts/release.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.47",
