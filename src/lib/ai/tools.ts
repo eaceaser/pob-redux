@@ -28,6 +28,7 @@ export const ALLOWED = new Set([
   "search_tree",
   "node_info",
   "node_path_cost",
+  "path_plan",
   "get_items",
   "list_items",
   "get_skills",
@@ -36,6 +37,8 @@ export const ALLOWED = new Set([
   "get_notes",
   // write, approval-gated
   "alloc_node",
+  "alloc_path",
+  "set_attribute_choice",
   "dealloc_node",
   "tree_undo",
   "set_level",

@@ -20,7 +20,11 @@ shown in the app immediately. Start with get_character and get_stats to see what
 to open a share code, a pobb.in / Maxroll / poe.ninja / poe2db.tw / Pastebin / Rentry link, a local .xml \
 or .build file, or raw PoB XML. Inspect with get_stats / list_stat_keys / get_sidebar / get_tree_state / \
 get_items / get_skills / get_config / sanity_check. Explore the passive tree with search_tree, node_info and \
-node_path_cost. Change the build with alloc_node / dealloc_node / select_class / set_level, equip_item_raw / \
+node_path_cost. To reach a notable, find it with search_tree, then path_plan for a route — it takes an objective \
+(defence, damage, speed, attributes, or a stat substring) and a max_extra point budget, so \"path to X optimising \
+for defence\" is one call — and alloc_path to take it. Most of this tree is attribute nodes, so call \
+set_attribute_choice (1 Str, 2 Dex, 3 Int) before pathing when the user says which they want. \
+Change the build with alloc_node / dealloc_node / select_class / set_level, equip_item_raw / \
 unequip_item, add_gem / set_gem / remove_gem / set_main_skill, and set_config. Manage alternate trees and \
 gear sets with the list/select/create/copy/rename/delete _spec and _item_set tools. Mutations return a \
 short `stats` summary; call get_stats for anything else. Use save_build or export_build to persist the \
@@ -181,6 +185,43 @@ pub(crate) fn defs() -> Vec<ToolDef> {
         ),
         ro("node_info", "Name, type, stats, mods, allocation state, and path cost of one node.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         ro("node_path_cost", "How many points allocating a node would cost from the current tree, and the path PoB would take. Does not allocate.", obj(json!({ "node_id": node_id() }), &["node_id"])),
+        ro(
+            "path_plan",
+            "Plan a route from the allocated tree to a node, preferring intermediate nodes that serve an objective. \
+`objective` is \"short\" (fewest points, the default), \"defence\", \"damage\", \"speed\", \"attributes\", or any stat \
+substring such as \"mana\". `max_extra` permits that many points beyond the shortest route when they buy more of the \
+objective — 3 to 5 is usually where a route starts picking up real nodes. Changes nothing; pass the returned node ids \
+to alloc_path. Set the attribute choice first if the route crosses attribute nodes, which in this tree it usually does.",
+            obj(
+                json!({
+                    "node_id": node_id(),
+                    "objective": { "type": "string", "description": "short | defence | damage | speed | attributes, or a stat substring" },
+                    "max_extra": prop("integer", "Points allowed beyond the shortest route (0-12, default 0)")
+                }),
+                &["node_id"],
+            ),
+        ),
+        rw(
+            "alloc_path",
+            "Allocate a route from path_plan. Pass its node ids in order, destination last.",
+            obj(
+                json!({ "node_ids": { "type": "array", "items": { "type": "integer" }, "description": "Ordered node ids from path_plan" } }),
+                &["node_ids"],
+            ),
+        ),
+        rw(
+            "set_attribute_choice",
+            "Choose what the tree's switchable attribute nodes grant: 1 Strength, 2 Dexterity, 3 Intelligence. One \
+setting for the whole tree. It applies to nodes allocated from then on, so set it before pathing; pass \
+`apply_to_allocated` to rewrite the ones already taken.",
+            obj(
+                json!({
+                    "attribute": prop("integer", "1 = Strength, 2 = Dexterity, 3 = Intelligence"),
+                    "apply_to_allocated": prop("boolean", "Also switch attribute nodes already allocated")
+                }),
+                &["attribute"],
+            ),
+        ),
         rw("alloc_node", "Allocate a node and the shortest path to it, exactly as clicking it in the tree would, then recalculate.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         rw("dealloc_node", "Deallocate a node and every node that depended on it for connectivity, then recalculate.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         rw("tree_undo", "Undo the last tree change.", none()),
@@ -537,6 +578,29 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
         }
         "node_info" => read(ctx.call("node_info", json!({ "id": req_i64(args, "node_id")? }))?),
         "node_path_cost" => read(ctx.call("node_path", json!({ "id": req_i64(args, "node_id")? }))?),
+        "path_plan" => read(ctx.call(
+            "path_plan",
+            json!({
+                "id": req_i64(args, "node_id")?,
+                "objective": arg_str(args, "objective"),
+                "max_extra": arg_i64(args, "max_extra")?,
+            }),
+        )?),
+        "alloc_path" => {
+            let ids = args
+                .get("node_ids")
+                .and_then(Value::as_array)
+                .filter(|a| !a.is_empty())
+                .ok_or_else(|| ToolError::Invalid("node_ids must be a non-empty array of node ids".into()))?;
+            stats(ctx.call("alloc_trace", json!({ "ids": ids }))?)
+        }
+        "set_attribute_choice" => stats(ctx.call(
+            "set_attribute_choice",
+            json!({
+                "attribute": req_i64(args, "attribute")?,
+                "apply_to_allocated": arg_bool(args, "apply_to_allocated"),
+            }),
+        )?),
         "alloc_node" => {
             let state = ctx.call("alloc_node", json!({ "id": req_i64(args, "node_id")? }))?;
             stats(tree_summary(state))
@@ -695,7 +759,7 @@ mod tests {
     #[test]
     fn registry_is_stable_and_measured() {
         let d = defs();
-        assert_eq!(d.len(), 59, "tool count changed");
+        assert_eq!(d.len(), 62, "tool count changed");
 
         let mut names: Vec<&str> = d.iter().map(|t| t.name).collect();
         names.sort_unstable();

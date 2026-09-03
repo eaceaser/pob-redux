@@ -1047,6 +1047,173 @@ M.node_path = function(p)
 	return { id = node.id, path = ids, cost = #ids, allocated = node.alloc == true }
 end
 
+-- Objectives for path_plan. Matched against a node's stat lines, so a route can
+-- be judged by what it grants on the way rather than by length alone. Weights
+-- separate what a category is really about from what merely correlates.
+local PATH_OBJECTIVES = {
+	defence = {
+		{ "maximum life", 10 }, { "maximum energy shield", 10 }, { "%% increased life", 8 },
+		{ "resistance", 8 }, { "armour", 6 }, { "evasion", 6 }, { "block", 6 },
+		{ "suppress", 6 }, { "life regeneration", 4 }, { "recoup", 3 }, { "reduced damage taken", 10 },
+		{ "stun threshold", 2 }, { "ailment", 2 },
+	},
+	damage = {
+		{ "increased damage", 10 }, { "critical", 8 }, { "penetration", 8 },
+		{ "attack speed", 7 }, { "cast speed", 7 }, { "damage over time", 7 },
+		{ "accuracy", 4 }, { "%% increased.*damage", 8 }, { "added.*damage", 6 },
+	},
+	speed = {
+		{ "movement speed", 10 }, { "attack speed", 6 }, { "cast speed", 6 },
+	},
+	attributes = {
+		{ "strength", 8 }, { "dexterity", 8 }, { "intelligence", 8 }, { "all attributes", 12 },
+	},
+}
+
+-- How much a node is worth for an objective. `objective` is a known category or
+-- any substring to match against the node's stat lines.
+local function nodeValue(node, objective)
+	if not objective or objective == "short" then return 0 end
+	local lines = node.sd
+	if not lines or #lines == 0 then return 0 end
+	local rules = PATH_OBJECTIVES[objective]
+	local score = 0
+	for _, line in ipairs(lines) do
+		local text = line:lower()
+		if rules then
+			for _, rule in ipairs(rules) do
+				if text:find(rule[1]) then score = score + rule[2] end
+			end
+		elseif text:find(objective:lower(), 1, true) then
+			score = score + 10
+		end
+	end
+	-- Notables carry the meaningful passives; keep them ahead of small nodes
+	-- that happen to mention the same words.
+	if score > 0 and node.type == "Notable" then score = score * 2 end
+	return score
+end
+
+--- Cheapest route from the allocated tree to a node, preferring routes whose
+--- intermediate nodes serve `objective`.
+---
+--- PoB's own `node.path` is shortest by node count and indifferent to what it
+--- passes through. This walks the graph itself so a caller can ask for the
+--- shortest route that also picks up life or damage on the way, and can spend
+--- up to `max_extra` further points when that buys enough.
+---
+--- best[len][id] = highest objective score reachable at `id` using exactly
+--- `len` unallocated nodes, so length stays a hard budget while score decides
+--- between routes that cost the same.
+M.path_plan = function(p)
+	ensureBuild()
+	local node = requireNode(p)
+	local spec = build.spec
+	local objective = p.objective and tostring(p.objective) or "short"
+	local maxExtra = math.max(0, math.min(tonumber(p.max_extra) or 0, 12))
+
+	if node.alloc then
+		return { id = node.id, name = opt(node.dn or node.name), already_allocated = true,
+			path = array({}), points = 0, shortest = 0, extra = 0, score = 0, attribute_nodes = 0 }
+	end
+	if not node.path then error("node " .. node.id .. " cannot be reached from the current tree", 0) end
+
+	local shortest = #node.path
+	local budget = shortest + maxExtra
+
+	-- best[len] maps node id -> { score, prev }. Length 0 is the allocated tree.
+	local best = { [0] = {} }
+	for id in pairs(spec.allocNodes) do best[0][id] = { score = 0, prev = nil } end
+
+	for len = 1, budget do
+		best[len] = {}
+		for id, entry in pairs(best[len - 1]) do
+			local cur = spec.nodes[id]
+			for _, other in ipairs(cur and cur.linked or {}) do
+				-- Ascendancy and class-start nodes are not walkable filler.
+				if not other.alloc and other.id and not other.isAscendancyStart and other.type ~= "ClassStart" then
+					local score = entry.score + nodeValue(other, objective)
+					local prevBest = best[len][other.id]
+					if not prevBest or score > prevBest.score then
+						best[len][other.id] = { score = score, prev = id, at = len - 1 }
+					end
+				end
+			end
+		end
+	end
+
+	-- Shortest wins; score only separates routes of equal length, unless the
+	-- caller allowed extra points, in which case take the best score within it.
+	local pickLen, pickScore
+	for len = 1, budget do
+		local hit = best[len] and best[len][node.id]
+		if hit and (pickLen == nil or hit.score > pickScore) then
+			pickLen, pickScore = len, hit.score
+		end
+	end
+	if not pickLen then error("node " .. node.id .. " is unreachable within " .. budget .. " points", 0) end
+
+	local ids, len, id = {}, pickLen, node.id
+	while len > 0 and id do
+		table.insert(ids, 1, id)
+		local step = best[len][id]
+		id, len = step and step.prev, len - 1
+	end
+
+	local steps, attrCount = array({}), 0
+	for i, nid in ipairs(ids) do
+		local n = spec.nodes[nid]
+		steps[i] = nodeSummary(nid, n)
+		steps[i].value = nodeValue(n, objective)
+		steps[i].is_attribute = n.isAttribute == true
+		if n.isAttribute then attrCount = attrCount + 1 end
+	end
+
+	return {
+		id = node.id,
+		name = opt(node.dn or node.name),
+		objective = objective,
+		path = steps,
+		points = pickLen,
+		shortest = shortest,
+		extra = pickLen - shortest,
+		score = pickScore,
+		attribute_nodes = attrCount,
+		attribute_index = spec.attributeIndex,
+	}
+end
+
+--- What the tree's switchable attribute nodes grant: 1 Str, 2 Dex, 3 Int.
+---
+--- `attributeIndex` is the default applied to nodes allocated from now on, so
+--- set this before pathing. Nodes already allocated keep whatever they were
+--- given until `apply_to_allocated` rewrites them.
+M.set_attribute_choice = function(p)
+	ensureBuild()
+	local attr = tonumber(p and p.attribute)
+	if not attr or attr < 1 or attr > 3 then
+		error("params.attribute must be 1 (Strength), 2 (Dexterity) or 3 (Intelligence)", 0)
+	end
+	local spec = build.spec
+	spec.attributeIndex = attr
+	local switched = 0
+	if p.apply_to_allocated then
+		for id, n in pairs(spec.allocNodes) do
+			if n.isAttribute then
+				spec:SwitchAttributeNode(id, attr)
+				switched = switched + 1
+			end
+		end
+	end
+	spec:BuildAllDependsAndPaths()
+	spec:AddUndoState()
+	refresh()
+	local state = M.get_tree_state()
+	state.attribute_index = attr
+	state.switched = switched
+	return state
+end
+
 M.search_tree = function(p)
 	ensureBuild()
 	p = p or {}
