@@ -13,12 +13,14 @@
   import ImportView from "$lib/views/ImportView.svelte";
   import OptionsModal from "$lib/components/OptionsModal.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import logo from "$lib/assets/logo.png";
   import { engine, status as engineStatus, appPaths, type EngineStatus, type AppPaths } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { appOptions } from "$lib/state/options.svelte";
   import { mcp } from "$lib/state/mcp.svelte";
   import { chat } from "$lib/state/chat.svelte";
+  import { appUpdate } from "$lib/state/update.svelte";
 
   let status = $state<EngineStatus | null>(null);
   let paths = $state<AppPaths | null>(null);
@@ -49,6 +51,7 @@
         await appOptions.init().catch(() => {});
         await mcp.init().catch(() => {});
         await chat.init(paths?.chat_open).catch(() => {});
+        appUpdate.init();
         // shared items added in this app are ours to restore (PoB's own
         // settings file, which also holds shared items, is never written)
         try {
@@ -80,6 +83,7 @@
 
 <div class="app">
   <TitleBar />
+  <UpdateBanner />
   <div class="body">
     <Sidebar />
     <main class="view">

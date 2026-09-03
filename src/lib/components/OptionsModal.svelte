@@ -2,11 +2,16 @@
   import { appOptions } from "$lib/state/options.svelte";
   import { mcp } from "$lib/state/mcp.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { appUpdate } from "$lib/state/update.svelte";
 
   const mcpUrl = $derived(mcp.status?.running ? mcp.status.url : null);
   const claudeCmd = $derived(mcpUrl ? `claude mcp add --transport http pob-redux ${mcpUrl}` : "");
   const jsonCfg = $derived(mcpUrl ? JSON.stringify({ mcpServers: { "pob-redux": { url: mcpUrl } } }) : "");
   let copied = $state("");
+  let checked = $state(false);
+  let version = $state("");
+  getVersion().then((v) => (version = v)).catch(() => {});
   async function copy(key: string, text: string) {
     try {
       await writeText(text);
@@ -132,6 +137,39 @@
             </div>
           </div>
         {/if}
+      </div>
+      <div class="shead">
+        <span class="label">Updates</span>
+        <span class="dim mono">{version}</span>
+      </div>
+      <div class="rows">
+        <div class="opt">
+          <span>
+            App version
+            <span class="hint">Checked once shortly after start. Installing replaces the app and needs a restart.</span>
+          </span>
+          <div class="row">
+            {#if appUpdate.phase === "available" || appUpdate.phase === "ready"}
+              <span class="mono" style:color="var(--ok)">{appUpdate.version} ready</span>
+            {:else if appUpdate.phase === "checking"}
+              <span class="dim">checking…</span>
+            {:else if appUpdate.phase === "error"}
+              <span class="mono" style:color="var(--bad)" title={appUpdate.error}>check failed</span>
+            {:else if checked}
+              <span class="dim">up to date</span>
+            {/if}
+            <button
+              class="btn sm ghost"
+              onclick={async () => {
+                await appUpdate.check(true);
+                checked = true;
+              }}
+              disabled={appUpdate.phase === "checking" || appUpdate.phase === "downloading"}
+            >
+              Check for updates
+            </button>
+          </div>
+        </div>
       </div>
       <div class="foot dim">Applied to the calculation engine now and re-applied on every start. Path of Building's own settings file is never touched.</div>
     </div>

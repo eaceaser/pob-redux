@@ -1,0 +1,87 @@
+name: release
+
+# Tag-driven. `git tag v0.2.0 && git push --tags` builds both platforms, signs
+# the updater artifacts, and publishes a GitHub Release containing latest.json.
+#
+# While the repo is private the release assets need auth to download, so the
+# in-app updater cannot reach them yet and installs are manual. Nothing here has
+# to change when that flips — making the repo public (or pointing the endpoint
+# in tauri.conf.json at another host) is enough.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis
+          - os: ubuntu-22.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Read pinned PoB commit
+        id: pin
+        shell: bash
+        run: echo "commit=$(grep '^commit' pob-sync.toml | cut -d'\"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PathOfBuilding-PoE2
+        uses: actions/checkout@v4
+        with:
+          repository: PathOfBuildingCommunity/PathOfBuilding-PoE2
+          ref: ${{ steps.pin.outputs.commit }}
+          path: upstream/PathOfBuilding-PoE2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Vendor Path of Building
+        run: cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets
+
+      # Builds, signs the updater artifacts with the minisign key, creates or
+      # updates the release, and generates latest.json from the signatures.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "PoB Redux ${{ inputs.tag || github.ref_name }}"
+          releaseBody: "See the assets below. The app updates itself once a newer release is published."
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: --bundles ${{ matrix.bundles }}

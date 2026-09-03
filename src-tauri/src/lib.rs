@@ -605,8 +605,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_process::init())
         .register_uri_scheme_protocol("pob", serve_pob_asset)
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let handle = app.handle();
             let pob_root = find_pob_root(handle).unwrap_or_else(|| {
                 log::error!("no PoB program found; run `cargo run -p pob-sync` first");
