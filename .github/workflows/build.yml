@@ -21,7 +21,7 @@ jobs:
             bundles: deb,appimage
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read pinned PoB commit
         id: pin
@@ -33,14 +33,14 @@ jobs:
       # skips both the upstream clone and the DDS -> WebP decode.
       - name: Cache vendored Path of Building
         id: pob
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: src-tauri/resources/pob
           key: pob-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('crates/pob-sync/**/*.rs', 'crates/pob-sync/Cargo.toml', 'pob-sync.toml') }}
 
       - name: Checkout PathOfBuilding-PoE2
         if: steps.pob.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: PathOfBuildingCommunity/PathOfBuilding-PoE2
           ref: ${{ steps.pin.outputs.commit }}
@@ -51,7 +51,7 @@ jobs:
           bun-version: latest
       # setup-bun caches the bun binary, not downloaded packages.
       - name: Cache bun packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
