@@ -17,7 +17,13 @@ import { stripPobText } from "$lib/pobtext";
 import { build } from "$lib/state/build.svelte";
 
 const KEY = "pob-redux:chat";
-const MAX_STEPS = 12;
+/**
+ * Tool rounds allowed per message. Assembling a skill setup honestly costs a
+ * lot of them: a search per candidate gem, a socket group and an add per skill,
+ * a supports lookup, then a stat read to check the result. Twelve ran out
+ * midway through exactly that. This is a runaway guard, not a budget.
+ */
+const MAX_STEPS = 32;
 export const MIN_WIDTH = 320;
 export const MAX_WIDTH = 900;
 
@@ -69,6 +75,40 @@ Do not use rhetorical flourishes. In particular:
 - No contrast pairs that state one point twice.
 
 State what a thing is in one clause and stop.
+
+## Choosing gems and gear
+
+Never name a gem or item from memory. Call list_gems or search_item_db and use
+what comes back: the ids you remember may not exist in this patch, and the
+listing carries the facts that decide whether a choice is sound.
+
+A build is one main skill that the rest of the build amplifies. Four attack
+skills competing for the same support gems, passives and gear is four weak
+builds, not one strong one. Pick the main skill first, support that, and only
+then add utility — movement, a curse, an aura, a totem.
+
+Read these fields before choosing:
+
+- **tags** carry the damage type. Supports, passives and gear scale one type,
+  so a lightning skill supported by lightning damage is worth more than three
+  skills spread across lightning, fire and chaos. Mixed damage is a deliberate
+  archetype, not a default.
+- **tier** is how late the gem unlocks, as the uncut gem level needed. A tier 9
+  gem is many levels past a tier 1 one. Do not hand a level 12 character a set
+  it cannot assemble for another thirty levels.
+- **weapon** must match what is equipped. A Bow skill on a character holding a
+  mace does nothing.
+- **req_str / req_dex / req_int** must be within reach of the character's
+  attributes, which get_character and get_stats report.
+
+Check the character's level before recommending anything. What suits a level 90
+character is useless to a level 12 one, and saying which stage a suggestion is
+for is more useful than a list that ignores the question.
+
+Use list_valid_supports rather than guessing which supports apply.
+
+Where a genuinely good choice depends on playstyle or budget, say so in one
+line and pick a reasonable default rather than asking.
 
 ## Accuracy
 
@@ -129,6 +169,8 @@ class ChatStore {
    * A run that finishes normally leaves this null.
    */
   notice = $state<string | null>(null);
+  /** The run hit the step guard rather than finishing, so it can be resumed. */
+  canContinue = $state(false);
   /** Panel width in px, dragged by the grip on its left edge. */
   width = $state(400);
   /** Skip the approval prompt for the rest of this conversation. */
@@ -313,6 +355,7 @@ class ChatStore {
     this.input = "";
     this.error = null;
     this.notice = null;
+    this.canContinue = false;
     this.turns = [...this.turns, { kind: "user", text, mark: this.history.length }];
     // The snapshot rides with the question rather than the instructions, so the
     // cached prefix stays byte-identical between turns.
@@ -334,6 +377,17 @@ class ChatStore {
     this.turns = this.turns.slice(0, index);
     this.history = this.history.slice(0, turn.mark);
     this.error = null;
+  }
+
+  /**
+   * Carry on from where the step budget ran out. The history already holds the
+   * work so far, so this resumes rather than starting the task again.
+   */
+  async continueRun() {
+    if (this.busy || !this.history.length) return;
+    this.notice = null;
+    this.canContinue = false;
+    await this.run();
   }
 
   /** Send the last message again, dropping whatever it produced. */
@@ -495,9 +549,8 @@ class ChatStore {
       }
 
       if (!done) {
-        this.notice =
-          `Stopped after ${MAX_STEPS} tool steps without finishing. Ask again to carry on, ` +
-          "or narrow the question.";
+        this.notice = `Paused after ${MAX_STEPS} tool steps without finishing.`;
+        this.canContinue = true;
       }
     } catch (e) {
       if (!String(e).includes("AbortError")) {

@@ -2244,13 +2244,29 @@ M.list_gems = function(p)
 					gemId = gemId,
 					name = gemData.name or gemId,
 					support = isSupport,
+					-- Damage type and mechanics live here (e.g. "AoE, Projectile,
+					-- Lightning, Chaining"), which is what makes a set coherent.
 					tags = gemData.tagString and opt(gemData.tagString) or null,
 					color = opt(gemData.color),
+					-- How late the gem unlocks: it is the uncut gem level needed,
+					-- so a tier 9 gem is many levels past a tier 1 one.
+					tier = gemData.Tier and gemData.Tier or null,
+					-- Nil means any weapon; "Bow" means the skill is dead without one.
+					weapon = opt(gemData.weaponRequirements),
+					req_str = gemData.reqStr and gemData.reqStr > 0 and gemData.reqStr or null,
+					req_dex = gemData.reqDex and gemData.reqDex > 0 and gemData.reqDex or null,
+					req_int = gemData.reqInt and gemData.reqInt > 0 and gemData.reqInt or null,
 				}
 			end
 		end
 	end
-	table.sort(out, function(a, b) return (a.name or "") < (b.name or "") end)
+	-- Earliest first: a caller building for a given level wants the gems that
+	-- exist by then, not an alphabetical mix of tier 1 and tier 14.
+	table.sort(out, function(a, b)
+		local at, bt = a.tier or 99, b.tier or 99
+		if at ~= bt then return at < bt end
+		return (a.name or "") < (b.name or "")
+	end)
 	return { gems = out, total = total, truncated = (total > #out) }
 end
 

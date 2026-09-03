@@ -35,6 +35,12 @@ export const ALLOWED = new Set([
   "get_config",
   "list_config_options",
   "get_notes",
+  // Gems and gear cannot be chosen without looking them up first. add_gem's own
+  // description points at list_gems, and equipping a real unique needs the
+  // database rather than invented item text.
+  "list_gems",
+  "list_valid_supports",
+  "search_item_db",
   // write, approval-gated
   "alloc_node",
   "alloc_path",
@@ -44,9 +50,13 @@ export const ALLOWED = new Set([
   "set_level",
   "set_config",
   "set_main_skill",
+  "add_socket_group",
+  "set_socket_group",
   "add_gem",
+  "set_gem",
   "remove_gem",
   "equip_item_raw",
+  "equip_from_item_db",
   "unequip_item",
 ]);
 

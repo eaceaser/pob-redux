@@ -226,7 +226,14 @@
         {/if}
       {/each}
       {#if chat.busy}<div class="dim thinking">working…</div>{/if}
-      {#if chat.notice}<div class="notice">{chat.notice}</div>{/if}
+      {#if chat.notice}
+        <div class="failed">
+          <div class="notice">{chat.notice}</div>
+          {#if chat.canContinue}
+            <button class="btn sm ghost" onclick={() => chat.continueRun()} disabled={chat.busy}>Continue</button>
+          {/if}
+        </div>
+      {/if}
       {#if chat.error}
         <div class="failed">
           <div class="terr">{chat.error}</div>
@@ -471,7 +478,8 @@
     align-items: center;
     gap: 8px;
   }
-  .failed .terr {
+  .failed .terr,
+  .failed .notice {
     flex: 1;
   }
   /* The button overlaps the text, so it only appears on hover or focus. */
