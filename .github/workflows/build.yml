@@ -1,9 +1,11 @@
 name: build
 
+# Tags are handled by release.yml, which also signs and publishes. Building them
+# here too would compile the whole tree (LuaJIT included) a second time for no
+# extra coverage.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
