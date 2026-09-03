@@ -44,19 +44,19 @@ pob-redux/
 You need:
 
 - Rust stable. On Windows, the MSVC toolchain. The first build compiles LuaJIT.
-- Node 22 and pnpm 11. These are the versions CI uses.
+- Bun 1.4 or newer. This is what CI uses.
 - Tauri's platform prerequisites. Windows: WebView2. Linux: `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`,
   `librsvg2-dev`, `patchelf`, `libssl-dev`.
 - A checkout of [PathOfBuilding-PoE2](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2) next
   to this repo. Or set `POB_SOURCE` to its path.
 
 ```sh
-pnpm install
-pnpm sync                # copy PoB's Lua and data into src-tauri/resources/pob and decode the tree art. Run this first.
-pnpm sync:fast           # same, but keep the decoded tree art from the last sync
-pnpm tauri dev           # run the app with hot reload
-pnpm tauri build         # installers land in target/release/bundle/
-pnpm check               # type-check the frontend (svelte-check)
+bun install
+bun run sync                # copy PoB's Lua and data into src-tauri/resources/pob and decode the tree art. Run this first.
+bun run sync:fast           # same, but keep the decoded tree art from the last sync
+bun run tauri dev           # run the app with hot reload
+bun run tauri build         # installers land in target/release/bundle/
+bun run check               # type-check the frontend (svelte-check)
 ```
 
 CI runs the same steps on every push (`.github/workflows/build.yml`) and uploads the Windows installer and
@@ -71,9 +71,9 @@ The installer bundles PoB's Lua and game data. The app never downloads data whil
 built-in updater is inert (`LaunchSubScript` is a stub). To move to a newer PoB:
 
 1. Pull the PathOfBuilding-PoE2 checkout.
-2. Put the new commit hash in `pob-sync.toml`. `pnpm sync` refuses to run if the checkout's HEAD differs
+2. Put the new commit hash in `pob-sync.toml`. `bun run sync` refuses to run if the checkout's HEAD differs
    from that pin. Pass `--allow-commit-mismatch` to override.
-3. Run `pnpm sync`. Use the full sync when the tree changed: tree art is decoded only with `--tree-assets`,
+3. Run `bun run sync`. Use the full sync when the tree changed: tree art is decoded only with `--tree-assets`,
    and only for the newest `TreeData/<version>` folder.
 4. Run the headless checks below, then open one of your builds in the app. `lua/bridge.lua` drives PoB's internals,
    so an upstream refactor can break it.
@@ -89,12 +89,12 @@ overwrites them.
 `pobctl` drives the engine from the command line.
 
 ```sh
-pnpm ctl -- --pob-root src-tauri/resources/pob methods                  # list bridge methods
-pnpm ctl -- --pob-root src-tauri/resources/pob call get_build           # call one method
-pnpm ctl -- --pob-root src-tauri/resources/pob stats build.xml          # load a build and print its sidebar
-pnpm ctl -- --pob-root src-tauri/resources/pob bench                    # time full recalculations
-pnpm ctl -- --pob-root src-tauri/resources/pob power build.xml --stat Life --pool 8   # node power, sequential vs pool; mismatches must be 0
-pnpm ctl -- --pob-root src-tauri/resources/pob gems build.xml --group 1 --pool 8      # gem DPS scoring, sequential vs pool
+bun run ctl -- --pob-root src-tauri/resources/pob methods                  # list bridge methods
+bun run ctl -- --pob-root src-tauri/resources/pob call get_build           # call one method
+bun run ctl -- --pob-root src-tauri/resources/pob stats build.xml          # load a build and print its sidebar
+bun run ctl -- --pob-root src-tauri/resources/pob bench                    # time full recalculations
+bun run ctl -- --pob-root src-tauri/resources/pob power build.xml --stat Life --pool 8   # node power, sequential vs pool; mismatches must be 0
+bun run ctl -- --pob-root src-tauri/resources/pob gems build.xml --group 1 --pool 8      # gem DPS scoring, sequential vs pool
 ```
 
 ## Where builds are stored
@@ -131,7 +131,7 @@ socket groups; set config options; save or export. Every change shows in the app
 
 ## Contributing
 
-Issues and pull requests are welcome. Before a pull request, run `pnpm check` and the headless checks
+Issues and pull requests are welcome. Before a pull request, run `bun run check` and the headless checks
 above, then open one of your builds in the app and compare the sidebar with Path of Building itself.
 Keep the numbers PoB's own: do not reimplement calculations in Rust or TypeScript.
 

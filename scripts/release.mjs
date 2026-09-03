@@ -1,12 +1,12 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * One-command release: bump the version everywhere, commit, tag, and push.
  *
- *   pnpm release:tag patch        # 0.1.0 -> 0.1.1
- *   pnpm release:tag minor        # 0.1.0 -> 0.2.0
- *   pnpm release:tag major        # 0.1.0 -> 1.0.0
- *   pnpm release:tag 0.4.2        # explicit version
- *   pnpm release:tag patch --no-push   # bump + commit + tag locally, don't push
+ *   bun run release:tag patch        # 0.1.0 -> 0.1.1
+ *   bun run release:tag minor        # 0.1.0 -> 0.2.0
+ *   bun run release:tag major        # 0.1.0 -> 1.0.0
+ *   bun run release:tag 0.4.2        # explicit version
+ *   bun run release:tag patch --no-push   # bump + commit + tag locally, don't push
  *
  * Pushing the tag triggers .github/workflows/release.yml, which builds, signs,
  * and publishes the GitHub release (+ latest.json for the in-app updater).
@@ -38,7 +38,7 @@ function die(msg) {
   process.exit(1);
 }
 
-if (!bump) die("Usage: pnpm release:tag <patch|minor|major|x.y.z> [--no-push]");
+if (!bump) die("Usage: bun run release:tag <patch|minor|major|x.y.z> [--no-push]");
 
 // Run git with an argument array (no shell → no injection risk).
 // Returns trimmed stdout, or '' when output is inherited (stdio: 'inherit').

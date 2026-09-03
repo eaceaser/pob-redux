@@ -14,7 +14,7 @@
     "sync": "cargo run -p pob-sync -- --tree-assets",
     "sync:fast": "cargo run -p pob-sync --",
     "ctl": "cargo run -p pob-engine --bin pobctl --",
-    "release:tag": "node scripts/release.mjs"
+    "release:tag": "bun scripts/release.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.47",
@@ -38,9 +38,7 @@
     "typescript": "^5.9.0",
     "vite": "^8.2.2"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  }
+  "trustedDependencies": [
+    "esbuild"
+  ]
 }
