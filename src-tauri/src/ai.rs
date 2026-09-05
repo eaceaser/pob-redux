@@ -362,6 +362,38 @@ fn effort_capable(id: &str) -> bool {
 /// list endpoint, including Anthropic — Anthropic's just lives at `/v1/models`
 /// and wants its own auth header.
 ///
+/// Load a local Ollama model into memory ahead of the first message and keep
+/// it there for a while. Ollama loads on first use, which for a 6 GB model is
+/// tens of seconds the user would otherwise wait on their first question. Only
+/// the local provider: a hosted one has nothing to warm. Returns the load
+/// time in milliseconds.
+#[tauri::command]
+pub async fn ai_warm_model(app: AppHandle, provider: String, model: String) -> Result<u64, String> {
+    let p = find(&provider)?;
+    if p.id != "ollama-local" {
+        return Ok(0);
+    }
+    // The native API lives beside the OpenAI-compatible one, without /v1.
+    let base = base_url(&app, p);
+    let root = base.trim_end_matches('/').trim_end_matches("/v1").to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let t0 = std::time::Instant::now();
+    let res = client
+        .post(format!("{root}/api/generate"))
+        .json(&serde_json::json!({ "model": model, "keep_alive": "30m" }))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach Ollama: {e}"))?;
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("Ollama could not load {model}: {}", body.chars().take(200).collect::<String>()));
+    }
+    Ok(t0.elapsed().as_millis() as u64)
+}
+
 /// OpenRouter alone returns several hundred entries, so the list is filtered to
 /// chat models and the current generations are flagged `recommended` for the UI
 /// to group at the top.
@@ -669,11 +701,11 @@ mod tests {
             created_at: None,
             display_name: None, pricing: None,
         };
-        let raw = vec![same("claude-fable-5"), same("claude-opus-5"), same("claude-sonnet-5")];
+        let raw = [same("claude-fable-5"), same("claude-opus-5"), same("claude-sonnet-5")];
         let differ = raw.len() > 1 && raw.iter().any(|m| m.sort_key() != raw[0].sort_key());
         assert!(!differ, "identical timestamps must not be treated as orderable");
 
-        let mixed = vec![
+        let mixed = [
             super::RawModel { id: "old".into(), created: Some(1), created_at: None, display_name: None, pricing: None },
             super::RawModel { id: "new".into(), created: Some(2), created_at: None, display_name: None, pricing: None },
         ];

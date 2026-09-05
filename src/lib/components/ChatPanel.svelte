@@ -3,6 +3,7 @@
   import { chat, MAX_WIDTH, MIN_WIDTH, type ToolTurn } from "$lib/state/chat.svelte";
   import ProviderSettings from "$lib/components/ProviderSettings.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import Markdown from "$lib/components/Markdown.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
   let scroller = $state<HTMLDivElement | undefined>();
@@ -195,7 +196,7 @@
           >{turn.text}</button>
         {:else if turn.kind === "assistant"}
           <div class="botwrap">
-            <div class="turn bot">{turn.text}</div>
+            <div class="turn bot"><Markdown text={turn.text} /></div>
             <button
               class="copy"
               class:done={copied === i}
@@ -225,7 +226,11 @@
           </div>
         {/if}
       {/each}
-      {#if chat.busy}<div class="dim thinking">working…</div>{/if}
+      {#if chat.busy}
+        <div class="dim thinking" aria-live="polite">
+          working<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+      {/if}
       {#if chat.notice}
         <div class="failed">
           <div class="notice">{chat.notice}</div>
@@ -272,6 +277,7 @@
         placeholder="Ask anything, / for tools…"
         bind:value={chat.input}
         onkeydown={onKeydown}
+        onfocus={() => chat.touch()}
         disabled={chat.busy}
       ></textarea>
       <div class="bar">
@@ -334,12 +340,17 @@
         {/if}
 
         <div class="grow"></div>
+        {#if chat.needsWarm && chat.warmNote}
+          <span class="warm {chat.warm}" title="Ollama loads a model on first use; it is loaded and its prompt cached ahead of your first message.">
+            <span class="wdot"></span>{chat.warmNote}
+          </span>
+        {/if}
         {#if chat.busy}
           <button class="send" onclick={() => chat.stop()} title="Stop" aria-label="Stop">
             <Icon name="stop" size={13} />
           </button>
         {:else}
-          <button class="send" onclick={() => chat.send()} disabled={!chat.input.trim()} title="Send" aria-label="Send">
+          <button class="send" onclick={() => chat.send()} disabled={!chat.input.trim() || chat.warm === "loading" || chat.warm === "priming"} title={chat.warm === "loading" || chat.warm === "priming" ? "Waiting for the model" : "Send"} aria-label="Send">
             <Icon name="paper-plane" size={13} />
           </button>
         {/if}
@@ -488,6 +499,7 @@
   }
   .bot {
     color: var(--fg-0);
+    white-space: normal;
   }
   .copy {
     position: absolute;
@@ -598,6 +610,28 @@
   }
   .thinking {
     font-size: var(--fs-xs);
+    display: flex;
+    align-items: baseline;
+  }
+  /* Three dots pulsing in sequence, in the text colour: the same beat as the
+     status bar pulse so the two indicators read as one system. */
+  .dots {
+    display: inline-flex;
+    gap: 3px;
+    margin-left: 4px;
+  }
+  .dots i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .dots i:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .dots i:nth-child(3) {
+    animation-delay: 0.4s;
   }
   .empty {
     font-size: var(--fs-sm);
@@ -661,6 +695,35 @@
   }
   .grow {
     flex: 1;
+  }
+  .warm {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: var(--fs-2xs);
+    color: var(--fg-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+  }
+  .wdot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--fg-3);
+    flex: 0 0 auto;
+  }
+  .warm.loading .wdot,
+  .warm.priming .wdot {
+    background: var(--warn);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .warm.ready .wdot {
+    background: var(--ok);
+  }
+  .warm.failed .wdot {
+    background: var(--bad);
   }
   .pill {
     appearance: none;

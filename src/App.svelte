@@ -10,6 +10,7 @@
   import ConfigView from "$lib/views/ConfigView.svelte";
   import NotesView from "$lib/views/NotesView.svelte";
   import PartyView from "$lib/views/PartyView.svelte";
+  import OptimiseView from "$lib/views/OptimiseView.svelte";
   import ImportView from "$lib/views/ImportView.svelte";
   import OptionsModal from "$lib/components/OptionsModal.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
@@ -51,6 +52,8 @@
         await appOptions.init().catch(() => {});
         await mcp.init().catch(() => {});
         await chat.init(paths?.chat_open).catch(() => {});
+        if (paths?.chat_provider) await chat.setProvider(paths.chat_provider).catch(() => {});
+        if (paths?.chat_model) chat.setModel(paths.chat_model);
         appUpdate.init();
         // shared items added in this app are ours to restore (PoB's own
         // settings file, which also holds shared items, is never written)
@@ -60,10 +63,12 @@
         } catch {}
         if (paths?.open_on_start) {
           await build.loadFile(paths.open_on_start);
-        } else {
+        } else if (!(await build.reopenLast())) {
           await build.run(async () => {}, { sync: true });
         }
         build.view = (paths?.initial_view as typeof build.view) || "tree";
+        if (paths?.chat_allow) chat.allowWrites = true;
+        if (paths?.chat_log) chat.logPath = paths.chat_log;
         if (paths?.chat_ask) {
           chat.input = paths.chat_ask;
           // A value starting with "/" only fills the box, so the tool menu can
@@ -121,6 +126,8 @@
         <NotesView />
       {:else if build.view === "party"}
         <PartyView />
+      {:else if build.view === "optimise"}
+        <OptimiseView />
       {:else}
         <ImportView {paths} />
       {/if}

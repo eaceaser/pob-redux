@@ -3,6 +3,7 @@ use std::time::UNIX_EPOCH;
 
 mod mcp;
 mod tools;
+mod library;
 mod ai;
 mod sites;
 
@@ -15,7 +16,7 @@ use tauri::{Manager, State};
 
 pub(crate) struct AppState {
     pub(crate) engine: EngineHandle,
-    pool: Arc<EnginePool>,
+    pub(crate) pool: Arc<EnginePool>,
     pob_root: PathBuf,
     pub(crate) user_dir: PathBuf,
     pub(crate) mcp: mcp::McpState,
@@ -137,6 +138,13 @@ struct AppPaths {
     chat_open: Option<String>,
     /// Dev hook: send one message on boot (POB_REDUX_CHAT_ASK). Costs API credit.
     chat_ask: Option<String>,
+    /// Dev hook: skip the write-approval gate for that run (POB_REDUX_CHAT_ALLOW).
+    chat_allow: Option<String>,
+    /// Dev hook: write the transcript here when a run ends (POB_REDUX_CHAT_LOG).
+    chat_log: Option<String>,
+    /// Dev hooks: provider id and model to select on boot (POB_REDUX_CHAT_PROVIDER, POB_REDUX_CHAT_MODEL).
+    chat_provider: Option<String>,
+    chat_model: Option<String>,
 }
 
 fn open_on_start() -> Option<String> {
@@ -160,6 +168,10 @@ fn app_paths(state: State<'_, AppState>) -> AppPaths {
         initial_view: std::env::var("POB_REDUX_VIEW").ok(),
         chat_open: std::env::var("POB_REDUX_CHAT").ok(),
         chat_ask: std::env::var("POB_REDUX_CHAT_ASK").ok(),
+        chat_allow: std::env::var("POB_REDUX_CHAT_ALLOW").ok(),
+        chat_log: std::env::var("POB_REDUX_CHAT_LOG").ok(),
+        chat_provider: std::env::var("POB_REDUX_CHAT_PROVIDER").ok(),
+        chat_model: std::env::var("POB_REDUX_CHAT_MODEL").ok(),
     }
 }
 
@@ -674,6 +686,7 @@ pub fn run() {
             ai::ai_key_clear,
             ai::ai_base_set,
             ai::ai_models,
+            ai::ai_warm_model,
             ai::ai_chat_stream,
         ])
         .run(tauri::generate_context!())

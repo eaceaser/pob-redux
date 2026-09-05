@@ -264,7 +264,7 @@ fn main() {
                     eprintln!("load+calc: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
                     engine.call("get_sidebar", &Value::Null)
                 })
-                .map(|side| {
+                .inspect(|side| {
                     if let Some(rows) = side.get("rows").and_then(|r| r.as_array()) {
                         for row in rows {
                             let lhs = row.get("lhs").and_then(|v| v.as_str()).unwrap_or("");
@@ -274,7 +274,6 @@ fn main() {
                             }
                         }
                     }
-                    side
                 })
         }
         Cmd::Bench { iterations } => engine

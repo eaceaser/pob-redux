@@ -26,6 +26,7 @@ pub(crate) fn tool_context(app: &AppHandle) -> Arc<ToolContext> {
     let state = app.state::<AppState>();
     Arc::new(ToolContext {
         engine: state.engine.clone(),
+        pool: state.pool.clone(),
         user_dir: state.user_dir.clone(),
         app: app.clone(),
         calls: state.mcp.calls.clone(),

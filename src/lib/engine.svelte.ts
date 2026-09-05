@@ -70,6 +70,10 @@ export interface AppPaths {
     bytes: number;
   } | null;
   open_on_start: string | null;
+  chat_allow: string | null;
+  chat_log: string | null;
+  chat_provider: string | null;
+  chat_model: string | null;
   initial_view: string | null;
   chat_open: string | null;
   chat_ask: string | null;
@@ -272,7 +276,23 @@ export interface TreeState {
   ascendClassName: string | null;
   allocatedNodes: number[];
   allocatedNodeCount: number;
+  /** Counts weapon-set nodes too; use mainTreePointsUsed against a point budget. */
   pointsUsed: number;
+  mainTreePointsUsed: number;
+  ascendancyPointsUsed: number;
+  secondaryAscendancyPointsUsed: number;
+  jewelSocketsUsed: number;
+  weaponSet1PointsUsed: number;
+  weaponSet2PointsUsed: number;
+  weaponSetPointsAvailablePerSet: number;
+  characterLevel: number;
+  pointsFromLevels: number;
+  /** Quest points depend on campaign progress, not level, so the budget is a range. */
+  questPointsMin: number;
+  questPointsMax: number;
+  pointsAvailableMin: number;
+  pointsAvailableMax: number;
+  ascendancyPointsAvailable: number;
   /** Nodes whose live content differs from tree.json (switched attributes, ascendancy variants). */
   overrides: Record<string, NodeOverride>;
   sockets: SocketedJewel[];
@@ -442,6 +462,133 @@ export interface TooltipLine {
   text: string;
   center: boolean;
   sep: boolean;
+}
+
+export type GemKind = "skill" | "spirit" | "support";
+
+export interface GemName {
+  name: string;
+  gemId: string;
+  kind: GemKind;
+}
+
+
+export interface SkillRow {
+  group: number;
+  skill: string;
+  press: "active" | "persistent" | "trigger" | "meta" | "granted";
+  supports: number;
+  enabled: boolean;
+  main: boolean;
+}
+
+export interface BuildSummary {
+  characterLevel: number;
+  className: string;
+  ascendancyName: string | null;
+  mainSkill: string | null;
+  mainSkillGroup: number;
+  mainSkillSupports: number;
+  activeSkills: number;
+  persistentSkills: number;
+  triggerSkills: number;
+  metaSkills: number;
+  skills: SkillRow[];
+  pointsUsed: number;
+  mainTreePointsUsed: number;
+  pointsAvailableMin: number;
+  pointsAvailableMax: number;
+  ascendancyPointsUsed: number;
+  jewelSocketsUsed: number;
+  weaponSetPointsUsed: number;
+  life: number;
+  energyShield: number;
+  mana: number;
+  spirit: number;
+  spiritReserved: number;
+  spiritUnreserved: number;
+  charmLimit: number;
+  emptyCharms: number;
+  charmsEquipped: number;
+  charmsActive: number;
+  fireResist: number;
+  coldResist: number;
+  lightningResist: number;
+  chaosResist: number;
+  str: number;
+  dex: number;
+  int: number;
+  movementSpeedMod: number;
+  totalDPS: number;
+}
+
+export interface SanityFinding {
+  severity: "high" | "medium" | "low";
+  area: string;
+  message: string;
+  fix: string | null;
+}
+
+export interface SanityCheck {
+  findings: SanityFinding[];
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface GearOptParams {
+  preset?: "balanced" | "defence" | "damage";
+  weights?: { dps: number; life: number; ehp: number };
+  slots?: string[];
+  itemLevel?: number;
+  /** Roll within each tier, 0 to 1. */
+  range?: number;
+  resist?: number;
+  chaos?: number;
+  moveSpeed?: number;
+  titlePrefix?: string;
+}
+
+export interface GearOptProgress {
+  done: number;
+  total: number;
+  slot: string | null;
+  note: string;
+}
+
+export type GearOptStats = Record<string, number>;
+
+export interface GearProposal {
+  slot: string;
+  base: string;
+  type: string;
+  title: string;
+  replaces: string | null;
+  baseReason: string | null;
+  implicit: string | null;
+  lookFor: string[];
+  runes: string[];
+  affixes: { slot: "Prefix" | "Suffix"; group: string; modId: string; text: string }[];
+  mods: string[];
+  requirements: { level: number | null; str: number | null; dex: number | null; int: number | null };
+  raw: string;
+  evaluations: number;
+  output: GearOptStats;
+  delta: GearOptStats;
+}
+
+export interface GearOptResult {
+  preset: string;
+  weights: { dps: number; life: number; ehp: number };
+  itemLevel: number;
+  range: number;
+  slots: string[];
+  before: GearOptStats;
+  after: GearOptStats;
+  delta: GearOptStats;
+  proposals: GearProposal[];
+  skipped: { slot: string; reason: string }[];
+  ms: number;
 }
 
 export interface SlotInfo {
@@ -642,7 +789,7 @@ export const engine = {
       "version",
     ),
   newBuild: (name?: string) => call<BuildInfo>("new_build", { name }),
-  loadBuildXml: (xml: string, name?: string) => call<BuildInfo>("load_build_xml", { xml, name }),
+  loadBuildXml: (xml: string, name?: string, path?: string) => call<BuildInfo>("load_build_xml", { xml, name, path }),
   loadBuildCode: (code: string, name?: string) => call<BuildInfo>("load_build_code", { code, name }),
   loadBuildFile: (path: string) => call<BuildInfo>("load_build_file", { path }),
   saveBuildXml: () => call<{ xml: string }>("save_build_xml"),
@@ -711,6 +858,10 @@ export const engine = {
   copySocketGroup: (index: number) => call<{ text: string }>("copy_socket_group", { index }),
   pasteSocketGroup: (text: string) => call<Skills>("paste_socket_group", { text }),
   gemTooltip: (groupIndex: number, gemIndex: number) => call<{ lines: TooltipLine[] }>("gem_tooltip", { groupIndex, gemIndex }),
+  /** The same tooltip for any gem, socketed or not, at the build's default gem level. */
+  gemTooltipById: (gemId: string) => call<{ lines: TooltipLine[] }>("gem_tooltip", { gemId }),
+  /** Every gem name with its kind, for highlighting names in prose. */
+  gemNames: () => call<{ gems: GemName[] }>("gem_names"),
   selectSkillSet: (id: number) => call<Skills>("select_skill_set", { id }),
   createSkillSet: (title?: string) => call<Skills>("create_skill_set", { title }),
   copySkillSet: (id?: number, title?: string) => call<Skills>("copy_skill_set", { id, title }),
@@ -805,4 +956,10 @@ export const engine = {
   getNotes: () => call<{ text: string }>("get_notes"),
   setNotes: (text: string) => call<{ ok: boolean }>("set_notes", { text }),
   takeClipboard: () => call<{ text: string | null }>("take_clipboard"),
+  // Deterministic build tools (no assistant needed)
+  buildSummary: () => call<BuildSummary>("build_summary"),
+  sanityCheck: () => call<SanityCheck>("sanity_check"),
+  gearOptStart: (p: GearOptParams) => call<{ done: boolean; progress: GearOptProgress }>("gear_opt_start", p),
+  gearOptStep: (budgetMs = 150) => call<{ done: boolean; progress: GearOptProgress }>("gear_opt_step", { budgetMs }),
+  gearOptResult: () => call<GearOptResult>("gear_opt_result"),
 };

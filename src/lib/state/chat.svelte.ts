@@ -12,9 +12,12 @@ import {
   type ProviderStatus,
 } from "$lib/ai/providers";
 import { proxyFetch } from "$lib/ai/transport";
+import { STYLE } from "$lib/ai/prompt";
 import { callTool, loadToolDefs, toToolSet, type ToolDef } from "$lib/ai/tools";
+import { writeTextFile } from "$lib/engine.svelte";
 import { stripPobText } from "$lib/pobtext";
 import { build } from "$lib/state/build.svelte";
+import { gems } from "$lib/state/gems.svelte";
 
 const KEY = "pob-redux:chat";
 /**
@@ -23,9 +26,17 @@ const KEY = "pob-redux:chat";
  * a supports lookup, then a stat read to check the result. Twelve ran out
  * midway through exactly that. This is a runaway guard, not a budget.
  */
-const MAX_STEPS = 32;
+const MAX_STEPS = 48;
+/** Anthropic cache breakpoint; see markCacheBreakpoint for the lifetime choice. */
+const CACHE = { type: "ephemeral", ttl: "1h" } as const;
 export const MIN_WIDTH = 320;
 export const MAX_WIDTH = 900;
+
+/** The prompt forbids em and en dashes; this is the backstop for the ones that slip through. */
+const plainDashes = (s: string) => s.replace(/(\d)\s*[—–]\s*(\d)/g, "$1-$2").replace(/\s*[—–]\s*/g, ", ");
+
+/** An answer that ends on an intention instead of an action. */
+const ANNOUNCED = /\b(i'?ll|i will(?! not)|let me|i'?m going to|i am going to|will now)\b[^.!?\n]{0,160}[.!]?\s*$/i;
 
 const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(w)));
 
@@ -47,77 +58,6 @@ export type Turn =
   | { kind: "assistant"; text: string }
   | ToolTurn;
 
-/**
- * Appended to PoB's own tool instructions. Kept stable so the whole block stays
- * cacheable — anything that changes per turn goes in the user message instead.
- */
-const STYLE = `
-
-## How to answer
-
-You are in the assistant panel of PoB Redux. The user is looking at the build
-and watching it change as you work.
-
-Write in plain language, following ISO 24495-1:2023:
-
-- Lead with the answer. Put the conclusion in the first sentence.
-- Keep it short. Two or three sentences is usually enough. Use a short list when
-  there is more than one item.
-- Use common words and the reader's terms. Path of Exile jargon is fine; jargon
-  about your own process is not.
-- One idea per sentence. Prefer active voice.
-- Do not open with a restatement of the question or a preamble.
-
-Do not use rhetorical flourishes. In particular:
-
-- No negative parallelism ("not X, but Y").
-- No sentence fragments for emphasis.
-- No contrast pairs that state one point twice.
-
-State what a thing is in one clause and stop.
-
-## Choosing gems and gear
-
-Never name a gem or item from memory. Call list_gems or search_item_db and use
-what comes back: the ids you remember may not exist in this patch, and the
-listing carries the facts that decide whether a choice is sound.
-
-A build is one main skill that the rest of the build amplifies. Four attack
-skills competing for the same support gems, passives and gear is four weak
-builds, not one strong one. Pick the main skill first, support that, and only
-then add utility — movement, a curse, an aura, a totem.
-
-Read these fields before choosing:
-
-- **tags** carry the damage type. Supports, passives and gear scale one type,
-  so a lightning skill supported by lightning damage is worth more than three
-  skills spread across lightning, fire and chaos. Mixed damage is a deliberate
-  archetype, not a default.
-- **tier** is how late the gem unlocks, as the uncut gem level needed. A tier 9
-  gem is many levels past a tier 1 one. Do not hand a level 12 character a set
-  it cannot assemble for another thirty levels.
-- **weapon** must match what is equipped. A Bow skill on a character holding a
-  mace does nothing.
-- **req_str / req_dex / req_int** must be within reach of the character's
-  attributes, which get_character and get_stats report.
-
-Check the character's level before recommending anything. What suits a level 90
-character is useless to a level 12 one, and saying which stage a suggestion is
-for is more useful than a list that ignores the question.
-
-Use list_valid_supports rather than guessing which supports apply.
-
-Where a genuinely good choice depends on playstyle or budget, say so in one
-line and pick a reasonable default rather than asking.
-
-## Accuracy
-
-Every number must come from a tool call. Never estimate, and never carry a
-number over from memory of another build. Name the stat key when you quote one.
-
-Read before you write. Do not say you changed something unless the tool call
-returned successfully. If a call fails or the user declines it, say so plainly
-and stop; do not retry the same call.`;
 
 /**
  * Turn a provider failure into something worth reading.
@@ -177,6 +117,18 @@ class ChatStore {
   allowWrites = $state(false);
   /** Tool names, for the `/` menu. */
   toolNames = $state<ToolDef[]>([]);
+  /** Dev hook: transcript file written when a run ends (POB_REDUX_CHAT_LOG). */
+  logPath: string | null = null;
+  /**
+   * Ollama (Local) loads a model on first use and then evaluates the whole
+   * prompt, tens of seconds a user would otherwise wait on their first
+   * question. So the model is loaded and its prompt cache primed when it is
+   * picked, and the composer says so. Hosted providers are always "ready".
+   */
+  warm = $state<"ready" | "loading" | "priming" | "failed">("ready");
+  warmNote = $state("");
+  private warmSeq = 0;
+  private lastRequestAt = 0;
 
   private defs: ToolDef[] = [];
   private history: ModelMessage[] = [];
@@ -220,6 +172,60 @@ class ChatStore {
     await this.refreshModels();
     this.defs = await loadToolDefs().catch(() => []);
     this.toolNames = this.defs;
+    void gems.load();
+    void this.warmUp();
+  }
+
+  get needsWarm() {
+    return this.current?.id === "ollama-local";
+  }
+
+  /** Load the local model and prime its prompt cache with the real prompt and tools. */
+  async warmUp() {
+    if (!this.needsWarm || !this.model) {
+      this.warm = "ready";
+      this.warmNote = "";
+      return;
+    }
+    const seq = ++this.warmSeq;
+    this.warm = "loading";
+    this.warmNote = `loading ${this.model}`;
+    try {
+      const ms = await invoke<number>("ai_warm_model", { provider: this.provider, model: this.model });
+      if (seq !== this.warmSeq) return;
+      this.warm = "priming";
+      this.warmNote = "priming the prompt";
+      if (!this.defs.length) this.defs = await loadToolDefs();
+      const instructions = (await invoke<string>("ai_instructions").catch(() => "")) + STYLE;
+      // The same request shape as a real turn, one token long, so the cached
+      // prefix matches what the first question will send.
+      const result = streamText({
+        model: this.buildModel("open-ai-compatible"),
+        tools: toToolSet(this.defs),
+        maxOutputTokens: 1,
+        instructions: { role: "system", content: instructions },
+        messages: [{ role: "user", content: "Ready?" }],
+      });
+      for await (const _ of result.fullStream) {
+        // drain
+      }
+      if (seq !== this.warmSeq) return;
+      this.lastRequestAt = Date.now();
+      this.warm = "ready";
+      this.warmNote = ms > 1000 ? `ready, loaded in ${Math.round(ms / 1000)}s` : "ready";
+    } catch (e) {
+      if (seq !== this.warmSeq) return;
+      this.warm = "failed";
+      this.warmNote = explainError(e, this.current?.label ?? this.provider);
+    }
+  }
+
+  /**
+   * The composer was focused. Ollama unloads an idle model after a few
+   * minutes; warming again then is cheap and saves the wait on the next send.
+   */
+  touch() {
+    if (this.needsWarm && this.warm === "ready" && Date.now() - this.lastRequestAt > 4 * 60_000) void this.warmUp();
   }
 
   private persist() {
@@ -245,6 +251,7 @@ class ChatStore {
   setModel(id: string) {
     this.model = id;
     this.persist();
+    void this.warmUp();
   }
 
   setEffort(e: Effort) {
@@ -262,6 +269,7 @@ class ChatStore {
     this.provider = id;
     this.persist();
     await this.refreshModels();
+    void this.warmUp();
   }
 
   async refreshProviders() {
@@ -352,6 +360,7 @@ class ChatStore {
   async send() {
     const text = this.input.trim();
     if (!text || this.busy) return;
+    if (this.warm === "loading" || this.warm === "priming") return;
     this.input = "";
     this.error = null;
     this.notice = null;
@@ -427,6 +436,29 @@ class ChatStore {
     })(this.model);
   }
 
+  /**
+   * Cache the conversation so far. The system prompt and tools carry a fixed
+   * breakpoint; this one moves to the newest message each step, and Anthropic
+   * matches the unchanged prefix against the previous step's cache, so a
+   * 20-step task pays for each message about once rather than 20 times.
+   *
+   * The 1-hour lifetime is for the gaps between turns: a user reading an
+   * answer and typing the next question often takes longer than the 5-minute
+   * default, after which the whole prefix would be written again.
+   *
+   * OpenAI and Ollama cache a repeated prefix on their own, and this loop
+   * already keeps tools, system prompt and history in a stable, append-only
+   * order, which is all they need. The other providers ignore the option.
+   */
+  private markCacheBreakpoint() {
+    const mark = { anthropic: { cacheControl: CACHE } };
+    for (let i = 0; i < this.history.length; i++) {
+      const m = this.history[i] as ModelMessage & { providerOptions?: Record<string, unknown> };
+      if (i === this.history.length - 1) m.providerOptions = mark;
+      else delete m.providerOptions;
+    }
+  }
+
   private async run() {
     this.busy = true;
     this.abort = new AbortController();
@@ -441,8 +473,16 @@ class ChatStore {
       // Set when the model itself ends the turn, so exhausting the step budget
       // can be told apart from finishing.
       let done = false;
+      // Read calls made this run, by name and arguments. A small model that
+      // repeats one is looping; answering from the earlier result breaks the
+      // loop instead of spending the step budget on it.
+      const seen = new Map<string, number>();
+      // A small model sometimes ends its turn on "I'll do X now" without doing
+      // X. One nudge per run turns that into the call.
+      let nudged = false;
 
       for (let step = 0; step < MAX_STEPS; step++) {
+        this.markCacheBreakpoint();
         const result = streamText({
           model,
           abortSignal: this.abort.signal,
@@ -454,7 +494,7 @@ class ChatStore {
           instructions: {
             role: "system",
             content: instructions,
-            providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+            providerOptions: { anthropic: { cacheControl: CACHE } },
           },
           messages: this.history,
         });
@@ -468,13 +508,14 @@ class ChatStore {
             }
             const next = [...this.turns];
             const cur = next[at];
-            if (cur.kind === "assistant") next[at] = { kind: "assistant", text: cur.text + part.text };
+            if (cur.kind === "assistant") next[at] = { kind: "assistant", text: plainDashes(cur.text + part.text) };
             this.turns = next;
           } else if (part.type === "error") {
             throw part.error;
           }
         }
 
+        this.lastRequestAt = Date.now();
         const u = await result.usage;
         this.usage = {
           input: this.usage.input + (u.inputTokens ?? 0),
@@ -485,6 +526,15 @@ class ChatStore {
 
         this.history.push(...(await result.responseMessages));
         const finish = await result.finishReason;
+        if (finish === "stop" && !nudged && at >= 0) {
+          const last = this.turns[at];
+          const text = last?.kind === "assistant" ? last.text.trim() : "";
+          if (ANNOUNCED.test(text.slice(-200))) {
+            nudged = true;
+            this.history.push({ role: "user", content: "Do it now: call the tool. Do not describe what you are about to do." });
+            continue;
+          }
+        }
         if (finish !== "tool-calls") {
           // Anything other than a plain stop ended the answer early, and saying
           // so is the difference between "finished" and "gave up quietly".
@@ -511,6 +561,25 @@ class ChatStore {
             status: readOnly.get(call.toolName) ? "running" : "awaiting",
           };
           this.turns = [...this.turns, turn];
+
+          const key = `${call.toolName}:${JSON.stringify(call.input ?? {})}`;
+          if (turn.readOnly) {
+            const n = (seen.get(key) ?? 0) + 1;
+            seen.set(key, n);
+            if (n >= 3) {
+              this.patchTool(turn.id, { status: "skipped", error: "repeated call" });
+              outputs.push({
+                type: "tool-result",
+                toolName: call.toolName,
+                toolCallId: call.toolCallId,
+                output: {
+                  type: "text",
+                  value: `You already called ${call.toolName} with these arguments ${n - 1} times this turn and the result did not change. Do not call it again. Use what you have and answer the user now.`,
+                },
+              });
+              continue;
+            }
+          }
 
           const ok = await this.approve(turn);
           if (!ok) {
@@ -559,6 +628,10 @@ class ChatStore {
     } finally {
       this.busy = false;
       this.abort = null;
+      if (this.logPath) {
+        const log = { turns: this.turns, usage: this.usage, notice: this.notice, error: this.error, at: new Date().toISOString() };
+        writeTextFile(this.logPath, JSON.stringify(log, null, 2)).catch(() => {});
+      }
     }
   }
 }

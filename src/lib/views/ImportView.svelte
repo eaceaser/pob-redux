@@ -407,9 +407,9 @@
       <button class="btn sm" onclick={openXml}>Open file…</button>
     </div>
     <div class="list">
-      {#if autosave}
+      {#if autosave && autosave.name !== build.info?.name}
         <div class="recover">
-          <span>Autosaved <b>{autosave.name}</b> · {fmtTime(autosave.at)}</span>
+          <span>Last open <b>{autosave.name}</b> · {fmtTime(autosave.at)}</span>
           <span class="acts2">
             <button class="btn sm" onclick={restoreAutosave} disabled={build.busy > 0}>Restore</button>
             <button class="btn sm ghost" onclick={() => { localStorage.removeItem("pob-redux:autosave"); autosave = null; }}>Dismiss</button>

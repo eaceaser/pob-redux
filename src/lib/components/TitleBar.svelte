@@ -15,7 +15,8 @@
     { id: "config", label: "Config", key: "5" },
     { id: "notes", label: "Notes", key: "6" },
     { id: "party", label: "Party", key: "7" },
-    { id: "import", label: "Import / Export", key: "8" },
+    { id: "optimise", label: "Optimise", key: "8" },
+    { id: "import", label: "Import / Export", key: "9" },
   ];
 
   // the build name lives in the sidebar; the OS title carries it for the taskbar

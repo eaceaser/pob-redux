@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use pob_engine::EngineHandle;
+use pob_engine::{EngineHandle, EnginePool};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter};
@@ -18,17 +18,29 @@ pub(crate) const INSTRUCTIONS: &str = "This server drives the build that is open
 Path of Exile 2). Every number comes from Path of Building's own calculation engine, and every change is \
 shown in the app immediately. Start with get_character and get_stats to see what is loaded, or load_build \
 to open a share code, a pobb.in / Maxroll / poe.ninja / poe2db.tw / Pastebin / Rentry link, a local .xml \
-or .build file, or raw PoB XML. Inspect with get_stats / list_stat_keys / get_sidebar / get_tree_state / \
-get_items / get_skills / get_config / sanity_check. Explore the passive tree with search_tree, node_info and \
-node_path_cost. To reach a notable, find it with search_tree, then path_plan for a route — it takes an objective \
-(defence, damage, speed, attributes, or a stat substring) and a max_extra point budget, so \"path to X optimising \
-for defence\" is one call — and alloc_path to take it. Most of this tree is attribute nodes, so call \
-set_attribute_choice (1 Str, 2 Dex, 3 Int) before pathing when the user says which they want. \
-Change the build with alloc_node / dealloc_node / select_class / set_level, equip_item_raw / \
-unequip_item, add_gem / set_gem / remove_gem / set_main_skill, and set_config. Manage alternate trees and \
-gear sets with the list/select/create/copy/rename/delete _spec and _item_set tools. Mutations return a \
-short `stats` summary; call get_stats for anything else. Use save_build or export_build to persist the \
-result. The user is watching the app while you work.";
+or .build file, or raw PoB XML. For advice or a fix, start with build_summary — one call gives the level, \
+main skill and its support count, every skill group with whether it needs a keypress, the passive point \
+budget for that level, spirit and its reservation, charm slots and resistances — then sanity_check for \
+ranked findings with fixes. The library tool holds game knowledge PoB does not carry (point budgets, gem \
+levels, what published builds do, what belongs in each gear slot); read advising-builds before a \
+recommendation and the topic that matches the question. \
+Set the level with set_level before anything else if the user names one: it changes every number, and gates \
+which gems exist. Inspect further with get_stats / list_stat_keys / get_sidebar / get_tree_state / \
+get_items / get_skills / get_config. Explore the passive tree with search_tree, node_info and \
+node_path_cost; tree_suggest scores every reachable node for one stat and returns the best unallocated \
+ones per point plus the weakest allocated ones. To reach a notable, find it with search_tree, then path_plan \
+for a route — it takes an objective (defence, damage, speed, attributes, or a stat substring) and a max_extra \
+point budget, so \"path to X optimising for defence\" is one call — and alloc_path to take it. Most of this \
+tree is attribute nodes, so call set_attribute_choice (1 Str, 2 Dex, 3 Int) before pathing when the user \
+says which they want. Change the build with alloc_node / dealloc_node / select_class / set_level, \
+equip_item_raw / unequip_item, add_gem / set_gem / remove_gem / set_main_skill, and set_config. For better \
+gear, optimise_gear searches the real mod pool for every slot and scores each candidate with PoB, keeping \
+resistances capped; apply its proposals with `apply` or equip_item_raw. For one specific item, list_bases \
+then list_affixes for the mod pool, then craft_rare, which builds it from PoB's own affix tables. Before a \
+run of changes call checkpoint; every write returns `stats` and a `delta` \
+against the previous state, and rollback restores a checkpoint if the result is worse. Manage alternate \
+trees and gear sets with the list/select/create/copy/rename/delete _spec and _item_set tools. Use \
+save_build or export_build to persist the result. The user is watching the app while you work.";
 
 const HEADLINE: &[&str] = &[
     "Life",
@@ -52,6 +64,7 @@ const HEADLINE: &[&str] = &[
 
 pub struct ToolContext {
     pub(crate) engine: EngineHandle,
+    pub(crate) pool: Arc<EnginePool>,
     pub(crate) user_dir: PathBuf,
     pub(crate) app: AppHandle,
     pub(crate) calls: Arc<AtomicU64>,
@@ -79,15 +92,41 @@ impl ToolContext {
             .unwrap_or(Value::Null)
     }
 
-    fn with_stats(&self, mut v: Value) -> Value {
+    /// Attach the headline stats to a write's result, with the change against
+    /// `before` for every number that moved, so a caller can judge an edit
+    /// from the result alone.
+    fn with_stats(&self, mut v: Value, before: Option<&Value>) -> Value {
+        let after = self.headline();
+        let delta = before.map(|b| stat_delta(b, &after)).unwrap_or(Value::Null);
         match &mut v {
             Value::Object(m) => {
-                m.insert("stats".into(), self.headline());
+                m.insert("stats".into(), after);
+                m.insert("delta".into(), delta);
                 v
             }
-            _ => json!({ "result": v, "stats": self.headline() }),
+            _ => json!({ "result": v, "stats": after, "delta": delta }),
         }
     }
+}
+
+fn stat_delta(before: &Value, after: &Value) -> Value {
+    let (Some(b), Some(a)) = (before.as_object(), after.as_object()) else {
+        return Value::Null;
+    };
+    let mut out = Map::new();
+    for (k, av) in a {
+        let (Some(x), Some(y)) = (b.get(k).and_then(Value::as_f64), av.as_f64()) else { continue };
+        let d = y - x;
+        if d.abs() > 1e-6 {
+            let rounded = (d * 100.0).round() / 100.0;
+            out.insert(k.clone(), json!(rounded));
+        }
+    }
+    Value::Object(out)
+}
+
+fn is_read_only(name: &str) -> bool {
+    defs().iter().any(|d| d.name == name && d.read_only)
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +205,40 @@ pub(crate) fn defs() -> Vec<ToolDef> {
         ),
         ro("list_stat_keys", "Every stat key get_stats can return for the open build.", none()),
         ro("get_sidebar", "The stat panel exactly as the app shows it: labelled rows plus PoB's warnings. Good for a quick human-style summary.", none()),
-        ro("sanity_check", "Heuristic warnings about the open build: uncapped or negative resistances, low life for the level, and similar. An empty list is not proof the build is sound.", none()),
+        ro(
+            "sanity_check",
+            "Review the open build and return ranked findings, each with `severity` (high/medium/low), `area`, `message` and a suggested `fix`. Covers resistances, the passive point budget against the character's level, ascendancy points, support count on the main skill, spirit reservation, charm slots (empty, or more charms than the belt allows), life and energy shield for the level, movement speed, unused weapon set points, and gem errors such as unmet attribute requirements. An empty list is not proof the build is sound, and a finding is about numbers only: it cannot see how skills interact in play.",
+            none(),
+        ),
+        ro(
+            "build_summary",
+            "One compact snapshot of the open build: level, class, ascendancy, main skill and its support count, every skill group as `skills` (group index, skill, `press` = active/persistent/trigger/meta/granted, support count, enabled, main), how many skills need a keypress, passive points used against the budget available at that level, ascendancy and weapon set points, life, energy shield, mana, spirit and its reservation, charm slots, resistances, attributes, movement speed and DPS. Only `active` skills cost a keypress. Prefer this over several get_stats calls when starting to advise on a build.",
+            none(),
+        ),
+        ro(
+            "library",
+            &format!(
+                "Game knowledge PoB does not carry, written for advising on builds. Pass `topic` to read one; omit it for the index. Topics: {}.",
+                crate::library::index()
+            ),
+            obj(json!({ "topic": prop("string", "Topic slug from the list, or a word from its description") }), &[]),
+        ),
+        ro(
+            "checkpoint",
+            "Snapshot the whole build in memory under a label, so a run of edits can be undone with rollback. Tree edits have undo; gear, gem and config edits do not, so call this before changing them. Returns the labels that exist.",
+            obj(json!({ "label": prop("string", "Name for the snapshot (default: numbered)") }), &[]),
+        ),
+        rw(
+            "rollback",
+            "Restore a checkpoint, replacing the open build with it. Without a label, the most recent checkpoint. Returns the life, DPS and EHP the checkpoint had.",
+            obj(json!({ "label": prop("string", "Checkpoint label (default: the latest)") }), &[]),
+        ),
         // Tree
-        ro("get_tree_state", "Allocated passive nodes of the active tree: node ids, points used, class ids, and node overrides. Use node_info for details on any id.", none()),
+        ro(
+            "get_tree_state",
+            "Allocated passive nodes of the active tree: node ids, class ids, and node overrides, plus the point accounting — points used, ascendancy and weapon set points, jewel sockets, and the budget available at the character's level. The budget is a range because quest points depend on campaign progress rather than level. Use node_info for details on any id.",
+            none(),
+        ),
         ro(
             "search_tree",
             "Search the passive tree of the open build by name or stat text, with optional type and ascendancy filters.",
@@ -183,6 +253,20 @@ pub(crate) fn defs() -> Vec<ToolDef> {
                 &[],
             ),
         ),
+        ro(
+            "tree_suggest",
+            "Score every main-tree node for one stat by running PoB's calculation with it allocated (or, for allocated nodes, as it stands), and return the best unallocated nodes by gain per point along their path (`bestToAdd`) plus the allocated nodes the build would miss least (`weakestAllocated`: `lossIfRemoved` and how many allocated nodes depend on each; a path node with dependents cannot go alone). `stat` is a PoB output key: Life, TotalEHP, Armour, Evasion, EnergyShield, CombinedDPS, TotalDPS, FullDPS, AverageDamage, Speed, CritChance, BlockChance, EffectiveMovementSpeedMod, Str, Dex, Int, LifeRegen, LifeLeechRate, Mana, and the *TakenHit keys; list_power_stats has them all. Takes a few seconds. Path costs are from the current tree; use path_plan or alloc_node to take one.",
+            obj(
+                json!({
+                    "stat": prop("string", "Output key to score (default CombinedDPS)"),
+                    "limit": prop("integer", "Rows per list (default 15)"),
+                    "max_points": prop("integer", "Only unallocated nodes within this many points (default 8)"),
+                    "node_type": { "type": "string", "enum": ["Notable", "Keystone", "Normal"], "description": "Only nodes of this type (default: all)" }
+                }),
+                &[],
+            ),
+        ),
+        ro("list_power_stats", "Every stat tree_suggest can score.", none()),
         ro("node_info", "Name, type, stats, mods, allocation state, and path cost of one node.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         ro("node_path_cost", "How many points allocating a node would cost from the current tree, and the path PoB would take. Does not allocate.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         ro(
@@ -264,6 +348,62 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
             "Equip an item from PoB's unique database (or a rare template) by its exact name.",
             obj(json!({ "name": prop("string", "Exact item name from search_item_db"), "db": { "type": "string", "enum": ["unique", "rare"] }, "slot": prop("string", "Slot name from get_items (optional)") }), &["name"]),
         ),
+        rw(
+            "optimise_gear",
+            "Design a rare for each chosen slot by greedy search over the affix families that roll on the slot's base, every candidate scored by PoB's calculation. An empty slot gets a base picked from the build: the defence type the character's attributes favour, the weapon type the main skill needs, a shield when a skill uses one, all within the character's level. Keeps resistances at 75, attribute requirements met and movement speed on boots, then maximises DPS, life and effective HP by the chosen aim. Item level defaults to the character's level. Each proposal carries `lookFor` (the mod lines without numbers, what to look for in game), `base`, `baseReason`, `mods`, `raw` and a stat delta; `summary` says what happened. Nothing is equipped unless `apply` is true. Unique items are left alone. Takes a few seconds for all slots. This is the tool for filling empty slots or improving gear; do not craft slot by slot.",
+            obj(
+                json!({
+                    "aim": { "type": "string", "enum": ["balanced", "defence", "damage"], "description": "What to weight (default balanced)" },
+                    "slots": { "type": "array", "items": { "type": "string" }, "description": "Slot names to optimise (default: every equipped non-unique slot)" },
+                    "item_level": prop("integer", "Item level for the mod pool (default 82)"),
+                    "range": prop("number", "Roll within each tier, 0 to 1 (default 1)"),
+                    "apply": prop("boolean", "Equip every proposal (default false)")
+                }),
+                &[],
+            ),
+        ),
+        rw(
+            "set_gem_levels",
+            "Cap every skill gem at the highest level the character's level allows (tier ladder: level 40 allows level 10 gems, 58 allows 14, 90 allows 20). Imported planner builds carry max-level gems at every stage, which inflates attribute requirements and damage; call this after set_level on a levelling build.",
+            obj(json!({ "level": prop("integer", "Character level to cap for (default: the build's level)") }), &[]),
+        ),
+        ro(
+            "list_bases",
+            "Item bases of one type with the numbers that decide between them: weapon damage, attack rate and crit; armour, evasion and energy shield; requirements; implicit; rune sockets. `type` is a family (Boots, Helmet, Ring, Two Hand Mace) or a typed list (Boots: Armour); omit it for the list of types. The best endgame bases are usually the highest requirement ones.",
+            obj(json!({ "type": prop("string", "Item type or family"), "query": prop("string", "Substring of the base name"), "limit": prop("integer", "Maximum results (default 60)") }), &[]),
+        ),
+        ro(
+            "list_affixes",
+            "The mod pool for a base at an item level, from PoB's own affix tables: one row per mod family for prefixes and for suffixes, each with the best tier that item level allows (`modId`, `label` with its value range, `level` the tier needs, `tiers` available). Also gives how many prefixes and suffixes the base can hold. Use the `group` or the mod text with craft_rare.",
+            obj(
+                json!({
+                    "type": prop("string", "Item type or family, as list_bases"),
+                    "base_name": prop("string", "Base name from list_bases"),
+                    "item_level": prop("integer", "Item level (default 82)"),
+                    "query": prop("string", "Substring to filter mod text or family")
+                }),
+                &["type", "base_name"],
+            ),
+        ),
+        rw(
+            "craft_rare",
+            "Build a rare item from a base and a list of wanted mods, then equip it. Every line comes from PoB's affix tables at the best tier the item level allows, so nothing is invented. Each wanted mod is a family name from list_affixes (IncreasedLife, MovementVelocity, FireResistance), a substring of the mod text (\"increased Physical Damage\"), or an exact modId. A base takes at most 3 prefixes and 3 suffixes; a family can appear once. `range` is the roll within the tier: 1 is a perfect roll, 0.5 the middle. Returns the mod lines, the item's requirements, its raw text, and the stat delta.",
+            obj(
+                json!({
+                    "type": prop("string", "Item type or family, as list_bases"),
+                    "base_name": prop("string", "Base name from list_bases"),
+                    "title": prop("string", "Item name"),
+                    "item_level": prop("integer", "Item level (default 82)"),
+                    "prefixes": { "type": "array", "items": { "type": "string" }, "description": "Up to 3 wanted prefixes" },
+                    "suffixes": { "type": "array", "items": { "type": "string" }, "description": "Up to 3 wanted suffixes" },
+                    "range": prop("number", "Roll within each tier, 0 to 1 (default 1)"),
+                    "runes": { "type": "array", "items": { "type": "string" }, "description": "Rune names for the item's sockets, in order (e.g. Iron Rune)" },
+                    "slot": prop("string", "Slot to equip into (default: the first slot it fits)"),
+                    "equip": prop("boolean", "Equip after crafting (default true)")
+                }),
+                &["type", "base_name"],
+            ),
+        ),
         // Item sets
         ro("list_item_sets", "The build's gear sets and which one is active.", none()),
         rw("select_item_set", "Switch the active gear set.", obj(json!({ "id": prop("integer", "Item set id from list_item_sets") }), &["id"])),
@@ -273,24 +413,34 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         del("delete_item_set", "Delete a gear set. Fails if it is the only one.", obj(json!({ "id": prop("integer", "Item set id") }), &["id"])),
         // Skills
         ro("get_skills", "Socket groups, the gems in each (name, level, quality, enabled), and which group is the main skill.", none()),
+        ro(
+            "skill_info",
+            "What a skill or support does, in PoB's own words: the gem's description, tags, cost, cooldown, reservation and stat lines at its level, with \"(Not supported in PoB yet)\" on any line the calculation ignores. Pass skill (the name of a socketed skill), or group_index (and gem_index for a support), or gem_id for any gem by id or name. Read this before removing or replacing a skill: a warcry, buff, trigger or mechanic can matter in play without moving the sheet numbers.",
+            obj(json!({ "skill": prop("string", "Name of a socketed skill, e.g. Hammer of the Gods"), "group_index": group_index(), "gem_index": gem_index(), "gem_id": prop("string", "Gem id or display name of any gem, socketed or not") }), &[]),
+        ),
         rw("add_socket_group", "Create an empty socket group. The first group of a build becomes the main skill.", obj(json!({ "label": prop("string", "Group label"), "slot": prop("string", "Item slot the group is socketed in") }), &[])),
-        del("remove_socket_group", "Delete a socket group and its gems.", obj(json!({ "index": group_index() }), &["index"])),
+        del(
+            "remove_socket_group",
+            "Delete a socket group and its gems. Address it by the name of its skill (safest) or by index.",
+            obj(json!({ "skill": prop("string", "Name of the group's active skill, e.g. Infernal Cry"), "index": group_index() }), &[]),
+        ),
         rw(
             "set_socket_group",
             "Change a socket group's label, slot, enabled state, Full DPS inclusion, or main active skill. Omit a field to leave it unchanged.",
             obj(
                 json!({
                     "index": group_index(),
+                    "skill": prop("string", "Name of the group's active skill, instead of index"),
                     "enabled": prop("boolean", "Enable or disable the group"),
                     "label": prop("string", "Group label"),
                     "slot": prop("string", "Item slot, or empty string for none"),
                     "include_in_full_dps": prop("boolean", "Count this group in Full DPS"),
                     "main_active_skill": prop("integer", "1-based index of the active skill within the group")
                 }),
-                &["index"],
+                &[],
             ),
         ),
-        rw("set_main_skill", "Choose which socket group is the main skill for DPS.", obj(json!({ "group_index": group_index() }), &["group_index"])),
+        rw("set_main_skill", "Choose which socket group is the main skill for DPS, by skill name or group index.", obj(json!({ "skill": prop("string", "Name of the group's active skill"), "group_index": group_index() }), &[])),
         rw(
             "add_gem",
             "Add a gem to a socket group. Identify it by gem_id (internal id such as Metadata/Items/Gems/SkillGemFireball, from list_gems), by skill_id, or by name_spec (display name). Level defaults to the build's default gem level.",
@@ -324,10 +474,30 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         del("remove_gem", "Remove a gem from a socket group.", obj(json!({ "group_index": group_index(), "gem_index": gem_index() }), &["group_index", "gem_index"])),
         ro(
             "list_gems",
-            "Find gem ids for add_gem. Matches the query against display names and ids.",
-            obj(json!({ "query": prop("string", "Case-insensitive substring"), "only_supports": prop("boolean", "true: support gems only; false: active gems only"), "limit": prop("integer", "Maximum results (default 50)") }), &[]),
+            "Find gem ids for add_gem. Matches the query against display names and ids. Returns `req_level` (the character level the gem needs, derived from its tier) and `base_sockets` (support sockets before Jeweller's Orbs, which scales with tier: 2 below tier 10, then 3, 4, and 5 at tier 20). **Gems above the open build's level are excluded by default** — set max_level to 0 to see them all, or to a number to plan for a future level. `short_by` names any attribute the build is missing.",
+            obj(
+                json!({
+                    "query": prop("string", "Case-insensitive substring"),
+                    "only_supports": prop("boolean", "true: support gems only; false: active gems only"),
+                    "max_level": prop("integer", "Level cap for results. Omit to use the build's level; 0 for no cap"),
+                    "limit": prop("integer", "Maximum results (default 50)"),
+                }),
+                &[],
+            ),
         ),
-        ro("list_valid_supports", "Support gems PoB considers valid for a group's main active skill.", obj(json!({ "group_index": group_index() }), &["group_index"])),
+        ro(
+            "list_valid_supports",
+            "Support gems PoB considers valid for a group's main active skill, excluding any above the character's level. Each carries its tier, req_level, attribute requirements and whether it is already `socketed`. With `sort_by_dps`, PoB scores each one as if added to the group and returns `dps_delta` (CombinedDPS change, best first; takes about a second), which is how to choose supports on a damage skill. Every support socketed also adds +5 to the attribute requirement of its own type, so five supports is +25 on top of the gems' own costs.",
+            obj(
+                json!({
+                    "group_index": group_index(),
+                    "skill": prop("string", "Name of the group's active skill, instead of group_index"),
+                    "sort_by_dps": prop("boolean", "Score each support's DPS change on this group and sort by it"),
+                    "limit": prop("integer", "Maximum results (default: all)")
+                }),
+                &[],
+            ),
+        ),
         // Config
         ro("list_config_options", "Every configuration option (var, label, type, section, and list values) for set_config.", none()),
         ro("get_config", "Current configuration values of the active config set (buffs, enemy stats, map mods, and similar assumptions).", none()),
@@ -376,7 +546,41 @@ fn arg_i64(args: &JsonObject, key: &str) -> Result<Option<i64>, ToolError> {
 }
 
 fn arg_bool(args: &JsonObject, key: &str) -> Option<bool> {
-    args.get(key).and_then(Value::as_bool)
+    match args.get(key) {
+        Some(Value::Bool(b)) => Some(*b),
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "1" => Some(true),
+            "false" | "no" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A list argument. Small models send arrays as strings ("['Boots', 'Belt']",
+/// "Boots, Belt"), so a string is parsed as JSON first and split on commas
+/// otherwise; numbers stay numbers.
+fn arg_list(args: &JsonObject, key: &str) -> Vec<Value> {
+    match args.get(key) {
+        Some(Value::Array(a)) => a.clone(),
+        Some(Value::String(s)) => {
+            let t = s.trim();
+            if t.is_empty() {
+                return Vec::new();
+            }
+            if let Ok(Value::Array(a)) = serde_json::from_str::<Value>(&t.replace('\'', "\"")) {
+                return a;
+            }
+            t.trim_matches(|c| c == '[' || c == ']')
+                .split(',')
+                .map(|p| p.trim().trim_matches(|c| c == '"' || c == '\''))
+                .filter(|p| !p.is_empty())
+                .map(|p| p.parse::<i64>().map(Value::from).unwrap_or_else(|_| Value::String(p.to_string())))
+                .collect()
+        }
+        Some(Value::Number(n)) => vec![Value::Number(n.clone())],
+        _ => Vec::new(),
+    }
 }
 
 fn req_str(args: &JsonObject, key: &str) -> Result<String, ToolError> {
@@ -448,7 +652,9 @@ pub(crate) async fn dispatch(
 
 /// Runs one tool. Returns the result and whether the build changed.
 pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Result<(Value, bool), ToolError> {
-    let stats = |v: Value| Ok((ctx.with_stats(v), true));
+    // Snapshot the headline before a write so the result can carry the change.
+    let before = if is_read_only(name) { None } else { Some(ctx.headline()) };
+    let stats = |v: Value| Ok((ctx.with_stats(v, before.as_ref()), true));
     let read = |v: Value| Ok((v, false));
     let tree_summary = |state: Value| -> Value {
         let points = ctx
@@ -524,10 +730,8 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
         }
         // Stats
         "get_stats" => {
-            let params = match args.get("fields").filter(|v| v.is_array()).cloned() {
-                Some(f) => json!({ "fields": f }),
-                None => Value::Null,
-            };
+            let fields = arg_list(args, "fields");
+            let params = if fields.is_empty() { Value::Null } else { json!({ "fields": fields }) };
             read(ctx.call("get_stats", params)?)
         }
         "list_stat_keys" => read(ctx.call("list_stat_keys", Value::Null)?),
@@ -558,6 +762,21 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
             read(json!({ "rows": rows, "warnings": warnings }))
         }
         "sanity_check" => read(ctx.call("sanity_check", Value::Null)?),
+        "build_summary" => read(ctx.call("build_summary", Value::Null)?),
+        "library" => {
+            let topic = arg_str(args, "topic").filter(|t| !t.trim().is_empty());
+            match topic {
+                None => read(json!({
+                    "topics": crate::library::TOPICS.iter().map(|t| json!({ "topic": t.slug, "covers": t.covers })).collect::<Vec<_>>()
+                })),
+                Some(t) => match crate::library::find(&t) {
+                    Some(found) => read(json!({ "topic": found.slug, "text": found.text })),
+                    None => Err(ToolError::Invalid(format!("no library topic matches {t:?}; topics: {}", crate::library::index()))),
+                },
+            }
+        }
+        "checkpoint" => read(ctx.call("checkpoint", json!({ "label": arg_str(args, "label") }))?),
+        "rollback" => stats(ctx.call("rollback", json!({ "label": arg_str(args, "label") }))?),
         // Tree
         "get_tree_state" => read(ctx.call("get_tree_state", Value::Null)?),
         "search_tree" => {
@@ -576,6 +795,71 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
                 }),
             )?)
         }
+        "tree_suggest" => {
+            let stat = arg_str(args, "stat").filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "CombinedDPS".into());
+            let limit = arg_i64(args, "limit")?.unwrap_or(15).clamp(1, 60) as usize;
+            let max_points = arg_i64(args, "max_points")?.unwrap_or(8).max(1) as f64;
+            let node_type = arg_str(args, "node_type").filter(|s| !s.trim().is_empty());
+            let scored = match pob_engine::pool::power_scan(&ctx.engine, &ctx.pool, Some(&stat), None) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("parallel power scan failed ({e}); falling back to PowerBuilder");
+                    ctx.call("tree_power", json!({ "stat": stat }))?
+                }
+            };
+            let report = scored.get("report").and_then(Value::as_array).cloned().unwrap_or_default();
+            let f = |r: &Value, k: &str| r.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+            let keep_type = |r: &Value| node_type.as_deref().is_none_or(|t| r.get("type").and_then(Value::as_str) == Some(t));
+            let ident = |r: &Value| {
+                json!({
+                    "id": r.get("id").cloned().unwrap_or(Value::Null),
+                    "name": r.get("name").cloned().unwrap_or(Value::Null),
+                    "type": r.get("type").cloned().unwrap_or(Value::Null),
+                })
+            };
+            let mut add: Vec<&Value> = report
+                .iter()
+                .filter(|r| r.get("allocated") != Some(&Value::Bool(true)) && f(r, "pathPower") > 0.0 && f(r, "pathDist") <= max_points && keep_type(r))
+                .collect();
+            add.sort_by(|a, b| f(b, "pathPower").partial_cmp(&f(a, "pathPower")).unwrap_or(std::cmp::Ordering::Equal));
+            let mut weakest: Vec<&Value> = report
+                .iter()
+                .filter(|r| r.get("allocated") == Some(&Value::Bool(true)) && keep_type(r))
+                .collect();
+            // PoB scores an allocated node as (stat without it - stat now), so the
+            // least negative number is the node the build would miss least.
+            weakest.sort_by(|a, b| f(b, "power").partial_cmp(&f(a, "power")).unwrap_or(std::cmp::Ordering::Equal));
+            let best_rows: Vec<Value> = add
+                .iter()
+                .take(limit)
+                .map(|r| {
+                    let mut v = ident(r);
+                    v["gainIfAllocated"] = json!(f(r, "power"));
+                    v["gainPerPointOnPath"] = json!(f(r, "pathPower"));
+                    v["pointsToReach"] = r.get("pathDist").cloned().unwrap_or(Value::Null);
+                    v
+                })
+                .collect();
+            let weak_rows: Vec<Value> = weakest
+                .iter()
+                .take(limit)
+                .map(|r| {
+                    let mut v = ident(r);
+                    v["lossIfRemoved"] = json!(-f(r, "power"));
+                    v["dependentNodes"] = r.get("pathDist").cloned().unwrap_or(Value::Null);
+                    v
+                })
+                .collect();
+            read(json!({
+                "stat": scored.get("stat").cloned().unwrap_or(json!(stat)),
+                "label": scored.get("label").cloned().unwrap_or(Value::Null),
+                "bestToAdd": best_rows,
+                "weakestAllocated": weak_rows,
+                "scanned": report.len(),
+                "ms": scored.get("ms").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        "list_power_stats" => read(ctx.call("power_stats", Value::Null)?),
         "node_info" => read(ctx.call("node_info", json!({ "id": req_i64(args, "node_id")? }))?),
         "node_path_cost" => read(ctx.call("node_path", json!({ "id": req_i64(args, "node_id")? }))?),
         "path_plan" => read(ctx.call(
@@ -587,11 +871,10 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
             }),
         )?),
         "alloc_path" => {
-            let ids = args
-                .get("node_ids")
-                .and_then(Value::as_array)
-                .filter(|a| !a.is_empty())
-                .ok_or_else(|| ToolError::Invalid("node_ids must be a non-empty array of node ids".into()))?;
+            let ids = arg_list(args, "node_ids");
+            if ids.is_empty() {
+                return Err(ToolError::Invalid("node_ids must be a non-empty array of node ids".into()));
+            }
             stats(ctx.call("alloc_trace", json!({ "ids": ids }))?)
         }
         "set_attribute_choice" => stats(ctx.call(
@@ -662,6 +945,82 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
             "item_db_equip",
             json!({ "name": req_str(args, "name")?, "db": arg_str(args, "db"), "slotName": arg_str(args, "slot") }),
         )?),
+        "optimise_gear" => {
+            let slots: Vec<Value> = arg_list(args, "slots").into_iter().filter(|v| v.as_str().is_some()).collect();
+            let mut result = ctx.call(
+                "optimise_gear",
+                json!({
+                    "preset": arg_str(args, "aim"),
+                    "slots": slots,
+                    "itemLevel": arg_i64(args, "item_level")?,
+                    "range": args.get("range").and_then(Value::as_f64),
+                }),
+            )?;
+            // The raw text is what equips a proposal; the model does not need
+            // the modId bookkeeping on top of the mod lines.
+            if let Some(list) = result.get_mut("proposals").and_then(Value::as_array_mut) {
+                for p in list.iter_mut() {
+                    if let Some(m) = p.as_object_mut() {
+                        m.remove("affixes");
+                        m.remove("output");
+                        m.remove("evaluations");
+                    }
+                }
+            }
+            if arg_bool(args, "apply") == Some(true) {
+                let proposals: Vec<(String, String)> = result
+                    .get("proposals")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|p| Some((p.get("slot")?.as_str()?.to_string(), p.get("raw")?.as_str()?.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (slot, raw) in proposals {
+                    ctx.call("equip_item_raw", json!({ "text": raw, "slot": slot }))?;
+                }
+                result["applied"] = json!(true);
+                if let Some(summary) = result.get("summary").and_then(Value::as_str).map(|s| s.replace("proposed, not equipped yet", "proposed and equipped")) {
+                    result["summary"] = json!(summary);
+                }
+                stats(result)
+            } else {
+                read(result)
+            }
+        }
+        "set_gem_levels" => stats(ctx.call("set_gem_levels", json!({ "level": arg_i64(args, "level")? }))?),
+        "list_bases" => read(ctx.call(
+            "list_bases",
+            json!({ "type": arg_str(args, "type"), "query": arg_str(args, "query"), "limit": arg_i64(args, "limit")?.unwrap_or(60) }),
+        )?),
+        "list_affixes" => read(ctx.call(
+            "list_affixes",
+            json!({
+                "type": req_str(args, "type")?,
+                "baseName": req_str(args, "base_name")?,
+                "itemLevel": arg_i64(args, "item_level")?,
+                "query": arg_str(args, "query"),
+            }),
+        )?),
+        "craft_rare" => {
+            let list = |key: &str| -> Vec<Value> { arg_list(args, key).into_iter().filter(|v| v.as_str().is_some_and(|s| !s.trim().is_empty())).collect() };
+            stats(ctx.call(
+                "craft_rare",
+                json!({
+                    "type": req_str(args, "type")?,
+                    "baseName": req_str(args, "base_name")?,
+                    "title": arg_str(args, "title"),
+                    "itemLevel": arg_i64(args, "item_level")?,
+                    "prefixes": list("prefixes"),
+                    "suffixes": list("suffixes"),
+                    "range": args.get("range").and_then(Value::as_f64),
+                    "runes": list("runes"),
+                    "slot": arg_str(args, "slot"),
+                    "equip": arg_bool(args, "equip"),
+                }),
+            )?)
+        }
         // Item sets
         "list_item_sets" => read(ctx.call("list_item_sets", Value::Null)?),
         "select_item_set" => stats(ctx.call("select_item_set", json!({ "id": req_i64(args, "id")? }))?),
@@ -674,15 +1033,40 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
         "delete_item_set" => stats(ctx.call("delete_item_set", json!({ "id": req_i64(args, "id")? }))?),
         // Skills
         "get_skills" => read(ctx.call("get_skills", Value::Null)?),
+        "skill_info" => {
+            let gem_id = arg_str(args, "gem_id").filter(|s| !s.trim().is_empty());
+            let group = arg_i64(args, "group_index")?;
+            let skill = arg_str(args, "skill").filter(|s| !s.trim().is_empty());
+            if gem_id.is_none() && group.is_none() && skill.is_none() {
+                return Err(ToolError::Invalid("skill, group_index or gem_id is required".into()));
+            }
+            read(ctx.call("skill_info", json!({ "gemId": gem_id, "groupIndex": group, "skill": skill, "gemIndex": arg_i64(args, "gem_index")? }))?)
+        }
         "add_socket_group" => stats(ctx.call(
             "add_socket_group",
             json!({ "label": arg_str(args, "label"), "slot": arg_str(args, "slot") }),
         )?),
-        "remove_socket_group" => stats(ctx.call("remove_socket_group", json!({ "index": req_i64(args, "index")? }))?),
+        "remove_socket_group" => {
+            let index = arg_i64(args, "index")?;
+            let skill = arg_str(args, "skill").filter(|s| !s.trim().is_empty());
+            if index.is_none() && skill.is_none() {
+                return Err(ToolError::Invalid("skill or index is required".into()));
+            }
+            ctx.call("remove_socket_group", json!({ "index": index, "skill": skill }))?;
+            let summary = ctx.call("build_summary", Value::Null)?;
+            stats(json!({
+                "removed": index.map(Value::from).unwrap_or_else(|| json!(skill)),
+                "mainSkillGroup": summary.get("mainSkillGroup").cloned().unwrap_or(Value::Null),
+                "mainSkill": summary.get("mainSkill").cloned().unwrap_or(Value::Null),
+                "activeSkills": summary.get("activeSkills").cloned().unwrap_or(Value::Null),
+                "skills": summary.get("skills").cloned().unwrap_or(Value::Null),
+            }))
+        }
         "set_socket_group" => stats(ctx.call(
             "set_socket_group",
             json!({
-                "index": req_i64(args, "index")?,
+                "index": arg_i64(args, "index")?,
+                "skill": arg_str(args, "skill"),
                 "enabled": arg_bool(args, "enabled"),
                 "label": arg_str(args, "label"),
                 "slot": arg_str(args, "slot"),
@@ -690,7 +1074,7 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
                 "mainActiveSkill": arg_i64(args, "main_active_skill")?,
             }),
         )?),
-        "set_main_skill" => stats(ctx.call("set_main_skill", json!({ "index": req_i64(args, "group_index")? }))?),
+        "set_main_skill" => stats(ctx.call("set_main_skill", json!({ "index": arg_i64(args, "group_index")?, "skill": arg_str(args, "skill") }))?),
         "add_gem" => {
             let gem_id = arg_str(args, "gem_id");
             let skill_id = arg_str(args, "skill_id");
@@ -730,10 +1114,19 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
             json!({
                 "query": arg_str(args, "query"),
                 "onlySupports": arg_bool(args, "only_supports"),
+                "maxLevel": arg_i64(args, "max_level")?,
                 "limit": arg_i64(args, "limit")?.unwrap_or(50),
             }),
         )?),
-        "list_valid_supports" => read(ctx.call("list_valid_supports", json!({ "groupIndex": req_i64(args, "group_index")? }))?),
+        "list_valid_supports" => read(ctx.call(
+            "list_valid_supports",
+            json!({
+                "groupIndex": arg_i64(args, "group_index")?,
+                "skill": arg_str(args, "skill"),
+                "sortByDps": arg_bool(args, "sort_by_dps"),
+                "limit": arg_i64(args, "limit")?,
+            }),
+        )?),
         // Config
         "list_config_options" => read(ctx.call("list_config_options", Value::Null)?),
         "get_config" => read(ctx.call("get_config", Value::Null)?),
@@ -759,7 +1152,7 @@ mod tests {
     #[test]
     fn registry_is_stable_and_measured() {
         let d = defs();
-        assert_eq!(d.len(), 62, "tool count changed");
+        assert_eq!(d.len(), 74, "tool count changed");
 
         let mut names: Vec<&str> = d.iter().map(|t| t.name).collect();
         names.sort_unstable();

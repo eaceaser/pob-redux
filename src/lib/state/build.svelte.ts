@@ -11,7 +11,9 @@ import {
   type TreeState,
 } from "$lib/engine.svelte";
 
-export type ViewId = "tree" | "skills" | "items" | "calcs" | "config" | "notes" | "party" | "import";
+const AUTOSAVE_KEY = "pob-redux:autosave";
+
+export type ViewId = "tree" | "skills" | "items" | "calcs" | "config" | "notes" | "party" | "optimise" | "import";
 
 /**
  * The one live build. Mutations go through the engine and then re-pull the
@@ -53,7 +55,7 @@ class BuildStore {
     }
   }
 
-  private autosaveTimer: ReturnType<typeof setInterval> | undefined;
+  private autosaveTimer: ReturnType<typeof setTimeout> | undefined;
   private lastAutosave = "";
   private presyncTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -65,27 +67,59 @@ class BuildStore {
     }, 400);
   }
 
-  /** Snapshot the build XML to localStorage every 2 minutes for crash recovery. */
+  /**
+   * Snapshot the build XML to localStorage a few seconds after the last change.
+   * It is what the app reopens on the next start, so it has to be close to the
+   * state the user last saw rather than minutes behind it.
+   */
+  private scheduleAutosave() {
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = setTimeout(() => void this.autosave(), 3_000);
+  }
+
   private async autosave() {
-    if (!this.info || this.busy > 0) return;
+    if (!this.info || this.busy > 0) {
+      this.scheduleAutosave();
+      return;
+    }
     try {
       const { xml } = await engine.saveBuildXml();
       if (xml === this.lastAutosave) return;
       this.lastAutosave = xml;
       localStorage.setItem(
-        "pob-redux:autosave",
+        AUTOSAVE_KEY,
         JSON.stringify({ name: this.info.name, file: this.info.file ?? null, at: Date.now(), xml }),
       );
     } catch {
-      // engine busy or storage full; next tick retries
+      // engine busy or storage full; the next change retries
+    }
+  }
+
+  /**
+   * Reopen whatever was open when the app last ran, from the snapshot. A saved
+   * build keeps its file so Save still writes there. Returns false when there
+   * is nothing to reopen or the snapshot no longer loads.
+   */
+  async reopenLast(): Promise<boolean> {
+    let saved: { name?: string; file?: string | null; xml?: string } | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) ?? "null");
+    } catch {}
+    if (!saved?.xml) return false;
+    try {
+      await engine.loadBuildXml(saved.xml, saved.name, saved.file ?? undefined);
+      this.lastAutosave = saved.xml;
+      await this.sync();
+      return true;
+    } catch (e) {
+      console.warn("could not reopen the last build", e);
+      return false;
     }
   }
 
   /** Re-pull everything derived from the engine's current build. */
   async sync() {
-    if (!this.autosaveTimer) {
-      this.autosaveTimer = setInterval(() => this.autosave(), 120_000);
-    }
+    this.scheduleAutosave();
     const [info, sidebar, tree, skills, specs] = await Promise.all([
       engine.getBuild(),
       engine.getSidebar(),
