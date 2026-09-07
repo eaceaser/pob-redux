@@ -1,6 +1,7 @@
 import {
   engine,
   poolPresync,
+  poolTrim,
   EngineError,
   type BuildInfo,
   type ClassInfo,
@@ -35,6 +36,8 @@ class BuildStore {
   error = $state<string | null>(null);
   /** Bumped when calc output changes; views use it to refetch their own data. */
   rev = $state(0);
+  /** Set to ask the tree view to centre on the ascendancy ring; the view clears it. */
+  ascendancyFocus = $state(false);
 
   get loaded() {
     return this.info !== null;
@@ -58,6 +61,7 @@ class BuildStore {
   private autosaveTimer: ReturnType<typeof setTimeout> | undefined;
   private lastAutosave = "";
   private presyncTimer: ReturnType<typeof setTimeout> | undefined;
+  private trimTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** Keep the worker engines on the current build so parallel scans skip their sync. */
   private schedulePresync() {
@@ -65,6 +69,15 @@ class BuildStore {
     this.presyncTimer = setTimeout(() => {
       if (this.busy === 0) poolPresync().catch(() => {});
     }, 400);
+    this.scheduleTrim();
+  }
+
+  /** A scan leaves every engine full of dead calc state; collect it once things go quiet. */
+  private scheduleTrim() {
+    clearTimeout(this.trimTimer);
+    this.trimTimer = setTimeout(() => {
+      if (this.busy === 0) poolTrim().catch(() => {});
+    }, 6_000);
   }
 
   /**
@@ -181,6 +194,15 @@ class BuildStore {
 
   selectClass(classId?: number, ascendClassId?: number) {
     return this.run(() => engine.selectClass(classId, ascendClassId));
+  }
+
+  /** Pick an ascendancy and show its ring, so the points can be spent right away. */
+  async chooseAscendancy(ascendClassId: number) {
+    await this.selectClass(undefined, ascendClassId);
+    if (ascendClassId > 0) {
+      this.view = "tree";
+      this.ascendancyFocus = true;
+    }
   }
 
   setMainSkill(index: number) {

@@ -37,9 +37,40 @@ pub fn download_url(url: &str) -> Option<(&'static str, String)> {
     }
 }
 
+/// Where a build code can be uploaded to make a share link, mirroring the
+/// `postUrl` / `postFields` / `codeOut` columns of PoB's site table.
+pub struct UploadTarget {
+    pub label: &'static str,
+    pub post_url: &'static str,
+    /// Form prefix the code is appended to; empty when the body is the bare code.
+    pub post_fields: &'static str,
+    /// Prepended to the response to form the link.
+    pub code_out: &'static str,
+}
+
+pub const UPLOAD_TARGETS: &[UploadTarget] = &[
+    UploadTarget { label: "pobb.in", post_url: "https://pobb.in/pob/", post_fields: "", code_out: "https://pobb.in/" },
+    UploadTarget { label: "Maxroll", post_url: "https://maxroll.gg/poe2/api/pob", post_fields: "pobCode=", code_out: "https://maxroll.gg/poe2/pob/" },
+    UploadTarget { label: "poe.ninja", post_url: "https://poe.ninja/poe2/pob/api/upload", post_fields: "code=", code_out: "" },
+    UploadTarget { label: "poe2db.tw", post_url: "https://poe2db.tw/pob/api/gen", post_fields: "", code_out: "" },
+];
+
+pub fn upload_target(site: &str) -> Option<&'static UploadTarget> {
+    let want = site.trim().to_ascii_lowercase();
+    UPLOAD_TARGETS.iter().find(|t| t.label.to_ascii_lowercase() == want)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::download_url;
+    use super::{download_url, upload_target};
+
+    #[test]
+    fn upload_targets_are_downloadable() {
+        // A link made by an upload must be one the importer recognises.
+        assert_eq!(download_url(&format!("{}abc", upload_target("pobb.in").unwrap().code_out)).unwrap().0, "pobb.in");
+        assert_eq!(download_url(&format!("{}abc", upload_target("maxroll").unwrap().code_out)).unwrap().0, "Maxroll");
+        assert!(upload_target("pastebin.com").is_none());
+    }
 
     #[test]
     fn maps_urls() {

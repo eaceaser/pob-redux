@@ -40,6 +40,36 @@ const ANNOUNCED = /\b(i'?ll|i will(?! not)|let me|i'?m going to|i am going to|wi
 
 const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(w)));
 
+/** Everything an error carries, not only its message: provider failures hide the useful part in `cause` or `responseBody`. */
+function describeError(e: unknown): string {
+  if (e == null) return "";
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let cur: unknown = e;
+  for (let depth = 0; cur && depth < 4 && !seen.has(cur); depth++) {
+    seen.add(cur);
+    if (typeof cur !== "object") {
+      parts.push(String(cur));
+      break;
+    }
+    const o = cur as Record<string, unknown>;
+    const head = [o.name, o.message].filter(Boolean).join(": ") || String(cur);
+    parts.push(head);
+    for (const k of ["statusCode", "url", "responseBody", "data"]) {
+      const v = o[k];
+      if (v != null && v !== "") parts.push(`${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`.slice(0, 2000));
+    }
+    cur = o.cause;
+  }
+  return parts.join("\n");
+}
+
+/** A tool result cut down to what a log needs. */
+function compact(v: unknown, max = 1500): string {
+  const t = typeof v === "string" ? v : JSON.stringify(v);
+  return t == null ? "" : t.length > max ? `${t.slice(0, max)}… (${t.length} chars)` : t;
+}
+
 /** One tool call as the panel shows it. */
 export interface ToolTurn {
   kind: "tool";
@@ -69,7 +99,8 @@ export type Turn =
  */
 function explainError(e: unknown, providerLabel: string): string {
   const raw = String(e);
-  const t = raw.toLowerCase();
+  // Match on everything the error carries: the status and body live in `cause`.
+  const t = describeError(e).toLowerCase();
 
   if (t.includes("credit balance is too low") || t.includes("insufficient_quota") || t.includes("exceeded your current quota") || t.includes("402")) {
     return `${providerLabel} rejected the request for billing: the account is out of credit. Top it up, then try again.`;
@@ -80,7 +111,7 @@ function explainError(e: unknown, providerLabel: string): string {
   if (t.includes("429") || t.includes("rate_limit")) {
     return `${providerLabel} is rate limiting this key. Wait a moment and try again.`;
   }
-  if (t.includes("model is unavailable") || t.includes("model_not_found") || t.includes("does not exist")) {
+  if (t.includes("model is unavailable") || t.includes("model_not_found") || t.includes("not_found_error") || t.includes("does not exist") || t.includes("statuscode: 404")) {
     return `${providerLabel} cannot serve this model. Pick another in the model list.`;
   }
   if (t.includes("fetch failed") || t.includes("connection") || t.includes("econnrefused")) {
@@ -119,6 +150,10 @@ class ChatStore {
   toolNames = $state<ToolDef[]>([]);
   /** Dev hook: transcript file written when a run ends (POB_REDUX_CHAT_LOG). */
   logPath: string | null = null;
+  /** Where the always-on run log lands; known after the first run. */
+  logFile = $state<string | null>(null);
+  /** The last failure with everything it carried, for Copy details. */
+  private lastErrorDetail = "";
   /**
    * Ollama (Local) loads a model on first use and then evaluates the whole
    * prompt, tens of seconds a user would otherwise wait on their first
@@ -127,7 +162,9 @@ class ChatStore {
    */
   warm = $state<"ready" | "loading" | "priming" | "failed">("ready");
   warmNote = $state("");
+  warmDetail = $state("");
   private warmSeq = 0;
+  private warming: Promise<void> | null = null;
   private lastRequestAt = 0;
 
   private defs: ToolDef[] = [];
@@ -181,12 +218,19 @@ class ChatStore {
   }
 
   /** Load the local model and prime its prompt cache with the real prompt and tools. */
-  async warmUp() {
+  warmUp(): Promise<void> {
     if (!this.needsWarm || !this.model) {
       this.warm = "ready";
       this.warmNote = "";
-      return;
+      return Promise.resolve();
     }
+    this.warming = this.doWarmUp().finally(() => {
+      this.warming = null;
+    });
+    return this.warming;
+  }
+
+  private async doWarmUp() {
     const seq = ++this.warmSeq;
     this.warm = "loading";
     this.warmNote = `loading ${this.model}`;
@@ -212,11 +256,14 @@ class ChatStore {
       if (seq !== this.warmSeq) return;
       this.lastRequestAt = Date.now();
       this.warm = "ready";
-      this.warmNote = ms > 1000 ? `ready, loaded in ${Math.round(ms / 1000)}s` : "ready";
+      this.warmNote = "ready";
+      this.warmDetail = ms > 1000 ? `Model loaded in ${Math.round(ms / 1000)}s and its prompt cached.` : "Model loaded and its prompt cached.";
     } catch (e) {
       if (seq !== this.warmSeq) return;
       this.warm = "failed";
       this.warmNote = explainError(e, this.current?.label ?? this.provider);
+      this.lastErrorDetail = describeError(e);
+      console.error("assistant warm-up failed", e);
     }
   }
 
@@ -360,7 +407,9 @@ class ChatStore {
   async send() {
     const text = this.input.trim();
     if (!text || this.busy) return;
-    if (this.warm === "loading" || this.warm === "priming") return;
+    // A send during warm-up waits for it; the composer button is disabled
+    // meanwhile, but a boot-time message must not be lost.
+    if (this.warming) await this.warming;
     this.input = "";
     this.error = null;
     this.notice = null;
@@ -624,15 +673,74 @@ class ChatStore {
     } catch (e) {
       if (!String(e).includes("AbortError")) {
         this.error = explainError(e, this.current?.label ?? this.provider);
+        this.lastErrorDetail = describeError(e);
+        console.error("assistant run failed", e);
       }
     } finally {
       this.busy = false;
       this.abort = null;
+      void this.log();
       if (this.logPath) {
         const log = { turns: this.turns, usage: this.usage, notice: this.notice, error: this.error, at: new Date().toISOString() };
         writeTextFile(this.logPath, JSON.stringify(log, null, 2)).catch(() => {});
       }
     }
+  }
+
+  /** The run that just ended, as one log line: settings, outcome, and the turns since the last question. */
+  private entry() {
+    let from = this.turns.length - 1;
+    while (from > 0 && this.turns[from].kind !== "user") from--;
+    const turns = this.turns.slice(Math.max(0, from)).map((t) => {
+      if (t.kind === "user") return { user: t.text };
+      if (t.kind === "assistant") return { assistant: t.text };
+      return { tool: t.name, status: t.status, args: compact(t.args, 600), result: t.error ? undefined : compact(t.result), error: t.error };
+    });
+    return {
+      at: new Date().toISOString(),
+      provider: this.provider,
+      model: this.model,
+      effort: this.supportsEffort ? this.effort : undefined,
+      error: this.error,
+      errorDetail: this.lastErrorDetail || undefined,
+      notice: this.notice,
+      usage: this.usage,
+      turns,
+    };
+  }
+
+  private async log() {
+    try {
+      this.logFile = await invoke<string>("ai_log_append", { line: JSON.stringify(this.entry()) });
+    } catch (e) {
+      console.warn("assistant log not written", e);
+    }
+  }
+
+  /** What to paste into a bug report: the failure and the run around it. */
+  diagnostics(): string {
+    const e = this.entry();
+    const lines = [
+      `PoB Redux assistant, ${e.at}`,
+      `provider: ${e.provider}   model: ${e.model}${e.effort ? `   effort: ${e.effort}` : ""}`,
+      e.error ? `error: ${e.error}` : "",
+      e.errorDetail && e.errorDetail !== e.error ? `detail: ${e.errorDetail}` : "",
+      e.notice ? `notice: ${e.notice}` : "",
+      `tokens: in ${e.usage.input}, out ${e.usage.output}, cache read ${e.usage.cacheRead}, cache write ${e.usage.cacheWrite}`,
+      "",
+      ...e.turns.map((t) => {
+        if ("user" in t) return `> ${t.user}`;
+        if ("assistant" in t) return `< ${t.assistant}`;
+        const tail = t.error ? `\n  error: ${t.error}` : t.result ? `\n  -> ${compact(t.result, 400)}` : "";
+        return `[${t.tool} ${t.status}] ${t.args}${tail}`;
+      }),
+      this.logFile ? `\nfull log: ${this.logFile}` : "",
+    ];
+    return lines.filter((l) => l !== "").join("\n");
+  }
+
+  revealLog() {
+    return invoke<string>("ai_log_reveal").then((p) => (this.logFile = p));
   }
 }
 

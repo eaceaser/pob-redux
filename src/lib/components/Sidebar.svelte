@@ -90,7 +90,7 @@
     build.selectClass(Number((e.target as HTMLSelectElement).value), 0);
   }
   function onAsc(e: Event) {
-    build.selectClass(undefined, Number((e.target as HTMLSelectElement).value));
+    build.chooseAscendancy(Number((e.target as HTMLSelectElement).value));
   }
   function onMainSkill(e: Event) {
     build.setMainSkill(Number((e.target as HTMLSelectElement).value));

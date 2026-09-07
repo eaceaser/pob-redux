@@ -16,7 +16,7 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "dep:env_logger"]
+cli = ["dep:clap", "dep:env_logger", "dep:mimalloc"]
 
 [dependencies]
 mlua = { version = "0.12", features = ["luajit", "vendored", "serde", "error-send"] }
@@ -29,6 +29,7 @@ thiserror.workspace = true
 log.workspace = true
 clap = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
+mimalloc = { workspace = true, optional = true }
 
 [lints]
 workspace = true

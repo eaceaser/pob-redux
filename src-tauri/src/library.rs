@@ -31,6 +31,7 @@ pub(crate) const TOPICS: &[Topic] = &[
     topic!("game-constants", "Hard numbers from PoB's engine: attribute bonuses, every cap, charges, thresholds", "13-game-constants.md"),
     topic!("keystones", "All 33 keystones with their downsides", "14-keystones.md"),
     topic!("runes-and-augments", "Runes, soul cores, augment sockets", "15-runes-and-augments.md"),
+    topic!("evaluating-changes", "Guard rails for judging a change: requirements are a maximum not a sum, flat vs increased vs more damage, the sheet vs the build, dead stats, granted skills, a checklist", "16-evaluating-changes.md"),
 ];
 
 pub(crate) fn find(slug: &str) -> Option<&'static Topic> {

@@ -11,6 +11,7 @@
 mod engine;
 mod native;
 pub mod pool;
+mod pool_sync;
 mod worker;
 
 pub use engine::{Engine, EngineConfig};

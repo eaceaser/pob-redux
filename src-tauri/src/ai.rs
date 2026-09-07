@@ -383,7 +383,8 @@ pub async fn ai_warm_model(app: AppHandle, provider: String, model: String) -> R
     let t0 = std::time::Instant::now();
     let res = client
         .post(format!("{root}/api/generate"))
-        .json(&serde_json::json!({ "model": model, "keep_alive": "30m" }))
+        .header("content-type", "application/json")
+        .body(serde_json::json!({ "model": model, "keep_alive": "30m" }).to_string())
         .send()
         .await
         .map_err(|e| format!("could not reach Ollama: {e}"))?;

@@ -124,6 +124,11 @@ export function poolPresync(): Promise<void> {
   return invoke<void>("pool_presync");
 }
 
+/** Collect garbage in every engine; for a quiet moment after a scan. */
+export function poolTrim(): Promise<void> {
+  return invoke<void>("pool_trim");
+}
+
 /** Node power scored across the worker pool (falls back to PoB's sequential builder). */
 export function powerScanParallel(stat: string | null, maxDepth: number | null): Promise<{ result: TreePower; elapsed_ms: number }> {
   return invoke<{ result: TreePower; elapsed_ms: number }>("power_scan_parallel", { stat, maxDepth });
@@ -166,6 +171,19 @@ export interface GameBuildList {
 
 export function listGameBuilds(dir?: string): Promise<GameBuildList> {
   return invoke<GameBuildList>("list_game_builds", { dir: dir || null });
+}
+
+/** Set or clear (empty string) the author of a game Build Planner file. */
+export function setGameBuildAuthor(path: string, author: string): Promise<void> {
+  return invoke<void>("set_game_build_author", { path, author });
+}
+
+export const SHARE_SITES = ["pobb.in", "Maxroll", "poe.ninja", "poe2db.tw"] as const;
+export type ShareSite = (typeof SHARE_SITES)[number];
+
+/** Upload a build code to a sharing site and get the link back. */
+export function shareBuildCode(site: ShareSite, code: string): Promise<{ site: string; url: string }> {
+  return invoke<{ site: string; url: string }>("share_build_code", { site, code });
 }
 
 // ---------------------------------------------------------------------------
@@ -938,7 +956,8 @@ export const engine = {
   tradeSearchResult: () => call<{ query: string }>("trade_search_result"),
   tradeLeagues: () => call<{ leagues: { id: string; text: string }[] }>("trade_leagues"),
   importGameBuild: (json: string, name?: string) => call<GameBuildImportResult>("import_game_build", { json, name }),
-  exportGameBuild: () => call<{ json: string; name: string; passives: number; skills: number; gear: number }>("export_game_build"),
+  exportGameBuild: (meta?: { author?: string; link?: string; description?: string }) =>
+    call<{ json: string; name: string; passives: number; skills: number; gear: number }>("export_game_build", meta ?? {}),
   getParty: () => call<PartyState>("get_party"),
   setPartyText: (kind: PartyKind, text: string) => call<PartyState>("set_party_text", { kind, text }),
   partyImport: (p: { code?: string; xml?: string; append?: boolean }) => call<PartyState>("party_import", p),

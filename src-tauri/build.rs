@@ -32,10 +32,16 @@ fn main() {
         let src = newest(&root.join("src"));
         match (std::fs::metadata(&dist).and_then(|m| m.modified()).ok(), src) {
             (None, _) => panic!("dist/ is missing: run `bun run build` before a release build, or use `bun run tauri build`"),
-            (Some(d), Some(s)) if s > d => panic!(
-                "dist/ is older than src/: run `bun run build` before a release build, or use `bun run tauri build` \
-                 (set POB_REDUX_ALLOW_STALE_DIST=1 to build anyway)"
-            ),
+            (Some(d), Some(s)) if s > d => {
+                let msg = "dist/ is older than src/: run `bun run build` before a release build, or use `bun run tauri build` \
+                           (set POB_REDUX_ALLOW_STALE_DIST=1 to build anyway)";
+                // A debug build with the default features is a test or CLI
+                // build; warn there, refuse only what would ship.
+                if std::env::var("PROFILE").as_deref() == Ok("release") {
+                    panic!("{msg}");
+                }
+                println!("cargo:warning={msg}");
+            }
             _ => {}
         }
         println!("cargo:rerun-if-changed=../dist/index.html");

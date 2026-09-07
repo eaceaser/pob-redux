@@ -336,6 +336,47 @@ function PCall(func, ...)
 end
 
 -- ---------------------------------------------------------------------------
+-- Upstream fixes
+-- ---------------------------------------------------------------------------
+-- PoB's copyTableSafe sets the copy's metatable before filling it. A class
+-- object's parent proxy (ModList.ModStore) is its own metatable with
+-- `__newindex` aimed at the object, so filling the proxy's copy writes the
+-- copy's fields into the ORIGINAL object instead. SwitchAttributeNode deep
+-- copies a shared tree node on every build load, so the tree's ModLists end up
+-- pointing at each previous copy and the next copy carries all of them: an
+-- engine that reloads builds grows without bound. Fill first, then set the
+-- metatable; a self-metatable table's copy becomes its own metatable.
+local function fixCopyTableSafe()
+	local subTableMap = {}
+	local function copy(tbl, noRecurse, preserveMeta, isSubTable)
+		local out = {}
+		if not noRecurse then
+			subTableMap[tbl] = out
+		end
+		for k, v in pairs(tbl) do
+			if not noRecurse and type(v) == "table" then
+				out[k] = subTableMap[v] or copy(v, false, preserveMeta, true)
+			else
+				out[k] = v
+			end
+		end
+		if preserveMeta then
+			local mt = getmetatable(tbl)
+			if mt ~= nil then
+				setmetatable(out, mt == tbl and out or mt)
+			end
+		end
+		if not noRecurse and not isSubTable then
+			for k in pairs(subTableMap) do
+				subTableMap[k] = nil
+			end
+		end
+		return out
+	end
+	copyTableSafe = copy
+end
+
+-- ---------------------------------------------------------------------------
 -- Boot
 -- ---------------------------------------------------------------------------
 function __pob_boot()
@@ -344,6 +385,7 @@ function __pob_boot()
 	if launch.promptMsg then
 		error("PoB startup failed: " .. tostring(launch.promptMsg), 0)
 	end
+	fixCopyTableSafe()
 	-- Settings.xml may queue "reopen the last build"; the app manages builds itself.
 	launch.main:SetMode("BUILD", false, "Unnamed build")
 	runCallback("OnFrame")

@@ -575,6 +575,23 @@
     invalidate();
   }
 
+  /** Centre on the current ascendancy ring, where its nodes live, far from the class start. */
+  function focusAscendancy() {
+    if (!model || !currentAsc) return;
+    const asc = model.classes.flatMap((c) => c.ascendancies).find((a) => a.name === currentAsc);
+    if (!asc) return;
+    cx = asc.x;
+    cy = asc.y;
+    scale = Math.min(1.2, (Math.min(w, h) / (asc.half * 2)) * 0.85);
+    invalidate();
+  }
+
+  $effect(() => {
+    if (!build.ascendancyFocus || !model || !w) return;
+    build.ascendancyFocus = false;
+    focusAscendancy();
+  });
+
   function fitAll() {
     if (!model) return;
     const b = model.bounds;
@@ -764,6 +781,7 @@
     if (e.key === "+" || e.key === "=" || e.key === "PageUp") zoomBy(e.shiftKey ? 2.2 : 1.3);
     else if (e.key === "-" || e.key === "PageDown") zoomBy(e.shiftKey ? 1 / 2.2 : 1 / 1.3);
     else if (e.key === "Home" || e.key === "h") focusClass();
+    else if (e.key === "a") focusAscendancy();
     else if (e.key === "p") powerOn = !powerOn;
     else if (e.key === "r" && powerOn) showReport = !showReport;
     else if (e.key === "f" && !e.ctrlKey) fitAll();
@@ -984,7 +1002,8 @@
     <div class="hud-row">
       <input class="input search" placeholder="Search nodes…" bind:value={search} />
       {#if matches.size}<span class="dim num">{matches.size}</span>{/if}
-      <button class="btn sm ghost" onclick={focusClass} title="Center on class start">Class</button>
+      <button class="btn sm ghost" onclick={focusClass} title="Center on class start (h)">Class</button>
+      <button class="btn sm ghost" onclick={focusAscendancy} disabled={!currentAsc} title={currentAsc ? "Center on the ascendancy ring, where its 8 points are spent (a)" : "Pick an ascendancy in the sidebar first"}>Ascendancy</button>
       <button class="btn sm ghost" onclick={fitAll} title="Fit whole tree">Fit</button>
       <button class="btn sm ghost" onclick={() => build.undo()} title="Undo (Ctrl+Z)">Undo</button>
       <button class="btn sm ghost" onclick={() => build.redo()} title="Redo (Ctrl+Y)">Redo</button>

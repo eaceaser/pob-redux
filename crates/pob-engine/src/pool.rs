@@ -8,12 +8,15 @@ use std::time::Instant;
 
 use serde_json::Value;
 
+use crate::pool_sync::{plan, SyncPlan};
 use crate::{EngineConfig, EngineHandle, EngineState, Error, Result};
 
 pub struct EnginePool {
     cfg: EngineConfig,
     size: usize,
     workers: Mutex<Vec<EngineHandle>>,
+    /// The build every worker holds, as saved XML. Held for the whole of a
+    /// sync so a second caller with the same build waits and then skips.
     synced_xml: Mutex<Option<String>>,
 }
 
@@ -47,46 +50,108 @@ impl EnginePool {
         PoolStatus { size: self.size, spawned: ws.len(), ready }
     }
 
-    fn workers(&self) -> Result<Vec<EngineHandle>> {
+    /// Every worker, booted. A worker that failed or stopped is replaced
+    /// with a fresh one rather than failing every scan from then on; the
+    /// replacement holds no build, so the caller is told to load one.
+    fn workers(&self) -> Result<(Vec<EngineHandle>, bool)> {
         self.warm();
-        let ws = self.workers.lock().unwrap().clone();
+        let mut respawned = false;
+        let ws = {
+            let mut ws = self.workers.lock().unwrap();
+            for w in ws.iter_mut() {
+                if matches!(w.status().state, EngineState::Error | EngineState::Stopped) {
+                    log::warn!("pool: replacing a worker that {}", w.status().message.unwrap_or_else(|| "stopped".into()));
+                    *w = EngineHandle::spawn(self.cfg.clone());
+                    respawned = true;
+                }
+            }
+            ws.clone()
+        };
         for w in &ws {
             w.wait_ready()?;
         }
-        Ok(ws)
+        Ok((ws, respawned))
     }
 
-    /// Load `xml` into every worker unless it is what they already hold.
+    /// Bring every worker to `xml`. A build that differs from what they hold
+    /// only in its `<Tree>` section is applied as a tree swap, which is a
+    /// fraction of a full load in both time and garbage.
     pub fn sync(&self, xml: &str) -> Result<()> {
-        if self.synced_xml.lock().unwrap().as_deref() == Some(xml) {
-            return Ok(());
+        let mut held = self.synced_xml.lock().unwrap();
+        let (ws, respawned) = self.workers()?;
+        if respawned {
+            *held = None;
         }
-        let ws = self.workers()?;
+        let (method, params, what) = match plan(held.as_deref(), xml) {
+            SyncPlan::Nothing => return Ok(()),
+            SyncPlan::Tree(tree) => ("sync_tree", serde_json::json!({ "xml": tree }), "tree"),
+            SyncPlan::Full => ("load_build_xml", serde_json::json!({ "xml": xml, "name": "pool" }), "build"),
+        };
         let t0 = Instant::now();
-        let params = serde_json::json!({ "xml": xml, "name": "pool" });
-        let results: Vec<Result<()>> = std::thread::scope(|s| {
+        let results: Vec<Result<Value>> = std::thread::scope(|s| {
             let handles: Vec<_> = ws
                 .iter()
                 .map(|w| {
                     let params = params.clone();
-                    s.spawn(move || w.call("load_build_xml", params).map(|_| ()))
+                    s.spawn(move || {
+                        w.call(method, params)?;
+                        w.call("mem", Value::Null).map(|o| o.result)
+                    })
                 })
                 .collect();
             handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(Error::NotRunning("worker panicked".into())))).collect()
         });
+        let mut heaps = Vec::with_capacity(results.len());
         for r in results {
-            r?;
+            match r {
+                Ok(v) => heaps.push(v.get("mb").and_then(Value::as_u64).unwrap_or(0)),
+                Err(e) => {
+                    // a worker whose state is now unknown must take a full load next time
+                    *held = None;
+                    return Err(e);
+                }
+            }
         }
-        *self.synced_xml.lock().unwrap() = Some(xml.to_string());
-        log::info!("pool: synced {} workers in {} ms", ws.len(), t0.elapsed().as_millis());
+        *held = Some(xml.to_string());
+        log::info!("pool: synced {} to {} workers in {} ms; heaps MB {:?}", what, ws.len(), t0.elapsed().as_millis(), heaps);
         Ok(())
+    }
+
+    /// Evaluate `code` on every worker, in worker order.
+    pub fn eval_all(&self, code: &str) -> Result<Vec<Value>> {
+        self.workers()?.0.iter().map(|w| w.eval(code)).collect()
+    }
+
+    /// Full garbage collection on every booted worker, for the idle moment
+    /// after a scan. Each worker's garbage is what keeps the process large
+    /// once the optimiser stops, and the allocator only returns memory that
+    /// Lua has freed.
+    pub fn trim(&self) {
+        let ws: Vec<EngineHandle> =
+            self.workers.lock().unwrap().iter().filter(|w| w.status().state == EngineState::Ready).cloned().collect();
+        if ws.is_empty() {
+            return;
+        }
+        let t0 = Instant::now();
+        let heaps: Vec<u64> = std::thread::scope(|s| {
+            let handles: Vec<_> = ws.iter().map(|w| s.spawn(move || w.call("gc", Value::Null))).collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().ok().and_then(|r| r.ok()).and_then(|o| o.result.get("mb").and_then(Value::as_u64)).unwrap_or(0))
+                .collect()
+        });
+        log::info!("pool: trimmed {} workers in {} ms; live heaps MB {:?}", ws.len(), t0.elapsed().as_millis(), heaps);
     }
 
     /// Run `method` once per chunk across the workers and return the results
     /// in chunk order. Workers pull chunks from a shared queue, so uneven
     /// chunk costs don't leave anyone idle.
     pub fn scatter(&self, method: &str, chunks: Vec<Value>) -> Result<Vec<Value>> {
-        let ws = self.workers()?;
+        let (ws, respawned) = self.workers()?;
+        if respawned {
+            *self.synced_xml.lock().unwrap() = None;
+            return Err(Error::NotRunning("a worker was replaced since the last sync".into()));
+        }
         if ws.is_empty() {
             return Err(Error::NotRunning("pool has no workers".into()));
         }
@@ -162,7 +227,11 @@ pub fn power_scan(engine: &EngineHandle, pool: &EnginePool, stat: Option<&str>, 
             }
         }
     }
-    Ok(engine.call("tree_power_apply", serde_json::json!({ "nodes": nodes }))?.result)
+    let applied = engine.call("tree_power_apply", serde_json::json!({ "nodes": nodes }))?.result;
+    if let Ok(m) = engine.call("mem", Value::Null) {
+        log::info!("power scan: main engine heap {} MB", m.result.get("mb").and_then(Value::as_u64).unwrap_or(0));
+    }
+    Ok(applied)
 }
 
 /// Fill the main engine's gem DPS cache for a socket group across the pool.

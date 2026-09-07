@@ -31,6 +31,21 @@ local function ensureBuild()
 	end
 end
 
+-- PoB's calculator repeats the Full DPS pass (one calc per included skill)
+-- for every candidate while the build is in tree view, whatever the caller
+-- asked for. Scoring that reads any other stat runs with the view switched
+-- away for the duration.
+local function withoutFullDPS(fn, ...)
+	local mode = build.viewMode
+	build.viewMode = "CALCS"
+	local ok, a, b = pcall(fn, ...)
+	build.viewMode = mode
+	if not ok then
+		error(a, 0)
+	end
+	return a, b
+end
+
 local function isScalar(v)
 	local t = type(v)
 	return t == "number" or t == "string" or t == "boolean"
@@ -62,6 +77,91 @@ local function gemBaseSockets(tier)
 	if tier >= 15 then return 4 end
 	if tier >= 10 then return 3 end
 	return 2
+end
+
+local ATTR_BY_COLOR = { [1] = "Str", [2] = "Dex", [3] = "Int" }
+
+-- The attribute a gem's colour stands for. Supports have no requirement of
+-- their own; each one socketed adds 5 to a build-wide source for its colour.
+local function gemAttr(gemData)
+	local ge = gemData and gemData.grantedEffect
+	return ge and ATTR_BY_COLOR[ge.color] or nil
+end
+
+-- The highest gem level the character level allows: gem levels carry their
+-- own character level requirement (grantedEffect.levels[i].levelRequirement).
+local function usableGemLevel(gemData, charLevel)
+	local ge = gemData and gemData.grantedEffect
+	local max = gemData and gemData.naturalMaxLevel or 1
+	if not ge or not ge.levels then return math.max(1, max) end
+	local best = 1
+	for i = 1, math.max(1, max) do
+		local lv = ge.levels[i]
+		if lv and (lv.levelRequirement or 0) <= (charLevel or 100) then best = i end
+	end
+	return best
+end
+
+-- What a gem asks of the character at one gem level, by PoB's own formula.
+-- gemData.reqStr/reqDex/reqInt are attribute weightings (100 = pure), not
+-- requirements; the requirement comes from the gem level's level requirement.
+local function gemRequirements(gemData, gemLevel)
+	local ge = gemData and gemData.grantedEffect
+	local lv = ge and ge.levels and ge.levels[gemLevel]
+	local charLevel = lv and lv.levelRequirement or 0
+	local isSupport = ge and ge.support or false
+	return {
+		level = charLevel,
+		str = calcLib.getGemStatRequirement(charLevel, gemData.reqStr or 0, isSupport),
+		dex = calcLib.getGemStatRequirement(charLevel, gemData.reqDex or 0, isSupport),
+		int = calcLib.getGemStatRequirement(charLevel, gemData.reqInt or 0, isSupport),
+	}
+end
+
+-- The build's attribute requirements as PoB computes them: the highest single
+-- source per attribute (items, skill gems, and one "Support Gems" source of 5
+-- per support of that colour), never a sum.
+-- Where an item-granted socket group comes from. Such a group cannot be
+-- removed or re-socketed; it leaves with the item.
+local function grantedBy(group)
+	if not group.source then return null end
+	local src = tostring(group.source)
+	local item = group.sourceItem
+	local itemName = item and (item.name or item.title) or src:match("^Item:%d+:(.+)$")
+	local node = group.sourceNode
+	local nodeName = node and node.dn or node and node.name
+	if not nodeName and src:match("^Tree:") then
+		local n = build.spec and build.spec.nodes[tonumber(src:match("^Tree:(%d+)"))]
+		nodeName = n and (n.dn or n.name)
+	end
+	-- PoB also synthesises groups for mechanics ("Thorns", "Explode") so it can
+	-- show their damage; those have no item or node behind them.
+	local kind = itemName and "item" or nodeName and "node" or "mechanic"
+	return { kind = kind, item = opt(itemName), node = opt(nodeName), slot = opt(group.slot), source = src }
+end
+
+local function requirementSummary()
+	local o = build.calcsTab.mainOutput or {}
+	local out = {}
+	for _, attr in ipairs({ "Str", "Dex", "Int" }) do
+		local need = o["Req" .. attr] or 0
+		local have = o[attr] or 0
+		local src = o["Req" .. attr .. "Item"]
+		local from = null
+		if type(src) == "table" then
+			if src.source == "Item" and src.sourceItem then
+				from = string.format("item %s (%s)", src.sourceItem.name or "?", src.sourceSlot or "")
+			elseif src.source == "Gem" and src.sourceGem then
+				from = string.format("gem %s %d", src.sourceGem.nameSpec or "?", src.sourceGem.level or 0)
+			elseif src.source == "Support Gems" then
+				from = string.format("%d %s support gems (5 each, one shared source)", math.floor((src[attr] or 0) / 5), attr)
+			else
+				from = tostring(src.source)
+			end
+		end
+		out[attr:lower()] = { need = need, have = have, met = have >= need, from = from }
+	end
+	return out
 end
 
 -- Skills that need no keypress once set up: persistent buffs stay on, triggers
@@ -123,6 +223,16 @@ local M = {}
 
 M.ping = function()
 	return { ok = true, buildLoaded = (build.calcsTab ~= nil and build.calcsTab.mainOutput ~= nil) }
+end
+
+-- Lua heap in MB, as it stands; `gc` runs a full collection first.
+M.mem = function()
+	return { mb = math.floor(collectgarbage("count") / 1024) }
+end
+
+M.gc = function()
+	collectgarbage("collect")
+	return M.mem()
 end
 
 M.version = function()
@@ -204,6 +314,27 @@ M.save_build_xml = function()
 	return { xml = build:SaveDB("code") }
 end
 
+-- Replace the passive trees from a `<Tree>` section of build XML, leaving
+-- items, skills and config as they are. Worker engines take this instead of
+-- a full reload when a save differs from what they hold only in that
+-- section; PoB loads the section the same way inside Build:Init.
+M.sync_tree = function(p)
+	ensureBuild()
+	if not p or type(p.xml) ~= "string" or p.xml == "" then
+		error("params.xml is required", 0)
+	end
+	local doc, err = common.xml.ParseXML(p.xml)
+	if err or not doc or not doc[1] or doc[1].elem ~= "Tree" then
+		error("sync_tree: expected a <Tree> section" .. (err and (": " .. tostring(err)) or ""), 0)
+	end
+	if build.treeTab:Load(doc[1], build.dbFileName) then
+		error("sync_tree: PoB rejected the tree section", 0)
+	end
+	build.treeTab:PostLoad()
+	refresh()
+	return { rev = build.outputRevision }
+end
+
 M.save_build_code = function()
 	ensureBuild()
 	return { code = encodeCode(build:SaveDB("code")) }
@@ -218,8 +349,12 @@ M.save_build_file = function(p)
 	if not build.dbFileName then
 		error("build has no file name; pass params.path", 0)
 	end
-	build:SaveDBFile()
-	return { ok = true, path = build.dbFileName }
+	if build:SaveDBFile() then
+		error("could not write " .. tostring(build.dbFileName), 0)
+	end
+	-- SaveDBFile resets the mod flags; `unsaved` is only recomputed in OnFrame.
+	frame()
+	return { ok = true, path = build.dbFileName, unsaved = build.unsaved == true }
 end
 
 M.get_build = function()
@@ -1046,8 +1181,7 @@ M.tree_power_partition = function(p)
 end
 
 -- Worker side: PowerBuilder's per-node evaluation for a subset of nodes.
-M.score_nodes = function(p)
-	ensureBuild()
+local function scoreNodes(p)
 	local calcsTab = build.calcsTab
 	local powerStat = findPowerStat(p and p.stat)
 	local useFullDPS = powerStat and powerStat.stat == "FullDPS"
@@ -1113,6 +1247,15 @@ M.score_nodes = function(p)
 		end
 	end
 	return { nodes = out }
+end
+
+M.score_nodes = function(p)
+	ensureBuild()
+	local powerStat = findPowerStat(p and p.stat)
+	if powerStat and powerStat.stat == "FullDPS" then
+		return scoreNodes(p)
+	end
+	return withoutFullDPS(scoreNodes, p)
 end
 
 M.tree_power_apply = function(p)
@@ -1884,6 +2027,9 @@ M.get_skills = function()
 			includeInFullDPS = group.includeInFullDPS == true,
 			slot = opt(group.slot),
 			source = opt(group.source),
+			-- Set on groups a weapon, shield or other item grants: the skill
+			-- comes with the item and is not a socket the player filled.
+			grantedBy = grantedBy(group),
 			mainActiveSkill = opt(group.mainActiveSkill),
 			gems = gems,
 			skills = groupSkills(group),
@@ -2028,7 +2174,12 @@ local function scoreGems(group, gemIds, dpsField)
 			}
 			gemList[slotIndex].level = build.skillsTab:ProcessGemLevel(gemData)
 			gemList[slotIndex].gemData = gemData
-			local ok, output = pcall(calcFunc, nil, useFullDPS, fastCalcOptions)
+			local ok, output
+			if useFullDPS then
+				ok, output = pcall(calcFunc, nil, useFullDPS, fastCalcOptions)
+			else
+				ok, output = pcall(withoutFullDPS, calcFunc, nil, useFullDPS, fastCalcOptions)
+			end
 			gemList[slotIndex] = nil
 			if ok and output then
 				dps[gemId] = fieldOf(output)
@@ -2442,7 +2593,9 @@ M.add_gem = function(p)
 	local gemData = p.gemId and data.gems[p.gemId]
 	local level = tonumber(p.level)
 	if not level then
-		level = gemData and build.skillsTab:ProcessGemLevel(gemData) or 1
+		-- The level the character can use, so a new gem never arrives at level
+		-- 20 in a level 30 build with a requirement to match.
+		level = gemData and usableGemLevel(gemData, build.characterLevel) or 1
 	end
 	local gem = {
 		nameSpec = p.nameSpec or "",
@@ -2459,6 +2612,12 @@ M.add_gem = function(p)
 	}
 	table.insert(group.gemList, gem)
 	build.skillsTab:ProcessSocketGroup(group)
+	-- A gem named by nameSpec is only resolved by ProcessSocketGroup; give it
+	-- the usable level now that its data is known.
+	if not tonumber(p.level) and not gemData and gem.gemData then
+		gem.level = usableGemLevel(gem.gemData, build.characterLevel)
+		build.skillsTab:ProcessSocketGroup(group)
+	end
 	build.skillsTab:AddUndoState()
 	refresh()
 	return M.get_skills()
@@ -2528,9 +2687,11 @@ M.list_gems = function(p)
 		if include then
 			total = total + 1
 			if #out < limit then
-				local rs = gemData.reqStr and gemData.reqStr > 0 and gemData.reqStr or nil
-				local rd = gemData.reqDex and gemData.reqDex > 0 and gemData.reqDex or nil
-				local ri = gemData.reqInt and gemData.reqInt > 0 and gemData.reqInt or nil
+				local gemLevel = usableGemLevel(gemData, maxLevel or (build and build.characterLevel) or 100)
+				local req = gemRequirements(gemData, gemLevel)
+				local rs = req.str > 0 and req.str or nil
+				local rd = req.dex > 0 and req.dex or nil
+				local ri = req.int > 0 and req.int or nil
 				local shortBy = null
 				if attrs then
 					local miss = {}
@@ -2556,6 +2717,10 @@ M.list_gems = function(p)
 					base_sockets = opt(gemBaseSockets(tier)),
 					-- Nil means any weapon; "Bow" means the skill is dead without one.
 					weapon = opt(gemData.weaponRequirements),
+					attr = opt(gemAttr(gemData)),
+					-- The gem level the character level allows, and what that level
+					-- asks of the character. Supports have no requirement of their own.
+					gem_level = gemLevel,
 					req_str = opt(rs),
 					req_dex = opt(rd),
 					req_int = opt(ri),
@@ -2580,6 +2745,9 @@ M.list_gems = function(p)
 		truncated = (total > #out),
 		levelCap = opt(maxLevel),
 		hiddenByLevel = hiddenByLevel,
+		-- Each support socketed adds 5 to one build-wide requirement source for
+		-- its colour, compared against the other sources rather than added.
+		supportAttributeCost = 5,
 	}
 end
 
@@ -2630,9 +2798,9 @@ M.list_valid_supports = function(p)
 						name = gemData.name or gemId,
 						tier = opt(tier),
 						req_level = opt(reqLevel),
-						req_str = opt(gemData.reqStr and gemData.reqStr > 0 and gemData.reqStr or nil),
-						req_dex = opt(gemData.reqDex and gemData.reqDex > 0 and gemData.reqDex or nil),
-						req_int = opt(gemData.reqInt and gemData.reqInt > 0 and gemData.reqInt or nil),
+						-- A support has no requirement of its own; its colour adds 5
+						-- to the build-wide "Support Gems" source for that attribute.
+						attr = opt(gemAttr(gemData)),
 						socketed = socketed[gemId] == true,
 					}
 					if dpsCache and dpsCache.dps[gemId] then
@@ -2654,12 +2822,13 @@ M.list_valid_supports = function(p)
 	if limit > 0 then
 		while #results > limit do table.remove(results) end
 	end
-	-- Each support socketed adds +5 to the attribute requirement of its own type,
-	-- on top of the gem's own cost. Five supports is +25, which is a real
-	-- constraint at low level.
+	-- Requirements are the highest single source, never a sum: all supports of
+	-- one colour across the build form one source of 5 each, which only binds
+	-- when it exceeds every item and skill gem requirement for that attribute.
 	return {
 		supports = results,
 		attributeCostPerSupport = 5,
+		requirements = requirementSummary(),
 		characterLevel = level,
 		dpsField = opt(dpsField),
 		baseDps = dpsCache and dpsCache.base or null,
@@ -4036,11 +4205,22 @@ end
 
 -- Export the current build as a Build Planner *.build JSON. Only slot ids the
 -- game's format is known to accept are emitted for gear hints.
-M.export_game_build = function()
+-- Files the game writes carry the ascendancy as its internal id
+-- ("Warrior1"); the importer accepts either, so write what the game does.
+-- params: { author, link, description } (optional strings)
+M.export_game_build = function(p)
 	ensureBuild()
 	local out = { name = build.buildName or "PoB Redux build" }
-	if (build.spec.curAscendClassId or 0) > 0 and build.ascendClassName and build.ascendClassName ~= "None" then
-		out.ascendancy = build.ascendClassName
+	local function text(v)
+		if type(v) == "string" and v:match("%S") then return (v:gsub("^%s+", ""):gsub("%s+$", "")) end
+		return nil
+	end
+	out.author = text(p and p.author)
+	out.link = text(p and p.link)
+	out.description = text(p and p.description)
+	local asc = build.spec.curAscendClass
+	if (build.spec.curAscendClassId or 0) > 0 and asc and asc.name ~= "None" then
+		out.ascendancy = asc.internalId or asc.name
 	end
 	local passives = {}
 	for _, node in pairs(build.spec.allocNodes) do
@@ -5022,7 +5202,7 @@ local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
 	local function evaluate()
 		item:Craft()
 		item:BuildAndParseRaw()
-		return calcFunc({ repSlotName = slotName, repItem = item })
+		return withoutFullDPS(calcFunc, { repSlotName = slotName, repItem = item })
 	end
 	-- Craft() reads every slot up to the limit, so empty ones hold "None".
 	for _, t in ipairs({ "prefixes", "suffixes" }) do
@@ -5403,6 +5583,7 @@ M.build_summary = function()
 				supports = supports,
 				enabled = group.enabled ~= false,
 				main = isMain,
+				grantedBy = grantedBy(group),
 			}
 		end
 	end
@@ -5462,6 +5643,9 @@ M.build_summary = function()
 		str = o.Str or 0,
 		dex = o.Dex or 0,
 		int = o.Int or 0,
+		-- need is the highest single source (item, skill gem, or the shared
+		-- support-gem source), as PoB computes it. Never add sources together.
+		requirements = requirementSummary(),
 		movementSpeedMod = o.MovementSpeedMod or 0,
 		totalDPS = o.TotalDPS or o.CombinedDPS or 0,
 	}
@@ -5546,6 +5730,32 @@ M.sanity_check = function()
 	if s.characterLevel >= 60 and s.weaponSetPointsUsed == 0 then
 		add("low", "weapon sets", "no weapon set passive points allocated",
 			"24 points per set, and weapon swap is instant. Half of published endgame builds leave these unused.")
+	end
+
+	for _, attr in ipairs({ "str", "dex", "int" }) do
+		local r = s.requirements[attr]
+		if r and not r.met then
+			add("high", "requirements", string.format("%s %d needed, %d available (from %s)", attr, r.need, r.have, r.from ~= null and r.from or "?"),
+				"The requirement is the highest single source, not a sum. Meet it with attribute travel nodes, an attribute affix, or a lower gem level; or swap the binding item or gem.")
+		end
+	end
+
+	-- Affixes that spend a slot on nothing the build can use.
+	local deadLines = {}
+	for slotName, slot in pairs(build.itemsTab.slots) do
+		local item = slot.selItemId and slot.selItemId ~= 0 and build.itemsTab.items[slot.selItemId]
+		if item and not slot.nodeId then
+			for _, mod in ipairs(item.explicitModLines or {}) do
+				local line = (mod.line or ""):lower()
+				if line:find("reduced attribute requirements", 1, true) then
+					deadLines[#deadLines + 1] = string.format("%s (%s): %s", item.name or "?", slotName, (mod.line:gsub("^{.-}", "")))
+				end
+			end
+		end
+	end
+	if #deadLines > 0 then
+		add("low", "gear", string.format("%d affix(es) spent on reduced attribute requirements: %s", #deadLines, table.concat(deadLines, "; ")),
+			"Usually a dead affix: the same suffix slot could carry resistance, life or an attribute, which meets the requirement and adds something. Keep it only when the item is otherwise the best available and nothing else would meet the requirement.")
 	end
 
 	-- Attribute shortfalls surface as per-gem errors from PoB itself.

@@ -12,8 +12,12 @@
     deleteBuild,
     fetchBuildCode,
     listGameBuilds,
+    setGameBuildAuthor,
+    shareBuildCode,
     readTextFile,
     writeTextFile,
+    SHARE_SITES,
+    type ShareSite,
     type AppPaths,
     type BuildEntry,
     type GameBuildList,
@@ -30,6 +34,33 @@
   let sort = $state<"modified" | "name" | "level" | "class">("modified");
   let flash = $state<string | null>(null);
   let fetching = $state(false);
+
+  // The name written as `author` into exported .build files; remembered across builds.
+  const AUTHOR_KEY = "pob-redux:author";
+  let author = $state("");
+  try {
+    author = localStorage.getItem(AUTHOR_KEY) ?? "";
+  } catch {}
+  function commitAuthor() {
+    author = author.trim();
+    try {
+      localStorage.setItem(AUTHOR_KEY, author);
+    } catch {}
+  }
+
+  // Share link (pobb.in and friends), as PoB's own Share button.
+  const SITE_KEY = "pob-redux:share-site";
+  let shareSite = $state<ShareSite>("pobb.in");
+  try {
+    const saved = localStorage.getItem(SITE_KEY);
+    if (saved && (SHARE_SITES as readonly string[]).includes(saved)) shareSite = saved as ShareSite;
+  } catch {}
+  let sharing = $state(false);
+  let shareUrl = $state<string | null>(null);
+
+  // Editing the author of a group of game builds (one input per header).
+  let editAuthor = $state<string | null>(null);
+  let authorDraft = $state("");
 
   // per-row actions
   let renaming = $state<string | null>(null);
@@ -153,8 +184,22 @@
     }
   }
 
+  async function commitGroupAuthor(items: GameBuildList["builds"]) {
+    const name = authorDraft.trim();
+    editAuthor = null;
+    try {
+      for (const gb of items) await setGameBuildAuthor(gb.path, name);
+      const n = `${items.length} file${items.length > 1 ? "s" : ""}`;
+      say(name ? `Author set to ${name} on ${n}` : `Author cleared on ${n}`);
+    } catch (e) {
+      build.error = String(e);
+    }
+    refresh();
+  }
+
   async function saveGameBuild() {
-    const r = await build.run(() => engine.exportGameBuild(), { sync: false });
+    commitAuthor();
+    const r = await build.run(() => engine.exportGameBuild({ author }), { sync: false });
     if (!r) return;
     const p = await save({
       defaultPath: `${gameBuilds?.dir ?? ""}\\${build.info?.name ?? r.name}.build`,
@@ -206,11 +251,38 @@
     }
   }
 
+  async function copyToClipboard(text: string, what: string) {
+    try {
+      await writeText(text);
+      say(`${what} copied`);
+    } catch (e) {
+      // The clipboard can be held by another app; the code box is the fallback.
+      code = text;
+      say(`Could not use the clipboard (${String(e)}). The ${what.toLowerCase()} is in the box above.`);
+    }
+  }
+
   async function copyCode() {
     const r = await build.run(() => engine.saveBuildCode(), { sync: false });
-    if (r) {
-      await writeText(r.code);
-      say("Share code copied");
+    if (r) await copyToClipboard(r.code, "Share code");
+  }
+
+  async function shareLink() {
+    const r = await build.run(() => engine.saveBuildCode(), { sync: false });
+    if (!r) return;
+    sharing = true;
+    shareUrl = null;
+    try {
+      localStorage.setItem(SITE_KEY, shareSite);
+    } catch {}
+    try {
+      const link = await shareBuildCode(shareSite, r.code);
+      shareUrl = link.url;
+      await copyToClipboard(link.url, `${link.site} link`);
+    } catch (e) {
+      build.error = `Share link: ${String(e)}`;
+    } finally {
+      sharing = false;
     }
   }
 
@@ -458,13 +530,40 @@
       {#if gameBuilds && !gameBuilds.exists}
         <div class="dim small pad">Folder not found. Set the location with "dir" above.</div>
       {/if}
-      {#each gameBuildGroups as [author, items] (author)}
-        <button class="ahead" onclick={() => toggleAuthor(author)}>
-          <span class="caret" class:open={!gbCollapsed.has(author)}>▸</span>
-          <span class="aname">{author}</span>
-          <span class="dim num">{items.length}</span>
-        </button>
-        {#if !gbCollapsed.has(author)}
+      {#each gameBuildGroups as [group, items] (group)}
+        {#if editAuthor === group}
+          <div class="ahead editing">
+            <span class="caret open">▸</span>
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="input grow"
+              bind:value={authorDraft}
+              placeholder="Author (empty clears it)"
+              autofocus
+              onblur={() => commitGroupAuthor(items)}
+              onkeydown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") (editAuthor = null);
+              }}
+            />
+          </div>
+        {:else}
+          <div class="ahead">
+            <button class="ahead-toggle" onclick={() => toggleAuthor(group)}>
+              <span class="caret" class:open={!gbCollapsed.has(group)}>▸</span>
+              <span class="aname">{group}</span>
+              <span class="dim num">{items.length}</span>
+            </button>
+            <button
+              class="act"
+              title="Set the author written in these files"
+              onclick={() => {
+                authorDraft = items[0]?.author ?? "";
+                editAuthor = group;
+              }}>author</button>
+          </div>
+        {/if}
+        {#if !gbCollapsed.has(group)}
           {#each items as gb (gb.path)}
             <div class="row gbrow">
               <button class="name" onclick={() => importGameBuildFile(gb.path, gb.name)} disabled={build.busy > 0}>{gb.name}</button>
@@ -502,11 +601,26 @@
     <div class="panel-head"><span class="label">Export</span></div>
     <div class="block actions">
       <button class="btn" onclick={copyCode} disabled={!build.loaded}>Copy share code</button>
+      <span class="joined">
+        <button class="btn" onclick={shareLink} disabled={!build.loaded || sharing} title="Upload the share code and copy the link">{sharing ? "Creating link…" : "Share link"}</button>
+        <select class="select xs" bind:value={shareSite} title="Where to upload" disabled={sharing}>
+          {#each SHARE_SITES as site}<option value={site}>{site}</option>{/each}
+        </select>
+      </span>
       <button class="btn" onclick={exportXml} disabled={!build.loaded}>Export XML…</button>
       <button class="btn" onclick={saveCurrent} disabled={!build.loaded}>Save</button>
       <button class="btn" onclick={saveAs} disabled={!build.loaded}>Save as…</button>
+    </div>
+    <div class="block row-inline">
+      <input class="input grow" bind:value={author} placeholder="Author" title="Written as the author of exported .build files" onblur={commitAuthor} />
       <button class="btn" onclick={saveGameBuild} disabled={!build.loaded} title="Export as a GGG Build Planner file the game can import (tree, skills, gear hints)">Save as .build…</button>
     </div>
+    {#if shareUrl}
+      <div class="block row-inline">
+        <input class="input grow mono" readonly value={shareUrl} onfocus={(e) => (e.target as HTMLInputElement).select()} />
+        <button class="btn" onclick={() => copyToClipboard(shareUrl!, "Link")}>Copy</button>
+      </div>
+    {/if}
     {#if flash}<div class="flash">{flash}</div>{/if}
     {#if build.info?.file}
       <div class="dim small mono pad">{build.info.file}</div>
@@ -598,8 +712,47 @@
     cursor: pointer;
     text-align: left;
   }
+  .ahead .ahead-toggle {
+    appearance: none;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+    text-align: left;
+    padding: 0;
+  }
+  .ahead .act {
+    opacity: 0;
+  }
+  .ahead:hover .act,
+  .ahead .act:focus {
+    opacity: 1;
+  }
+  .ahead.editing {
+    padding-right: 10px;
+  }
   .ahead:hover {
     color: var(--fg-0);
+  }
+  .joined {
+    display: inline-flex;
+    align-items: stretch;
+  }
+  .joined .btn {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .joined .select {
+    height: auto;
+    border-left: 0;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
   }
   .caret {
     display: inline-block;

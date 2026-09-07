@@ -198,9 +198,8 @@ and a skill with two supports is the most common reason a build feels weak. Add
 supports before adding skills: skill count barely changes as a build gets
 stronger, while support count roughly six-folds.
 
-Use list_valid_supports rather than guessing which supports apply. Every support
-socketed adds +5 to the attribute requirement of its own type, so five supports
-is +25 on top of the gems' own costs.
+Use list_valid_supports rather than guessing which supports apply. A support has
+no attribute requirement of its own; see the requirement rule below.
 
 Keep the number of skills that need a keypress to about 4 or 5. When a build
 needs more power, prefer a persistent buff, trigger or meta gem over another
@@ -212,6 +211,47 @@ spirit caps at 100 from quests, so two heralds and a meta gem will not fit.
 
 Where a genuinely good choice depends on playstyle or budget, say so in one
 line and pick a reasonable default rather than asking.
+
+## Guard rails
+
+Attribute requirements are a maximum, never a sum. The character needs, per
+attribute, the highest single source among its items, its skill gems at their
+gem level, and one shared source of 5 per support gem of that colour. Never add
+them together. Read build_summary.requirements (need, have, met, from) instead
+of working it out, and read it again after any change to gear, gems, level or
+attribute nodes. A gem the build cannot afford is usually at too high a gem
+level for the stage; add_gem already picks the usable level, and
+set_gem_levels fixes imported ones.
+
+A skill group with grantedBy came with a weapon or shield. It is not a choice,
+not a button unless the build plays it, and cannot be removed or replaced; it
+leaves with the item. Leave it out of skill counts and do not support it
+unless the build uses it.
+
+Flat added damage raises the base and is worth most when the base is low.
+Increased damage adds to one pool with every other increase, so each new
+increase is worth less than the last. More multipliers multiply everything.
+Do not rank affixes by their text: equip or craft the candidate and read the
+delta.
+
+The sheet is not the build. Before removing or replacing a unique, a skill or
+a support, read its text (get_items, skill_info) and say what it enables in
+play: a conversion, an extra curse, a trigger, armour break, a buff the main
+skill relies on. A delta of zero can mean PoB does not model it. A rare with
+better numbers is not an upgrade over a unique the build was built around;
+say so and let the user choose.
+
+Treat these as a cost rather than a bonus unless the user asks for them:
+reduced attribute requirements, attributes far past what requirements need,
+off-type damage or accuracy the main skill cannot use, resistance far past
+75, thorns. PoB values item rarity at zero; say that rather than calling it
+dead.
+
+After every change, run sanity_check again and confirm from the delta:
+resistances still 75 or more, requirements still met, life and EHP not down
+unless asked, the main skill's DPS moved as intended, spirit still covers
+every reservation, and nothing removed without reading it first. The library
+topic evaluating-changes has the full rules.
 
 ## Accuracy
 

@@ -14,6 +14,12 @@ use clap::{Parser, Subcommand};
 use pob_engine::{Engine, EngineConfig};
 use serde_json::{json, Value};
 
+// Every Lua allocation goes through the global allocator (mlua hands LuaJIT a
+// Rust-backed allocator); the system heap is slow for that and slow to give
+// memory back.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(name = "pobctl", about = "Drive the headless Path of Building engine")]
 struct Cli {
@@ -57,6 +63,10 @@ enum Cmd {
         /// Skip the sequential reference run.
         #[arg(long)]
         no_sequential: bool,
+        /// After the warm run, allocate the best node and rescan this many times,
+        /// printing sync/scan time and each worker's Lua heap.
+        #[arg(long, default_value_t = 0)]
+        rounds: u32,
     },
     /// Gem DPS scoring for a socket group: sequential vs the worker pool.
     Gems {
@@ -117,7 +127,57 @@ fn gems_cmd(cfg: EngineConfig, file: PathBuf, group: u32, pool_size: usize) -> R
     }))
 }
 
-fn power_cmd(cfg: EngineConfig, file: PathBuf, stat: Option<String>, depth: Option<f64>, pool_size: usize, no_sequential: bool) -> Result<Value, pob_engine::Error> {
+/// Per-node power from PoB's sequential builder against the pool's: the count
+/// of nodes whose scores differ and a few examples.
+fn compare_power(sequential: &Value, parallel: &Value) -> (usize, Vec<Value>) {
+    let mut mismatches = 0;
+    let mut samples = Vec::new();
+    let (Some(a), Some(b)) = (
+        sequential.get("nodes").and_then(|n| n.as_object()),
+        parallel.get("nodes").and_then(|n| n.as_object()),
+    ) else {
+        return (0, samples);
+    };
+    for (id, va) in a {
+        match b.get(id) {
+            Some(vb) => {
+                for k in ["s", "o", "d", "p"] {
+                    let x = va.get(k).and_then(|v| v.as_f64());
+                    let y = vb.get(k).and_then(|v| v.as_f64());
+                    let differs = match (x, y) {
+                        (Some(x), Some(y)) => (x - y).abs() > 1e-6,
+                        (None, None) => false,
+                        _ => true,
+                    };
+                    if differs {
+                        mismatches += 1;
+                        if samples.len() < 8 {
+                            samples.push(json!({ "id": id, "key": k, "seq": va, "pool": vb }));
+                        }
+                        break;
+                    }
+                }
+            }
+            None => {
+                mismatches += 1;
+                if samples.len() < 8 {
+                    samples.push(json!({ "id": id, "seq": va, "pool": Value::Null }));
+                }
+            }
+        }
+    }
+    for (id, vb) in b {
+        if !a.contains_key(id) {
+            mismatches += 1;
+            if samples.len() < 8 {
+                samples.push(json!({ "id": id, "seq": Value::Null, "pool": vb }));
+            }
+        }
+    }
+    (mismatches, samples)
+}
+
+fn power_cmd(cfg: EngineConfig, file: PathBuf, stat: Option<String>, depth: Option<f64>, pool_size: usize, no_sequential: bool, rounds: u32) -> Result<Value, pob_engine::Error> {
     use pob_engine::{EngineHandle, EnginePool};
     let t0 = Instant::now();
     let engine = EngineHandle::spawn(cfg.clone());
@@ -146,48 +206,38 @@ fn power_cmd(cfg: EngineConfig, file: PathBuf, stat: Option<String>, depth: Opti
     eprintln!("pool x{}: {par2_ms:.0} ms (warm)", pool.status().ready);
 
     let count = |v: &Value| v.get("nodes").and_then(|n| n.as_object()).map(|m| m.len()).unwrap_or(0);
-    let mut mismatches = 0;
-    let mut samples = Vec::new();
-    if let (Some(a), Some(b)) = (
-        sequential.get("nodes").and_then(|n| n.as_object()),
-        parallel.get("nodes").and_then(|n| n.as_object()),
-    ) {
-        for (id, va) in a {
-            match b.get(id) {
-                Some(vb) => {
-                    for k in ["s", "o", "d", "p"] {
-                        let x = va.get(k).and_then(|v| v.as_f64());
-                        let y = vb.get(k).and_then(|v| v.as_f64());
-                        let differs = match (x, y) {
-                            (Some(x), Some(y)) => (x - y).abs() > 1e-6,
-                            (None, None) => false,
-                            _ => true,
-                        };
-                        if differs {
-                            mismatches += 1;
-                            if samples.len() < 8 {
-                                samples.push(json!({ "id": id, "key": k, "seq": va, "pool": vb }));
-                            }
-                            break;
-                        }
-                    }
-                }
-                None => {
-                    mismatches += 1;
-                    if samples.len() < 8 {
-                        samples.push(json!({ "id": id, "seq": va, "pool": Value::Null }));
-                    }
-                }
-            }
+    let (mut mismatches, mut samples) = compare_power(&sequential, &parallel);
+
+    // Each round allocates the best node and rescans, which takes the tree-swap
+    // sync path; the sequential builder checks it every round unless skipped.
+    let heap = "collectgarbage('collect'); return math.floor(collectgarbage('count') / 1024)";
+    for round in 1..=rounds {
+        let best = engine
+            .call("tree_power_result", Value::Null)?
+            .result
+            .get("report")
+            .and_then(|r| r.as_array())
+            .and_then(|list| list.iter().find(|r| r.get("allocated") != Some(&Value::Bool(true))))
+            .and_then(|r| r.get("id").cloned());
+        if let Some(id) = best {
+            engine.call("alloc_node", json!({ "id": id }))?;
         }
-        for (id, vb) in b {
-            if !a.contains_key(id) {
-                mismatches += 1;
-                if samples.len() < 8 {
-                    samples.push(json!({ "id": id, "seq": Value::Null, "pool": vb }));
-                }
+        let t = Instant::now();
+        let scanned = pob_engine::pool::power_scan(&engine, &pool, stat.as_deref(), depth)?;
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        let mut check = String::new();
+        if !no_sequential {
+            let seq = engine.call("tree_power", json!({ "stat": stat, "maxDepth": depth }))?.result;
+            let (m, s) = compare_power(&seq, &scanned);
+            mismatches += m;
+            if samples.len() < 8 {
+                samples.extend(s);
             }
+            check = format!("; mismatches {m}");
         }
+        let heaps: Vec<String> = pool.eval_all(heap)?.iter().map(|v| v.to_string()).collect();
+        let main_mb = engine.eval(heap)?;
+        eprintln!("round {round}: scan {ms:.0} ms{check}; main heap {main_mb} MB; worker heaps MB [{}]", heaps.join(" "));
     }
     Ok(json!({
         "nodes": count(&parallel),
@@ -211,9 +261,9 @@ fn main() {
         .unwrap_or_else(|| std::env::temp_dir().join("pob-redux-cli"));
 
     let pooled: Option<Result<Value, pob_engine::Error>> = match &cli.cmd {
-        Cmd::Power { file, stat, depth, pool, no_sequential } => {
+        Cmd::Power { file, stat, depth, pool, no_sequential, rounds } => {
             let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
-            Some(power_cmd(cfg, file.clone(), stat.clone(), *depth, *pool, *no_sequential))
+            Some(power_cmd(cfg, file.clone(), stat.clone(), *depth, *pool, *no_sequential, *rounds))
         }
         Cmd::Gems { file, group, pool } => {
             let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };

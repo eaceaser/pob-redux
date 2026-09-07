@@ -114,6 +114,17 @@
     }
   }
 
+  let detailsCopied = $state(false);
+  async function copyDetails() {
+    try {
+      await writeText(chat.diagnostics());
+      detailsCopied = true;
+      setTimeout(() => (detailsCopied = false), 1400);
+    } catch (e) {
+      chat.error = `Could not copy: ${e}`;
+    }
+  }
+
   // Token counts run to five figures quickly; k keeps the row from wrapping.
   const tokens = (n: number) => (n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString());
 
@@ -234,15 +245,22 @@
       {#if chat.notice}
         <div class="failed">
           <div class="notice">{chat.notice}</div>
-          {#if chat.canContinue}
-            <button class="btn sm ghost" onclick={() => chat.continueRun()} disabled={chat.busy}>Continue</button>
-          {/if}
+          <div class="failacts">
+            {#if chat.canContinue}
+              <button class="btn sm ghost" onclick={() => chat.continueRun()} disabled={chat.busy}>Continue</button>
+            {/if}
+            <button class="btn sm ghost" onclick={copyDetails} title="Copy this run's details, for a bug report">{detailsCopied ? "Copied" : "Copy details"}</button>
+          </div>
         </div>
       {/if}
       {#if chat.error}
         <div class="failed">
           <div class="terr">{chat.error}</div>
-          <button class="btn sm ghost" onclick={() => chat.retryLast()} disabled={chat.busy}>Try again</button>
+          <div class="failacts">
+            <button class="btn sm ghost" onclick={() => chat.retryLast()} disabled={chat.busy}>Try again</button>
+            <button class="btn sm ghost" onclick={copyDetails} title="Copy the error with the run around it, for a bug report">{detailsCopied ? "Copied" : "Copy details"}</button>
+            <button class="btn sm ghost" onclick={() => chat.revealLog().catch((e) => (chat.error = String(e)))} title="Show the assistant log file. Every run is appended to it.">Open log</button>
+          </div>
         </div>
       {/if}
       {#if !chat.turns.length && !chat.busy}
@@ -341,7 +359,7 @@
 
         <div class="grow"></div>
         {#if chat.needsWarm && chat.warmNote}
-          <span class="warm {chat.warm}" title="Ollama loads a model on first use; it is loaded and its prompt cached ahead of your first message.">
+          <span class="warm {chat.warm}" title={chat.warmDetail || "Ollama loads a model on first use; it is loaded and its prompt cached ahead of your first message."}>
             <span class="wdot"></span>{chat.warmNote}
           </span>
         {/if}
@@ -486,12 +504,18 @@
   }
   .failed {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
   }
   .failed .terr,
   .failed .notice {
-    flex: 1;
+    flex: 1 1 100%;
+  }
+  .failacts {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
   }
   /* The button overlaps the text, so it only appears on hover or focus. */
   .botwrap {

@@ -51,6 +51,21 @@ async fn pool_presync(state: State<'_, AppState>) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Collect garbage in every engine once the user has been idle for a while.
+/// A scan leaves each worker holding a few hundred MB of dead calc state,
+/// and only freed memory goes back to the OS.
+#[tauri::command]
+async fn pool_trim(state: State<'_, AppState>) -> Result<(), String> {
+    let engine = state.engine.clone();
+    let pool = state.pool.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        pool.trim();
+        engine.call("gc", Value::Null).map(|_| ()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Node power scored across the worker pool; falls back to PoB's own
 /// sequential PowerBuilder if the pool is unavailable.
 #[tauri::command]
@@ -281,6 +296,52 @@ async fn fetch_build_code(url: String) -> Result<FetchedCode, String> {
     fetch_code(&url).await
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedLink {
+    site: String,
+    url: String,
+}
+
+/// Upload a build code to a sharing site and return the link, as PoB's
+/// Import/Export tab does with its "Share" button.
+#[tauri::command]
+async fn share_build_code(site: String, code: String) -> Result<SharedLink, String> {
+    let target = sites::upload_target(&site).ok_or_else(|| {
+        format!("Unknown share site {site:?}. Sites: {}.", sites::UPLOAD_TARGETS.iter().map(|t| t.label).collect::<Vec<_>>().join(", "))
+    })?;
+    let code = code.trim();
+    if code.is_empty() {
+        return Err("nothing to share: the build code is empty".into());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("pob-redux/0.1 Path of Building")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body = format!("{}{}", target.post_fields, code);
+    let content_type = if target.post_fields.is_empty() { "text/plain" } else { "application/x-www-form-urlencoded" };
+    let resp = client
+        .post(target.post_url)
+        .header("content-type", content_type)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("{}: {e}", target.label))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("{}: {e}", target.label))?;
+    if !status.is_success() {
+        let detail = text.trim();
+        let detail = if detail.is_empty() { String::new() } else { format!(": {}", detail.chars().take(200).collect::<String>()) };
+        return Err(format!("{} returned HTTP {status}{detail}", target.label));
+    }
+    let id = text.trim();
+    if id.is_empty() || id.contains('<') {
+        return Err(format!("{} did not return a link", target.label));
+    }
+    Ok(SharedLink { site: target.label.to_string(), url: format!("{}{}", target.code_out, id) })
+}
+
 pub(crate) async fn fetch_code(url: &str) -> Result<FetchedCode, String> {
     let (site, download) =
         sites::download_url(url).ok_or_else(|| format!("Unrecognised build link. Supported sites: {}.", sites::SUPPORTED))?;
@@ -467,6 +528,27 @@ fn list_game_builds(state: State<'_, AppState>, dir: Option<String>) -> Result<G
     Ok(GameBuildList { dir: dir.to_string_lossy().to_string(), exists, builds })
 }
 
+/// Set (or clear) the `author` of a game Build Planner file in place. The
+/// rest of the JSON is kept as the game wrote it, so a later import sees the
+/// same build.
+#[tauri::command]
+fn set_game_build_author(path: String, author: String) -> Result<(), String> {
+    if Path::new(&path).extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("build")) != Some(true) {
+        return Err("not a .build file".into());
+    }
+    let text = read_text_lossy(&path)?;
+    let mut v: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: not a valid .build file: {e}"))?;
+    let obj = v.as_object_mut().ok_or_else(|| format!("{path}: not a valid .build file"))?;
+    let author = author.trim();
+    if author.is_empty() {
+        obj.remove("author");
+    } else {
+        obj.insert("author".into(), Value::String(author.to_string()));
+    }
+    let out = serde_json::to_string(&v).map_err(|e| e.to_string())?;
+    std::fs::write(&path, out).map_err(|e| format!("{path}: {e}"))
+}
+
 /// Read a text file tolerantly: UTF-16 (either BOM) is converted, a UTF-8 BOM
 /// is stripped, and invalid UTF-8 bytes are replaced rather than failing.
 pub(crate) fn read_text_lossy(path: &str) -> Result<String, String> {
@@ -495,6 +577,41 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::write(&path, contents).map_err(|e| format!("{path}: {e}"))
+}
+
+/// The assistant's log file: one JSON line per run, written by the panel so
+/// a failure can be reported with its context. Lives next to providers.json.
+fn ai_log_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?.join("logs");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("assistant.log"))
+}
+
+/// Append one line to the assistant log, rotating once it passes 4 MB so it
+/// never grows without bound. Returns the log path.
+#[tauri::command]
+fn ai_log_append(app: tauri::AppHandle, line: String) -> Result<String, String> {
+    use std::io::Write;
+    let path = ai_log_path(&app)?;
+    if std::fs::metadata(&path).map(|m| m.len() > 4 * 1024 * 1024).unwrap_or(false) {
+        let _ = std::fs::rename(&path, path.with_extension("log.1"));
+    }
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let line = line.replace(['\n', '\r'], " ");
+    writeln!(f, "{line}").map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Show the assistant log in the file manager.
+#[tauri::command]
+fn ai_log_reveal(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = ai_log_path(&app)?;
+    if !path.is_file() {
+        std::fs::write(&path, "").map_err(|e| e.to_string())?;
+    }
+    app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// The system instructions for the chat panel: the same text the MCP server
@@ -661,6 +778,7 @@ pub fn run() {
             engine_status,
             pool_status,
             pool_presync,
+            pool_trim,
             power_scan_parallel,
             gem_dps_parallel,
             app_paths,
@@ -670,6 +788,8 @@ pub fn run() {
             read_text_file,
             write_text_file,
             fetch_build_code,
+            share_build_code,
+            set_game_build_author,
             rename_build,
             move_build,
             delete_build,
@@ -680,6 +800,8 @@ pub fn run() {
             mcp::mcp_stop,
             ai_tools,
             ai_instructions,
+            ai_log_append,
+            ai_log_reveal,
             ai_call_tool,
             ai::ai_providers,
             ai::ai_key_set,

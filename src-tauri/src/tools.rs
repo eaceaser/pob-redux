@@ -207,12 +207,12 @@ pub(crate) fn defs() -> Vec<ToolDef> {
         ro("get_sidebar", "The stat panel exactly as the app shows it: labelled rows plus PoB's warnings. Good for a quick human-style summary.", none()),
         ro(
             "sanity_check",
-            "Review the open build and return ranked findings, each with `severity` (high/medium/low), `area`, `message` and a suggested `fix`. Covers resistances, the passive point budget against the character's level, ascendancy points, support count on the main skill, spirit reservation, charm slots (empty, or more charms than the belt allows), life and energy shield for the level, movement speed, unused weapon set points, and gem errors such as unmet attribute requirements. An empty list is not proof the build is sound, and a finding is about numbers only: it cannot see how skills interact in play.",
+            "Review the open build and return ranked findings, each with `severity` (high/medium/low), `area`, `message` and a suggested `fix`. Covers resistances, the passive point budget against the character's level, ascendancy points, support count on the main skill, spirit reservation, charm slots (empty, or more charms than the belt allows), life and energy shield for the level, movement speed, unused weapon set points, unmet attribute requirements with the item or gem that sets them, affixes spent on reduced attribute requirements, and gem errors. Run it again after a change: it is the cheapest check that the change did not break something else. An empty list is not proof the build is sound, and a finding is about numbers only: it cannot see how skills interact in play.",
             none(),
         ),
         ro(
             "build_summary",
-            "One compact snapshot of the open build: level, class, ascendancy, main skill and its support count, every skill group as `skills` (group index, skill, `press` = active/persistent/trigger/meta/granted, support count, enabled, main), how many skills need a keypress, passive points used against the budget available at that level, ascendancy and weapon set points, life, energy shield, mana, spirit and its reservation, charm slots, resistances, attributes, movement speed and DPS. Only `active` skills cost a keypress. Prefer this over several get_stats calls when starting to advise on a build.",
+            "One compact snapshot of the open build: level, class, ascendancy, main skill and its support count, every skill group as `skills` (group index, skill, `press` = active/persistent/trigger/meta/granted, support count, enabled, main), how many skills need a keypress, passive points used against the budget available at that level, ascendancy and weapon set points, life, energy shield, mana, spirit and its reservation, charm slots, resistances, attributes, `requirements` (per attribute: need, have, met, and the one item, gem or support-gem source that sets it; requirements are the highest single source, never a sum), movement speed and DPS. Only `active` skills cost a keypress. Prefer this over several get_stats calls when starting to advise on a build.",
             none(),
         ),
         ro(
@@ -443,7 +443,7 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         rw("set_main_skill", "Choose which socket group is the main skill for DPS, by skill name or group index.", obj(json!({ "skill": prop("string", "Name of the group's active skill"), "group_index": group_index() }), &[])),
         rw(
             "add_gem",
-            "Add a gem to a socket group. Identify it by gem_id (internal id such as Metadata/Items/Gems/SkillGemFireball, from list_gems), by skill_id, or by name_spec (display name). Level defaults to the build's default gem level.",
+            "Add a gem to a socket group. Identify it by gem_id (internal id such as Metadata/Items/Gems/SkillGemFireball, from list_gems), by skill_id, or by name_spec (display name). Level defaults to the highest gem level the character's level allows, so requirements match the stage; pass `level` to override.",
             obj(
                 json!({
                     "group_index": group_index(),
@@ -474,7 +474,7 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         del("remove_gem", "Remove a gem from a socket group.", obj(json!({ "group_index": group_index(), "gem_index": gem_index() }), &["group_index", "gem_index"])),
         ro(
             "list_gems",
-            "Find gem ids for add_gem. Matches the query against display names and ids. Returns `req_level` (the character level the gem needs, derived from its tier) and `base_sockets` (support sockets before Jeweller's Orbs, which scales with tier: 2 below tier 10, then 3, 4, and 5 at tier 20). **Gems above the open build's level are excluded by default** — set max_level to 0 to see them all, or to a number to plan for a future level. `short_by` names any attribute the build is missing.",
+            "Find gem ids for add_gem. Matches the query against display names and ids. Returns `req_level` (the character level the gem needs, derived from its tier), `gem_level` (the highest gem level the character's level allows), `req_str` / `req_dex` / `req_int` (what that gem level asks of the character, by PoB's formula), `attr` (the gem's colour) and `base_sockets` (support sockets before Jeweller's Orbs, which scales with tier: 2 below tier 10, then 3, 4, and 5 at tier 20). Supports have no requirement of their own. **Gems above the open build's level are excluded by default** — set max_level to 0 to see them all, or to a number to plan for a future level. `short_by` names any attribute the build is missing.",
             obj(
                 json!({
                     "query": prop("string", "Case-insensitive substring"),
@@ -487,7 +487,7 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         ),
         ro(
             "list_valid_supports",
-            "Support gems PoB considers valid for a group's main active skill, excluding any above the character's level. Each carries its tier, req_level, attribute requirements and whether it is already `socketed`. With `sort_by_dps`, PoB scores each one as if added to the group and returns `dps_delta` (CombinedDPS change, best first; takes about a second), which is how to choose supports on a damage skill. Every support socketed also adds +5 to the attribute requirement of its own type, so five supports is +25 on top of the gems' own costs.",
+            "Support gems PoB considers valid for a group's main active skill, excluding any above the character's level. Each carries its tier, req_level, `attr` (its colour) and whether it is already `socketed`. With `sort_by_dps`, PoB scores each one as if added to the group and returns `dps_delta` (CombinedDPS change, best first; takes about a second), which is how to choose supports on a damage skill. A support has no attribute requirement of its own: every support of one colour across the build forms a single requirement source of 5 each, and the character needs the highest single source, never the sum. `requirements` reports need, have and the binding source for each attribute.",
             obj(
                 json!({
                     "group_index": group_index(),
@@ -800,11 +800,12 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
             let limit = arg_i64(args, "limit")?.unwrap_or(15).clamp(1, 60) as usize;
             let max_points = arg_i64(args, "max_points")?.unwrap_or(8).max(1) as f64;
             let node_type = arg_str(args, "node_type").filter(|s| !s.trim().is_empty());
-            let scored = match pob_engine::pool::power_scan(&ctx.engine, &ctx.pool, Some(&stat), None) {
+            // allocated nodes are at distance 0, so a depth limit keeps every one of them
+            let scored = match pob_engine::pool::power_scan(&ctx.engine, &ctx.pool, Some(&stat), Some(max_points)) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("parallel power scan failed ({e}); falling back to PowerBuilder");
-                    ctx.call("tree_power", json!({ "stat": stat }))?
+                    ctx.call("tree_power", json!({ "stat": stat, "maxDepth": max_points }))?
                 }
             };
             let report = scored.get("report").and_then(Value::as_array).cloned().unwrap_or_default();
