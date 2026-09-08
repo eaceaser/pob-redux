@@ -76,6 +76,71 @@ enum Cmd {
         #[arg(long, default_value_t = 4)]
         pool: usize,
     },
+    /// Unique jewel suggestions: one engine vs the worker pool, with an equality check.
+    Jewels {
+        file: PathBuf,
+        /// balanced, defence or damage.
+        #[arg(long)]
+        aim: Option<String>,
+        #[arg(long, default_value_t = 4)]
+        pool: usize,
+        /// Skip the one-engine reference run.
+        #[arg(long)]
+        no_sequential: bool,
+    },
+}
+
+fn jewels_cmd(cfg: EngineConfig, file: PathBuf, aim: Option<String>, pool_size: usize, no_sequential: bool) -> Result<Value, pob_engine::Error> {
+    use pob_engine::{EngineHandle, EnginePool};
+    let engine = EngineHandle::spawn(cfg.clone());
+    let pool = EnginePool::new(cfg, pool_size);
+    pool.warm();
+    engine.wait_ready()?;
+    engine.call("load_build_file", json!({ "path": file.to_string_lossy() }))?;
+    let params = json!({ "preset": aim });
+    let mut seq = Value::Null;
+    let mut seq_ms = 0.0;
+    if !no_sequential {
+        let t = Instant::now();
+        seq = engine.call("suggest_unique_jewels", params.clone())?.result;
+        seq_ms = t.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("one engine: {seq_ms:.0} ms, {} evaluations", seq.get("evaluations").and_then(Value::as_u64).unwrap_or(0));
+    }
+    let t = Instant::now();
+    let par = pob_engine::pool::jewel_scan(&engine, &pool, params.clone())?;
+    let cold_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let t = Instant::now();
+    let par = if no_sequential { par } else { pob_engine::pool::jewel_scan(&engine, &pool, params)? };
+    let warm_ms = t.elapsed().as_secs_f64() * 1000.0;
+    eprintln!("pool x{}: {cold_ms:.0} ms cold (with sync), {warm_ms:.0} ms warm", pool.status().ready);
+    let rows = |v: &Value| {
+        v.get("suggestions")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|r| json!([r.get("name"), r.get("socket"), r.get("variants"), r.get("score")]))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let seq_rows = rows(&seq);
+    let par_rows = rows(&par);
+    let mismatches = if no_sequential {
+        Value::Null
+    } else {
+        json!(seq_rows.iter().zip(par_rows.iter()).filter(|(a, b)| a != b).count() + seq_rows.len().abs_diff(par_rows.len()))
+    };
+    Ok(json!({
+        "sequential_ms": if no_sequential { Value::Null } else { json!(seq_ms) },
+        "pool_cold_ms": cold_ms,
+        "pool_warm_ms": if no_sequential { Value::Null } else { json!(warm_ms) },
+        "workers": pool.status().ready,
+        "evaluations": par.get("evaluations").cloned().unwrap_or(Value::Null),
+        "mismatches": mismatches,
+        "summary": par.get("summary").cloned().unwrap_or(Value::Null),
+        "top": par_rows.iter().take(8).collect::<Vec<_>>(),
+        "notScored": par.get("notScored").and_then(Value::as_array).map(|a| a.iter().map(|r| r.get("name").cloned().unwrap_or(Value::Null)).collect::<Vec<_>>()).unwrap_or_default(),
+    }))
 }
 
 fn gems_cmd(cfg: EngineConfig, file: PathBuf, group: u32, pool_size: usize) -> Result<Value, pob_engine::Error> {
@@ -269,6 +334,10 @@ fn main() {
             let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
             Some(gems_cmd(cfg, file.clone(), *group, *pool))
         }
+        Cmd::Jewels { file, aim, pool, no_sequential } => {
+            let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
+            Some(jewels_cmd(cfg, file.clone(), aim.clone(), *pool, *no_sequential))
+        }
         _ => None,
     };
     if let Some(out) = pooled {
@@ -340,7 +409,7 @@ fn main() {
                 Ok(json!({ "iterations": iterations, "avg_ms": avg, "min_ms": min, "boot_ms": engine.boot_ms }))
             }),
         Cmd::Eval { code } => engine.eval(&code),
-        Cmd::Power { .. } | Cmd::Gems { .. } => unreachable!("handled above"),
+        Cmd::Power { .. } | Cmd::Gems { .. } | Cmd::Jewels { .. } => unreachable!("handled above"),
     };
 
     match out {

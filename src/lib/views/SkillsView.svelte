@@ -165,12 +165,21 @@
 
   const activeSet = $derived(skillSets.find((s) => s.active));
 
-  // PoB sources: "Item:<id>:<item name>" or "Tree:<node id>"
-  function grantedBy(source: string): string {
-    const item = /^Item:\d+:(.+)$/.exec(source);
-    if (item) return item[1];
-    if (source.startsWith("Tree:")) return "a passive node";
-    return source;
+  // Item-, node- and mechanic-granted groups, and gems the game hands out
+  // (a weapon's default attack, Raise Shield): each gets a mark and a sentence.
+  type Mark = { glyph: string; text: string; kind: "item" | "node" | "mechanic" | "gem" };
+  function markOf(g: SocketGroup): Mark | null {
+    const by = g.grantedBy;
+    if (by?.kind === "mechanic") return { glyph: "◈", text: `${by.source}: a mechanic PoB calculates, not a skill`, kind: "mechanic" };
+    if (by?.kind === "node") return { glyph: "✦", text: `Granted by the passive ${by.node ?? "node"}; not a socketed gem`, kind: "node" };
+    if (by?.kind === "item") {
+      const where = by.item ? `${by.item}${by.slot ? ` (${by.slot})` : ""}` : "an item";
+      const dup = g.duplicateOf ? `. Same skill as group ${g.duplicateOf}, which carries the supports` : "";
+      return { glyph: "⚔", text: `Comes with ${where}; leaves with it${dup}`, kind: "item" };
+    }
+    const gem = g.gems.find((x) => !x.support && x.granted);
+    if (gem) return { glyph: "⚔", text: `${gem.name ?? "This skill"} ${gem.granted}`, kind: "gem" };
+    return null;
   }
 </script>
 
@@ -236,12 +245,16 @@
   <div class="cols">
     <section class="col list">
       {#each groups as g (g.index)}
-        <div class="grow-row" class:sel={sel?.index === g.index} class:off={!g.enabled}>
+        {@const mark = markOf(g)}
+        <div class="grow-row" class:sel={sel?.index === g.index} class:off={!g.enabled} class:dup={!!g.duplicateOf}>
           <button class="gmain" title="Set as main skill" class:ismain={g.isMainSkill} onclick={() => build.setMainSkill(g.index)}>⌾</button>
           <button class="gname" onclick={() => (selectedIdx = g.index)}>
             <PobText text={g.displayLabel ?? g.label ?? `Group ${g.index}`} />
-            {#if g.source}
-              <span class="granted" title={`Granted by ${grantedBy(g.source)} — not a socketed gem`}>{g.source.startsWith("Tree:") ? "✦" : "⚔"}</span>
+            {#if mark}
+              <span class="granted mark-{mark.kind}" title={mark.text}>{mark.glyph}</span>
+            {/if}
+            {#if g.duplicateOf}
+              <span class="dim small">item copy of group {g.duplicateOf}</span>
             {/if}
           </button>
           <span class="ops">
@@ -265,12 +278,16 @@
             onblur={() => labelDraft !== (sel.label ?? "") && patchGroup(sel.index, { label: labelDraft })}
             onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
           />
-          {#if sel.slot}<span class="dim small">socketed in {sel.slot}</span>{/if}
-          {#if sel.source}<span class="dim small">{sel.source.startsWith("Tree:") ? "✦" : "⚔"} granted by {grantedBy(sel.source)}</span>{/if}
+          {#if sel.slot && !sel.grantedBy}<span class="dim small">socketed in {sel.slot}</span>{/if}
+          {#if markOf(sel)}{@const m = markOf(sel)!}<span class="dim small">{m.glyph} {m.text}</span>{/if}
           <span class="grow"></span>
           <label class="chk small"><input type="checkbox" checked={sel.includeInFullDPS} onchange={(e) => patchGroup(sel.index, { includeInFullDPS: (e.target as HTMLInputElement).checked })} /> Full DPS</label>
           <label class="chk small"><input type="checkbox" checked={sel.enabled} onchange={(e) => patchGroup(sel.index, { enabled: (e.target as HTMLInputElement).checked })} /> Enabled</label>
-          <button class="btn sm ghost danger" disabled={!!sel.source} onclick={removeGroup}>Delete group</button>
+          <button
+            class="btn sm ghost danger"
+            disabled={!!sel.source}
+            title={sel.source ? "This group comes with an item or a mechanic and cannot be deleted; change the item instead" : "Delete this socket group"}
+            onclick={removeGroup}>Delete group</button>
         </div>
 
         {#if sel.skills.length > 0}
@@ -478,7 +495,8 @@
     background: var(--bg-2);
     box-shadow: inset 2px 0 0 var(--fg-0);
   }
-  .grow-row.off .gname {
+  .grow-row.off .gname,
+  .grow-row.dup .gname {
     opacity: 0.45;
   }
   .gmain {
@@ -504,6 +522,10 @@
     font-size: 16px;
     line-height: 1;
     vertical-align: -1px;
+  }
+  .granted.mark-mechanic {
+    color: var(--fg-3);
+    font-size: 13px;
   }
   .gname {
     appearance: none;

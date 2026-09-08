@@ -86,6 +86,14 @@
     if (info && Number.isFinite(n) && n !== info.level) build.setLevel(n);
   }
 
+  // Click the build name to rename it; Enter or blur commits, Escape cancels.
+  let nameEdit = $state<string | null>(null);
+  function commitName() {
+    const name = nameEdit?.trim() ?? "";
+    nameEdit = null;
+    if (name && name !== info?.name) build.rename(name);
+  }
+
   function onClass(e: Event) {
     build.selectClass(Number((e.target as HTMLSelectElement).value), 0);
   }
@@ -109,13 +117,31 @@
 <aside class="sidebar">
   {#if info}
     <section class="head">
-      <button class="buildname" onclick={() => (build.view = "import")} title={info.file ? `${info.file}\nOpen Import / Export` : "Not saved yet — open Import / Export"}>
-        <span class="label">Build</span>
-        <span class="bname">
-          <span class="bn">{info.name}</span>
-          {#if info.unsaved}<span class="unsaved" title="Unsaved changes">●</span>{/if}
-        </span>
-      </button>
+      <div class="buildname">
+        <span class="label">Build <button class="loact" title="Open Import / Export" onclick={() => (build.view = "import")}>⇱</button></span>
+        {#if nameEdit !== null}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="input"
+            bind:value={nameEdit}
+            autofocus
+            onblur={commitName}
+            onkeydown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") (nameEdit = null);
+            }}
+          />
+        {:else}
+          <button
+            class="bname"
+            onclick={() => (nameEdit = info?.name ?? "")}
+            title={(info.file ? `${info.file}\n` : "Not saved yet. ") + "Click to rename. The file is renamed with it."}
+          >
+            <span class="bn">{info.name}</span>
+            {#if info.unsaved}<span class="unsaved" title="Unsaved changes">●</span>{/if}
+          </button>
+        {/if}
+      </div>
       {#if loadouts.loadouts.length}
         <div class="field">
           <span class="label">Loadout</span>
@@ -206,7 +232,7 @@
             <option value={0}>No skills</option>
           {/if}
           {#each groups as g}
-            <option value={g.index}>{g.source ? (g.source.startsWith("Tree:") ? "✦ " : "⚔ ") : ""}{g.displayLabel ?? g.label ?? `Group ${g.index}`}</option>
+            <option value={g.index}>{g.grantedBy?.kind === "mechanic" ? "◈ " : g.grantedBy?.kind === "node" ? "✦ " : g.grantedBy ? "⚔ " : ""}{g.displayLabel ?? g.label ?? `Group ${g.index}`}{g.duplicateOf ? ` (item copy of ${g.duplicateOf})` : ""}</option>
           {/each}
         </select>
       </label>
@@ -336,9 +362,6 @@
     min-width: 0;
   }
   .buildname {
-    appearance: none;
-    border: 0;
-    background: none;
     padding: 0 0 8px;
     margin-bottom: 2px;
     border-bottom: 1px solid var(--line-0);
@@ -346,17 +369,27 @@
     flex-direction: column;
     gap: 4px;
     text-align: left;
-    cursor: pointer;
     min-width: 0;
   }
-  .buildname:hover .bn {
-    color: var(--focus);
+  .buildname .label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .bname {
+    appearance: none;
+    border: 0;
+    background: none;
+    padding: 0;
     display: flex;
     align-items: center;
     gap: 6px;
     min-width: 0;
+    cursor: text;
+    text-align: left;
+  }
+  .bname:hover .bn {
+    color: var(--focus);
   }
   .bn {
     font-size: var(--fs-md, 14px);

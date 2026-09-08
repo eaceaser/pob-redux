@@ -528,22 +528,32 @@ fn list_game_builds(state: State<'_, AppState>, dir: Option<String>) -> Result<G
     Ok(GameBuildList { dir: dir.to_string_lossy().to_string(), exists, builds })
 }
 
-/// Set (or clear) the `author` of a game Build Planner file in place. The
-/// rest of the JSON is kept as the game wrote it, so a later import sees the
-/// same build.
+/// Set the `name` and/or `author` of a game Build Planner file in place;
+/// an empty author clears it. The rest of the JSON is kept as the game wrote
+/// it, so a later import sees the same build. The file keeps its own name:
+/// the game shows the name inside the JSON.
 #[tauri::command]
-fn set_game_build_author(path: String, author: String) -> Result<(), String> {
+fn set_game_build_meta(path: String, name: Option<String>, author: Option<String>) -> Result<(), String> {
     if Path::new(&path).extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("build")) != Some(true) {
         return Err("not a .build file".into());
     }
     let text = read_text_lossy(&path)?;
     let mut v: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: not a valid .build file: {e}"))?;
     let obj = v.as_object_mut().ok_or_else(|| format!("{path}: not a valid .build file"))?;
-    let author = author.trim();
-    if author.is_empty() {
-        obj.remove("author");
-    } else {
-        obj.insert("author".into(), Value::String(author.to_string()));
+    if let Some(name) = name {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a build needs a name".into());
+        }
+        obj.insert("name".into(), Value::String(name.to_string()));
+    }
+    if let Some(author) = author {
+        let author = author.trim();
+        if author.is_empty() {
+            obj.remove("author");
+        } else {
+            obj.insert("author".into(), Value::String(author.to_string()));
+        }
     }
     let out = serde_json::to_string(&v).map_err(|e| e.to_string())?;
     std::fs::write(&path, out).map_err(|e| format!("{path}: {e}"))
@@ -789,7 +799,7 @@ pub fn run() {
             write_text_file,
             fetch_build_code,
             share_build_code,
-            set_game_build_author,
+            set_game_build_meta,
             rename_build,
             move_build,
             delete_build,

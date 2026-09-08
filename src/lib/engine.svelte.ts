@@ -173,9 +173,9 @@ export function listGameBuilds(dir?: string): Promise<GameBuildList> {
   return invoke<GameBuildList>("list_game_builds", { dir: dir || null });
 }
 
-/** Set or clear (empty string) the author of a game Build Planner file. */
-export function setGameBuildAuthor(path: string, author: string): Promise<void> {
-  return invoke<void>("set_game_build_author", { path, author });
+/** Set the name and/or author written inside a game Build Planner file; an empty author clears it. The file keeps its own name. */
+export function setGameBuildMeta(path: string, meta: { name?: string; author?: string }): Promise<void> {
+  return invoke<void>("set_game_build_meta", { path, name: meta.name ?? null, author: meta.author ?? null });
 }
 
 export const SHARE_SITES = ["pobb.in", "Maxroll", "poe.ninja", "poe2db.tw"] as const;
@@ -406,6 +406,17 @@ export interface GemInfo {
   color: string | null;
   count: number | null;
   errMsg: string | null;
+  /** Set when the game hands the skill out (a weapon's default attack, Raise Shield, a unique's skill): says what it comes with. */
+  granted: string | null;
+}
+
+/** Where an item-, node- or mechanic-granted socket group comes from. */
+export interface GrantedBy {
+  kind: "item" | "node" | "mechanic";
+  item: string | null;
+  node: string | null;
+  slot: string | null;
+  source: string;
 }
 
 /** One skill granted by a socket group; selector fields only on the chosen one. */
@@ -434,6 +445,11 @@ export interface SocketGroup {
   includeInFullDPS: boolean;
   slot: string | null;
   source: string | null;
+  grantedBy: GrantedBy | null;
+  /** On an item's copy of a skill: the socketed group that carries the same skill and its supports. */
+  duplicateOf?: number;
+  /** On a socketed group: the item's support-less copy of the same skill. */
+  grantedCopy?: number;
   mainActiveSkill: number | null;
   gems: GemInfo[];
   skills: SkillEntry[];
@@ -649,8 +665,64 @@ export interface ItemDbRow {
   baseName: string | null;
   slot: string | null;
   league: string | null;
+  implicits: string[];
+  /** Mod lines at the item's current variant selection. */
+  mods: string[];
   variants: number;
+  /** How many variants the item takes at once (a Megalomaniac takes 3 notables). */
+  variantPicks: number;
+  /** The first variant names, at most 40. */
+  variantNames: string[];
+  selectedVariants: string[];
   upgrade: boolean;
+}
+
+export interface JewelSocketRow {
+  socket: string;
+  slot: string;
+  nodeId: number;
+  item: string | null;
+  itemRarity: string | null;
+  sinister: boolean;
+}
+
+export interface JewelSuggestion {
+  name: string;
+  item: string;
+  base: string | null;
+  /** "Socket #n" for a radius jewel, "any" otherwise, "n sockets" for a stack. */
+  socket: string;
+  slot: string | null;
+  replaces: string | null;
+  variants: string[];
+  mods: string[];
+  delta: Record<string, number>;
+  score: number;
+  raw: string;
+  copies?: number;
+  note?: string;
+  alternatives?: { variants: string[]; score: number; delta: Record<string, number> }[];
+}
+
+export interface JewelSuggestions {
+  summary: string;
+  preset?: string;
+  range?: number;
+  sockets: JewelSocketRow[];
+  baseline?: { Life: number; TotalEHP: number; CombinedDPS: number; Armour: number };
+  suggestions: JewelSuggestion[];
+  notScored: { name: string; reason: string; mods: string[] }[];
+  errors: { name: string; error: string }[];
+  evaluations: number;
+  ms?: number;
+}
+
+export interface JewelSuggestParams {
+  preset?: "balanced" | "defence" | "damage";
+  sockets?: string[];
+  names?: string[];
+  range?: number;
+  limit?: number;
 }
 
 export interface ItemSetInfo {
@@ -812,7 +884,9 @@ export const engine = {
   loadBuildFile: (path: string) => call<BuildInfo>("load_build_file", { path }),
   saveBuildXml: () => call<{ xml: string }>("save_build_xml"),
   saveBuildCode: () => call<{ code: string }>("save_build_code"),
-  saveBuildFile: (path?: string) => call<{ ok: boolean; path: string }>("save_build_file", path ? { path } : undefined),
+  saveBuildFile: (path?: string) => call<{ ok: boolean; path: string; unsaved: boolean }>("save_build_file", path ? { path } : undefined),
+  /** Rename the open build; a saved build's file moves with it. */
+  setBuildName: (name: string) => call<BuildInfo>("set_build_name", { name }),
   getBuild: () => call<BuildInfo>("get_build"),
   getSidebar: () => call<Sidebar>("get_sidebar"),
   sidebarBreakdown: (rowIndex: number) => call<{ sections: BreakdownSection[]; rev: number }>("sidebar_breakdown", { rowIndex }),
@@ -898,8 +972,9 @@ export const engine = {
     call<{ items: ItemDbRow[]; total: number; offset: number; types: { type: string; count: number }[] }>("item_db_list", opts),
   itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; raw?: string; slotName?: string | false }) =>
     call<{ lines: TooltipLine[]; rarity: string | null }>("item_tooltip", opts),
-  itemDbEquip: (db: "unique" | "rare", name: string, slotName?: string) =>
-    call<{ ok: boolean; itemId: number; slot: string; itemName: string }>("item_db_equip", { db, name, slotName }),
+  /** `variants`: one entry per pick, a variant's name, a substring of it, or its index. */
+  itemDbEquip: (db: "unique" | "rare", name: string, slotName?: string, variants?: (string | number)[]) =>
+    call<{ ok: boolean; itemId: number; slot: string; itemName: string; variants: string[]; mods: string[] }>("item_db_equip", { db, name, slotName, variants }),
   itemRaw: (itemId: number) => call<{ raw: string }>("item_raw", { itemId }),
   itemEdit: (text: string, itemId?: number) => call<{ ok: boolean; itemId: number; name: string }>("item_edit", { text, itemId }),
   setWeaponSet: (set: 1 | 2) => call<SlotsResponse>("set_weapon_set", { set }),
@@ -981,4 +1056,6 @@ export const engine = {
   gearOptStart: (p: GearOptParams) => call<{ done: boolean; progress: GearOptProgress }>("gear_opt_start", p),
   gearOptStep: (budgetMs = 150) => call<{ done: boolean; progress: GearOptProgress }>("gear_opt_step", { budgetMs }),
   gearOptResult: () => call<GearOptResult>("gear_opt_result"),
+  /** Every unique jewel scored in every allocated socket, one engine; the assistant's tool runs it across the pool. */
+  suggestUniqueJewels: (p: JewelSuggestParams = {}) => call<JewelSuggestions>("suggest_unique_jewels", p),
 };

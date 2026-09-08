@@ -36,6 +36,9 @@ export const ALLOWED = new Set([
   "list_gems",
   "list_valid_supports",
   "search_item_db",
+  // Scores every unique jewel against the build; the one call that answers
+  // "which jewel", where equipping them one by one would take a dozen.
+  "suggest_unique_jewels",
   "list_bases",
   "list_affixes",
   // write, approval-gated

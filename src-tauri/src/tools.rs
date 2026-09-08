@@ -35,7 +35,9 @@ tree is attribute nodes, so call set_attribute_choice (1 Str, 2 Dex, 3 Int) befo
 says which they want. Change the build with alloc_node / dealloc_node / select_class / set_level, \
 equip_item_raw / unequip_item, add_gem / set_gem / remove_gem / set_main_skill, and set_config. For better \
 gear, optimise_gear searches the real mod pool for every slot and scores each candidate with PoB, keeping \
-resistances capped; apply its proposals with `apply` or equip_item_raw. For one specific item, list_bases \
+resistances capped; apply its proposals with `apply` or equip_item_raw. For unique jewels, suggest_unique_jewels \
+scores every one PoB knows in every allocated socket, variants included, and ranks them; equip a pick with \
+equip_from_item_db and its `variants`. For one specific item, list_bases \
 then list_affixes for the mod pool, then craft_rare, which builds it from PoB's own affix tables. Before a \
 run of changes call checkpoint; every write returns `stats` and a `delta` \
 against the previous state, and rollback restores a checkpoint if the result is worse. Manage alternate \
@@ -212,7 +214,7 @@ pub(crate) fn defs() -> Vec<ToolDef> {
         ),
         ro(
             "build_summary",
-            "One compact snapshot of the open build: level, class, ascendancy, main skill and its support count, every skill group as `skills` (group index, skill, `press` = active/persistent/trigger/meta/granted, support count, enabled, main), how many skills need a keypress, passive points used against the budget available at that level, ascendancy and weapon set points, life, energy shield, mana, spirit and its reservation, charm slots, resistances, attributes, `requirements` (per attribute: need, have, met, and the one item, gem or support-gem source that sets it; requirements are the highest single source, never a sum), movement speed and DPS. Only `active` skills cost a keypress. Prefer this over several get_stats calls when starting to advise on a build.",
+            "One compact snapshot of the open build: level, class, ascendancy, main skill and its support count, every skill group as `skills` (group index, skill, `press` = active/persistent/trigger/meta/granted, support count, enabled, main, `granted` when the game hands the skill out with a weapon or item such as Mace Strike or Raise Shield, `grantedBy` for an item's own copy and `duplicateOf` pointing at the socketed group that carries its supports), how many skills need a keypress (`activeSkills`, which leaves granted skills out; they are in `grantedSkills`), passive points used against the budget available at that level, ascendancy and weapon set points, life, energy shield, mana, spirit and its reservation, charm slots, resistances, attributes, `requirements` (per attribute: need, have, met, and the one item, gem or support-gem source that sets it; requirements are the highest single source, never a sum), movement speed and DPS. Only `active` skills cost a keypress. Prefer this over several get_stats calls when starting to advise on a build.",
             none(),
         ),
         ro(
@@ -331,7 +333,7 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         del("delete_item", "Remove an item from the build entirely.", obj(json!({ "item_id": prop("integer", "Item id from list_items") }), &["item_id"])),
         ro(
             "search_item_db",
-            "Search PoB's unique item database (or its rare templates) by name or base. Paged: `total` says how many matched.",
+            "Search PoB's unique item database (or its rare templates) by name or base. Each row carries the item's `implicits` and `mods` at its current selection, `variants` (how many exist), `variantPicks` (how many the item takes at once: a Megalomaniac takes 3 notables), the first `variantNames`, and `selectedVariants`. Paged: `total` says how many matched. For unique jewels, suggest_unique_jewels scores them against the build instead of guessing from the names.",
             obj(
                 json!({
                     "query": prop("string", "Case-insensitive substring of the item or base name"),
@@ -345,8 +347,16 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         ),
         rw(
             "equip_from_item_db",
-            "Equip an item from PoB's unique database (or a rare template) by its exact name.",
-            obj(json!({ "name": prop("string", "Exact item name from search_item_db"), "db": { "type": "string", "enum": ["unique", "rare"] }, "slot": prop("string", "Slot name from get_items (optional)") }), &["name"]),
+            "Equip an item from PoB's unique database (or a rare template) by its exact name. A unique with variants takes `variants`: one entry per pick (a variant's name, a substring of it, or its index), in the order suggest_unique_jewels or search_item_db lists them; without it the database default is equipped, which for a skill-level or notable jewel is the first alphabetical variant and almost never the one wanted. Returns the `variants` and `mods` it equipped with.",
+            obj(
+                json!({
+                    "name": prop("string", "Exact item name from search_item_db"),
+                    "db": { "type": "string", "enum": ["unique", "rare"] },
+                    "slot": prop("string", "Slot name from get_items (optional)"),
+                    "variants": { "type": "array", "items": { "type": "string" }, "description": "Variant per pick: name, substring or index" }
+                }),
+                &["name"],
+            ),
         ),
         rw(
             "optimise_gear",
@@ -358,6 +368,20 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
                     "item_level": prop("integer", "Item level for the mod pool (default 82)"),
                     "range": prop("number", "Roll within each tier, 0 to 1 (default 1)"),
                     "apply": prop("boolean", "Equip every proposal (default false)")
+                }),
+                &[],
+            ),
+        ),
+        ro(
+            "suggest_unique_jewels",
+            "Score every unique jewel PoB knows against the open build and rank them. Each is evaluated in every allocated jewel socket through PoB's own calculation (a radius jewel per socket, others once), and a jewel with variants is searched over the ones that can apply: a skill-level jewel over the skills the build runs, a notable jewel over notables not yet allocated, a multi-pick jewel filled greedily (best pick first), a stackable jewel also as 2 or 3 copies. Each suggestion carries the `socket`, the chosen `variants`, its `mods`, a stat `delta` against the build now, a `score` (log-ratio gain in DPS, life and effective HP weighted by `aim`, minus penalties for resistances or attributes it breaks; 0.1 is roughly a 10% gain), `alternatives` (the next best single variants) and `raw` (item text for equip_item_raw). `notScored` lists jewels PoB's numbers cannot judge (tree-planning and Timeless jewels) with why. Nothing is equipped. Takes 5 to 20 seconds. This is the tool for \"which unique jewel should I use\"; do not equip jewels one by one to find out.",
+            obj(
+                json!({
+                    "aim": { "type": "string", "enum": ["balanced", "defence", "damage"], "description": "What to weight (default balanced)" },
+                    "sockets": { "type": "array", "items": { "type": "string" }, "description": "Only these sockets, as \"Socket #2\", \"#2\" or the slot name (default: every allocated socket)" },
+                    "names": { "type": "array", "items": { "type": "string" }, "description": "Only jewels whose name contains one of these (default: all)" },
+                    "range": prop("number", "Roll within each variable mod, 0 to 1 (default 0.5)"),
+                    "limit": prop("integer", "Maximum suggestions returned (default 20)")
                 }),
                 &[],
             ),
@@ -942,10 +966,32 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
                 "offset": arg_i64(args, "offset")?.unwrap_or(0).max(0),
             }),
         )?),
-        "equip_from_item_db" => stats(ctx.call(
-            "item_db_equip",
-            json!({ "name": req_str(args, "name")?, "db": arg_str(args, "db"), "slotName": arg_str(args, "slot") }),
-        )?),
+        "equip_from_item_db" => {
+            let variants: Vec<Value> = arg_list(args, "variants").into_iter().filter(|v| v.as_str().is_some() || v.is_number()).collect();
+            stats(ctx.call(
+                "item_db_equip",
+                json!({ "name": req_str(args, "name")?, "db": arg_str(args, "db"), "slotName": arg_str(args, "slot"), "variants": variants }),
+            )?)
+        }
+        "suggest_unique_jewels" => {
+            let sockets: Vec<Value> = arg_list(args, "sockets").into_iter().filter(|v| v.as_str().is_some() || v.is_number()).collect();
+            let names: Vec<Value> = arg_list(args, "names").into_iter().filter(|v| v.as_str().is_some()).collect();
+            let params = json!({
+                "preset": arg_str(args, "aim"),
+                "sockets": sockets,
+                "names": names,
+                "range": args.get("range").and_then(Value::as_f64),
+                "limit": arg_i64(args, "limit")?,
+            });
+            let result = match pob_engine::pool::jewel_scan(&ctx.engine, &ctx.pool, params.clone()) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("parallel jewel scan failed ({e}); scoring on the main engine");
+                    ctx.call("suggest_unique_jewels", params)?
+                }
+            };
+            read(result)
+        }
         "optimise_gear" => {
             let slots: Vec<Value> = arg_list(args, "slots").into_iter().filter(|v| v.as_str().is_some()).collect();
             let mut result = ctx.call(

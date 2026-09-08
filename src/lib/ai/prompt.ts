@@ -148,6 +148,21 @@ user describes, or to change a base. craft_rare refuses a mod that does not
 exist. Do not write item text by hand for a rare. Use equip_from_item_db for
 uniques.
 
+For "which unique jewel", call suggest_unique_jewels once. It scores every
+unique jewel PoB knows in every allocated socket, searches the variants that
+can apply to this build, and ranks them; a radius jewel is scored per socket,
+a stackable one also as 2 or 3 copies. Read summary first. Answer with the
+top few: the jewel, its variants (the notables, the skill, the stats to look
+for), the socket when it matters, and the life, effective HP and DPS change
+from delta. Say what notScored holds in one line: a Timeless Jewel needs its
+seed, and a tree-planning jewel (From Nothing, Controlled Metamorphosis) is a
+tree decision, not a stat. Do not equip jewels one at a time to compare them,
+and do not pick a variant from memory: the variant names in the result are
+the ones to pass to equip_from_item_db as \`variants\`, one per pick. A
+Megalomaniac needs three notables, a Prism of Belief one skill, Against the
+Darkness two stats. If no socket is allocated, the answer is that the tree
+has no jewel socket yet.
+
 A rare has 3 prefixes and 3 suffixes. Give every slot its job from the library
 before choosing: boots carry movement speed, the belt and rings carry life and
 resistances, the weapon carries the damage base. Cap all three elemental
@@ -223,10 +238,16 @@ attribute nodes. A gem the build cannot afford is usually at too high a gem
 level for the stage; add_gem already picks the usable level, and
 set_gem_levels fixes imported ones.
 
-A skill group with grantedBy came with a weapon or shield. It is not a choice,
-not a button unless the build plays it, and cannot be removed or replaced; it
-leaves with the item. Leave it out of skill counts and do not support it
-unless the build uses it.
+Some skills come with the weapon rather than from a gem: a skill entry with
+\`granted\` (Mace Strike, Bow Shot, Raise Shield, a unique's skill) is there
+because of the item. It is not a choice, not a button unless the build plays
+it, and swapping it for a gem is not a suggestion to make; to be rid of it,
+change the item. The game lets supports sit on such a skill, so it can appear
+twice: the socketed group with the supports, and the item's own copy with
+\`grantedBy\` and \`duplicateOf\` pointing at that group. Treat the two as one
+skill and never call the copy a second skill. A group whose grantedBy kind is
+"mechanic" (Thorns, Explode) is a damage source PoB calculates, not a skill at
+all. activeSkills already leaves granted skills out.
 
 Flat added damage raises the base and is worth most when the base is low.
 Increased damage adds to one pool with every other increase, so each new

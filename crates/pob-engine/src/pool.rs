@@ -267,3 +267,33 @@ pub fn gem_dps_fill(engine: &EngineHandle, pool: &EnginePool, group_index: u32) 
         .call("gem_dps_apply", serde_json::json!({ "key": key, "base": base, "dps": Value::Object(dps) }))?
         .result)
 }
+
+/// Unique jewel suggestions for the main engine's build: the single-variant
+/// pass is scattered across the pool, the ranking and partner picks stay on
+/// the main engine (`jewel_finish`), so the result matches the one-engine
+/// `suggest_unique_jewels`.
+pub fn jewel_scan(engine: &EngineHandle, pool: &EnginePool, params: Value) -> Result<Value> {
+    let plan = engine.call("jewel_plan", params)?.result;
+    let jobs = plan.get("jobs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let mut results: Vec<Value> = Vec::new();
+    if !jobs.is_empty() {
+        sync_from(engine, pool)?;
+        // a job with many variants (a notable per variant) is split so no
+        // worker holds the whole of it
+        let mut chunks: Vec<Value> = Vec::new();
+        for job in &jobs {
+            match job.get("idx").and_then(|v| v.as_array()) {
+                Some(idx) if idx.len() > 24 => {
+                    for (a, b) in chunk_ranges(idx.len(), 24) {
+                        let mut c = job.clone();
+                        c["idx"] = Value::Array(idx[a..b].to_vec());
+                        chunks.push(c);
+                    }
+                }
+                _ => chunks.push(job.clone()),
+            }
+        }
+        results = pool.scatter("score_jewel_variants", chunks)?;
+    }
+    Ok(engine.call("jewel_finish", serde_json::json!({ "results": results }))?.result)
+}

@@ -192,6 +192,10 @@ class BuildStore {
     return this.run(() => engine.setLevel(level));
   }
 
+  rename(name: string) {
+    return this.run(() => engine.setBuildName(name));
+  }
+
   selectClass(classId?: number, ascendClassId?: number) {
     return this.run(() => engine.selectClass(classId, ascendClassId));
   }

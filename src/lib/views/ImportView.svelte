@@ -12,7 +12,7 @@
     deleteBuild,
     fetchBuildCode,
     listGameBuilds,
-    setGameBuildAuthor,
+    setGameBuildMeta,
     shareBuildCode,
     readTextFile,
     writeTextFile,
@@ -58,9 +58,20 @@
   let sharing = $state(false);
   let shareUrl = $state<string | null>(null);
 
-  // Editing the author of a group of game builds (one input per header).
+  // Editing the author of a group of game builds (one input per header),
+  // and the name or author of one file (one input per row).
   let editAuthor = $state<string | null>(null);
   let authorDraft = $state("");
+  let gbEdit = $state<{ path: string; field: "name" | "author" } | null>(null);
+  let gbDraft = $state("");
+
+  // The open build's name, edited in place; Enter or blur commits.
+  let nameDraft = $state<string | null>(null);
+  function commitBuildName() {
+    const name = nameDraft?.trim() ?? "";
+    nameDraft = null;
+    if (name && name !== build.info?.name) build.rename(name).then(() => refresh());
+  }
 
   // per-row actions
   let renaming = $state<string | null>(null);
@@ -188,9 +199,25 @@
     const name = authorDraft.trim();
     editAuthor = null;
     try {
-      for (const gb of items) await setGameBuildAuthor(gb.path, name);
+      for (const gb of items) await setGameBuildMeta(gb.path, { author: name });
       const n = `${items.length} file${items.length > 1 ? "s" : ""}`;
       say(name ? `Author set to ${name} on ${n}` : `Author cleared on ${n}`);
+    } catch (e) {
+      build.error = String(e);
+    }
+    refresh();
+  }
+
+  async function commitGbEdit(gb: GameBuildList["builds"][number]) {
+    const edit = gbEdit;
+    const value = gbDraft.trim();
+    gbEdit = null;
+    if (!edit) return;
+    if (edit.field === "name" && (!value || value === gb.name)) return;
+    if (edit.field === "author" && value === (gb.author ?? "")) return;
+    try {
+      await setGameBuildMeta(gb.path, edit.field === "name" ? { name: value } : { author: value });
+      say(edit.field === "name" ? `Renamed to ${value}` : value ? `Author set to ${value}` : "Author cleared");
     } catch (e) {
       build.error = String(e);
     }
@@ -307,9 +334,11 @@
       filters: [{ name: "Path of Building", extensions: ["xml"] }],
     });
     if (!p) return;
-    const r = await build.run(() => engine.saveBuildFile(p));
+    // The dialog does not always append the filter's extension; the builds list only scans .xml.
+    const path = /.xml$/i.test(p) ? p : `${p}.xml`;
+    const r = await build.run(() => engine.saveBuildFile(path));
     if (r) {
-      say(`Saved ${p}`);
+      say(`Saved ${path}`);
       refresh();
     }
   }
@@ -566,8 +595,27 @@
         {#if !gbCollapsed.has(group)}
           {#each items as gb (gb.path)}
             <div class="row gbrow">
-              <button class="name" onclick={() => importGameBuildFile(gb.path, gb.name)} disabled={build.busy > 0}>{gb.name}</button>
-              <span class="meta"><span class="num dim">{fmtDate(gb.modified)}</span></span>
+              {#if gbEdit?.path === gb.path}
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  class="input grow gbedit"
+                  bind:value={gbDraft}
+                  placeholder={gbEdit.field === "name" ? "Build name" : "Author (empty clears it)"}
+                  autofocus
+                  onblur={() => commitGbEdit(gb)}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") (gbEdit = null);
+                  }}
+                />
+              {:else}
+                <button class="name" onclick={() => importGameBuildFile(gb.path, gb.name)} disabled={build.busy > 0}>{gb.name}</button>
+                <span class="meta"><span class="num dim">{fmtDate(gb.modified)}</span></span>
+                <span class="acts">
+                  <button class="act" title="Rename (the name inside the file; the file keeps its own)" onclick={() => { gbDraft = gb.name; gbEdit = { path: gb.path, field: "name" }; }}>ren</button>
+                  <button class="act" title="Set this file's author" onclick={() => { gbDraft = gb.author ?? ""; gbEdit = { path: gb.path, field: "author" }; }}>author</button>
+                </span>
+              {/if}
             </div>
           {/each}
         {/if}
@@ -599,6 +647,31 @@
     </div>
 
     <div class="panel-head"><span class="label">Export</span></div>
+    <div class="block row-inline">
+      <span class="label">Name</span>
+      {#if nameDraft !== null}
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          class="input grow"
+          bind:value={nameDraft}
+          autofocus
+          onblur={commitBuildName}
+          onkeydown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") (nameDraft = null);
+          }}
+        />
+      {:else}
+        <button
+          class="bname grow"
+          onclick={() => (nameDraft = build.info?.name ?? "")}
+          disabled={!build.loaded}
+          title={(build.info?.file ? `${build.info.file}\n` : "Not saved yet. ") + "Click to rename. A saved build's file is renamed with it."}
+        >{build.info?.name ?? "—"}</button>
+      {/if}
+      <span class="label">Author</span>
+      <input class="input grow" bind:value={author} placeholder="Author" title="Written as the author of exported .build files" onblur={commitAuthor} />
+    </div>
     <div class="block actions">
       <button class="btn" onclick={copyCode} disabled={!build.loaded}>Copy share code</button>
       <span class="joined">
@@ -611,8 +684,7 @@
       <button class="btn" onclick={saveCurrent} disabled={!build.loaded}>Save</button>
       <button class="btn" onclick={saveAs} disabled={!build.loaded}>Save as…</button>
     </div>
-    <div class="block row-inline">
-      <input class="input grow" bind:value={author} placeholder="Author" title="Written as the author of exported .build files" onblur={commitAuthor} />
+    <div class="block actions">
       <button class="btn" onclick={saveGameBuild} disabled={!build.loaded} title="Export as a GGG Build Planner file the game can import (tree, skills, gear hints)">Save as .build…</button>
     </div>
     {#if shareUrl}
@@ -764,6 +836,34 @@
   }
   .gbrow .name {
     padding-left: 26px;
+  }
+  .gbrow .gbedit {
+    margin: 2px 10px 2px 26px;
+  }
+  .bname {
+    appearance: none;
+    border: 1px solid transparent;
+    background: none;
+    padding: 3px 6px;
+    border-radius: var(--r-1);
+    color: var(--fg-0);
+    font-size: var(--fs-md, 14px);
+    text-align: left;
+    cursor: text;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bname:hover:not(:disabled) {
+    border-color: var(--line-1);
+  }
+  .bname:disabled {
+    color: var(--fg-3);
+    cursor: default;
+  }
+  .row-inline .label {
+    flex: none;
   }
   .recover {
     display: flex;

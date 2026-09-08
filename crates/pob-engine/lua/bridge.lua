@@ -118,6 +118,24 @@ local function gemRequirements(gemData, gemLevel)
 	}
 end
 
+-- Skills the game hands out rather than sells as gems: default weapon attacks
+-- (Mace Strike, Bow Shot), Raise Shield, and skills unique items grant. PoB
+-- gives them tier 0 because no uncut gem makes them. They can still carry
+-- supports, so the game lists them among the character's skills.
+local function grantedGemNote(gemData)
+	if not gemData or gemData.Tier ~= 0 then return nil end
+	local ge = gemData.grantedEffect
+	if ge and ge.support then return nil end
+	local variant = gemData.variantId or ""
+	if variant:find("^PlayerDefault") then
+		return "default attack of " .. tostring(gemData.weaponRequirements or "the weapon") .. "; comes with the weapon, not a gem"
+	end
+	if gemData.weaponRequirements then
+		return "comes with " .. tostring(gemData.weaponRequirements) .. ", not a gem"
+	end
+	return "granted by an item or effect, not a gem"
+end
+
 -- The build's attribute requirements as PoB computes them: the highest single
 -- source per attribute (items, skill gems, and one "Support Gems" source of 5
 -- per support of that colour), never a sum.
@@ -355,6 +373,38 @@ M.save_build_file = function(p)
 	-- SaveDBFile resets the mod flags; `unsaved` is only recomputed in OnFrame.
 	frame()
 	return { ok = true, path = build.dbFileName, unsaved = build.unsaved == true }
+end
+
+-- Rename the open build. PoB ties the name to the file, so a saved build's
+-- file moves with it (the same folder, the new name); unsaved changes stay
+-- in memory and the next Save writes to the new path.
+M.set_build_name = function(p)
+	ensureBuild()
+	local name = p and type(p.name) == "string" and p.name:gsub("^%s+", ""):gsub("%s+$", "") or ""
+	if name == "" then error("params.name is required", 0) end
+	if name:find("[\\/:%*%?\"<>|%c]") then error("a build name cannot contain \\ / : * ? \" < > |", 0) end
+	local old = build.dbFileName
+	if old then
+		local dir = old:match("^(.*[/\\])[^/\\]+$") or ""
+		local new = dir .. name .. ".xml"
+		if new ~= old then
+			local exists = io.open(new, "r")
+			if exists then
+				exists:close()
+				error("a build named " .. name .. " already exists in that folder", 0)
+			end
+			local f = io.open(old, "r")
+			if f then
+				f:close()
+				local ok, err = os.rename(old, new)
+				if not ok then error("could not rename the build file: " .. tostring(err), 0) end
+			end
+			build.dbFileName = new
+		end
+	end
+	build.buildName = name
+	frame()
+	return M.get_build()
 end
 
 M.get_build = function()
@@ -1787,8 +1837,11 @@ M.equip_item_raw = function(p)
 	if not p or type(p.text) ~= "string" then error("params.text (raw item text) is required", 0) end
 	local item = new("Item"):Item(p.text)
 	if not item.base then error("could not parse item text (unrecognised base type or format)", 0) end
-	build.itemsTab:AddItem(item, true)
 	local slotName = resolveSlotName(p.slot)
+	if slotName and not build.itemsTab:IsItemValidForSlot(item, slotName) then
+		error(item.name .. " does not fit " .. slotName, 0)
+	end
+	build.itemsTab:AddItem(item, true)
 	if not slotName then
 		for _, slot in ipairs(build.itemsTab.orderedSlots) do
 			if not slot.inactive and build.itemsTab:IsItemValidForSlot(item, slot.slotName) then
@@ -1812,6 +1865,9 @@ M.equip_item = function(p)
 	if not slot then error("unknown slot", 0) end
 	local id = tonumber(p.itemId) or 0
 	if id ~= 0 and not build.itemsTab.items[id] then error("unknown item id", 0) end
+	if id ~= 0 and not build.itemsTab:IsItemValidForSlot(build.itemsTab.items[id], slot.slotName) then
+		error(build.itemsTab.items[id].name .. " does not fit " .. slot.slotName, 0)
+	end
 	slot:SetSelItemId(id)
 	build.itemsTab:AddUndoState()
 	refresh()
@@ -2017,6 +2073,9 @@ M.get_skills = function()
 				color = opt(gem.color),
 				count = opt(gem.count),
 				errMsg = opt(gem.errMsg),
+				-- Set for skills the game grants (default weapon attacks, Raise
+				-- Shield, unique-granted skills): not a socket the player filled.
+				granted = opt(grantedGemNote(gd)),
 			}
 		end
 		groups[#groups + 1] = {
@@ -2035,6 +2094,29 @@ M.get_skills = function()
 			skills = groupSkills(group),
 			isMainSkill = (build.mainSocketGroup == i),
 		}
+	end
+	-- An item's granted copy of a skill the player also has socketed (the
+	-- game lists Raise Shield and Mace Strike as skills so supports can go on
+	-- them, and PoB adds a support-less copy for the item): point each at the
+	-- other so a reader sees one skill, not two.
+	local function firstSkillName(group)
+		for _, gem in ipairs(group.gemList) do
+			local gd = gem.gemData
+			if gd and gd.grantedEffect and not gd.grantedEffect.support then return gd.name end
+		end
+		return nil
+	end
+	for i, group in ipairs(build.skillsTab.socketGroupList) do
+		if group.source and group.sourceItem then
+			local name = firstSkillName(group)
+			for j, other in ipairs(build.skillsTab.socketGroupList) do
+				if j ~= i and not other.source and name and firstSkillName(other) == name then
+					groups[i].duplicateOf = j
+					groups[j].grantedCopy = i
+					break
+				end
+			end
+		end
 	end
 	local sets = array({})
 	for _, id in ipairs(build.skillsTab.skillSetOrderList) do
@@ -2857,6 +2939,74 @@ local function dbFor(name)
 	return main.uniqueDB
 end
 
+-- Variant picks on a unique: index, exact name or a substring of the name.
+local PICK_FIELDS = { "variant", "variantAlt", "variantAlt2", "variantAlt3", "variantAlt4", "variantAlt5" }
+local PICK_FLAGS = { true, "hasAltVariant", "hasAltVariant2", "hasAltVariant3", "hasAltVariant4", "hasAltVariant5" }
+
+local function variantPickCount(item)
+	if not item.variantList then return 0 end
+	local n = 0
+	for _, flag in ipairs(PICK_FLAGS) do
+		if flag == true or item[flag] then n = n + 1 end
+	end
+	return n
+end
+
+-- Missing picks repeat the first, so the chosen lines appear once.
+local function setPicks(item, picks)
+	if not item.variantList then return end
+	local n = #item.variantList
+	local first = math.max(1, math.min(n, picks[1] or item.variant or n))
+	for i, flag in ipairs(PICK_FLAGS) do
+		if flag == true or item[flag] then
+			item[PICK_FIELDS[i]] = math.max(1, math.min(n, picks[i] or first))
+		end
+	end
+end
+
+-- A variant given as its index, its exact name, or a substring of the name.
+local function resolveVariant(item, spec)
+	local list = item.variantList
+	if not list then error(item.name .. " has no variants", 0) end
+	local n = tonumber(spec)
+	if n then
+		if n < 1 or n > #list then error(item.name .. " has " .. #list .. " variants; " .. n .. " is out of range", 0) end
+		return n
+	end
+	local q = tostring(spec):lower():gsub("^%s+", ""):gsub("%s+$", "")
+	for i, name in ipairs(list) do
+		if name:lower() == q then return i end
+	end
+	local hits = {}
+	for i, name in ipairs(list) do
+		if name:lower():find(q, 1, true) then hits[#hits + 1] = i end
+	end
+	if #hits == 1 then return hits[1] end
+	if #hits == 0 then error("no variant of " .. item.name .. " matches " .. tostring(spec), 0) end
+	local names = {}
+	for i = 1, math.min(8, #hits) do names[#names + 1] = list[hits[i]] end
+	error(tostring(spec) .. " matches " .. #hits .. " variants of " .. item.name .. ": " .. table.concat(names, "; "), 0)
+end
+
+local function activeModLines(item)
+	local lines = array({})
+	for _, ml in ipairs(item.explicitModLines or {}) do
+		if item:CheckModLineVariant(ml) then lines[#lines + 1] = ml.line end
+	end
+	return lines
+end
+
+local function pickNamesOf(item)
+	local names = array({})
+	for i, flag in ipairs(PICK_FLAGS) do
+		if flag == true or item[flag] then
+			local idx = item[PICK_FIELDS[i]]
+			if idx and item.variantList[idx] then names[#names + 1] = item.variantList[idx] end
+		end
+	end
+	return names
+end
+
 M.item_db_list = function(p)
 	ensureBuild()
 	p = p or {}
@@ -2872,6 +3022,14 @@ M.item_db_list = function(p)
 		local match = (q == "" or name:lower():find(q, 1, true) ~= nil or (item.baseName or ""):lower():find(q, 1, true) ~= nil)
 			and (not wantType or itype == wantType)
 		if match then
+			local implicits = array({})
+			for _, ml in ipairs(item.implicitModLines or {}) do
+				if item:CheckModLineVariant(ml) then implicits[#implicits + 1] = ml.line end
+			end
+			-- The first variant names give the model something to pick by; a
+			-- long list (a notable per variant) is cut and counted.
+			local variantNames = array({})
+			for i = 1, math.min(40, item.variantList and #item.variantList or 0) do variantNames[i] = item.variantList[i] end
 			rows[#rows + 1] = {
 				name = name,
 				rarity = opt(item.rarity),
@@ -2879,7 +3037,12 @@ M.item_db_list = function(p)
 				baseName = opt(item.baseName),
 				slot = opt(item:GetPrimarySlot()),
 				league = opt(item.league),
+				implicits = implicits,
+				mods = activeModLines(item),
 				variants = item.variantList and #item.variantList or 0,
+				variantPicks = variantPickCount(item),
+				variantNames = variantNames,
+				selectedVariants = item.variantList and pickNamesOf(item) or array({}),
 				upgrade = item.upgradePaths and true or false,
 			}
 		end
@@ -2953,7 +3116,23 @@ M.item_db_equip = function(p)
 	ensureItemDb()
 	local dbItem = dbFor(p.db).list[p.name]
 	if not dbItem then error("unknown database item " .. tostring(p.name), 0) end
-	return M.equip_item_raw({ text = dbItem:BuildRaw(), slot = p.slotName })
+	local item = new("Item"):Item(dbItem:BuildRaw())
+	local picks = {}
+	if p.variant ~= nil then picks[1] = resolveVariant(item, p.variant) end
+	if type(p.variants) == "table" then
+		for i, v in ipairs(p.variants) do picks[i] = resolveVariant(item, v) end
+	end
+	if #picks > 0 then
+		local n = variantPickCount(item)
+		if #picks > n then error(item.name .. " takes " .. n .. " variant pick" .. (n == 1 and "" or "s") .. ", not " .. #picks, 0) end
+		setPicks(item, picks)
+		item:BuildAndParseRaw()
+	end
+	local r = M.equip_item_raw({ text = item.raw, slot = p.slotName })
+	local equipped = build.itemsTab.items[r.itemId]
+	r.variants = equipped and equipped.variantList and pickNamesOf(equipped) or array({})
+	r.mods = equipped and activeModLines(equipped) or array({})
+	return r
 end
 
 -- Canonical raw text for the edit dialog.
@@ -5495,6 +5674,584 @@ M.optimise_gear = function(p)
 	return M.gear_opt_result()
 end
 
+-- ---------------------------------------------------------------------------
+-- Unique jewel suggestions. Every unique jewel PoB knows is scored in each
+-- allocated socket through the slot-replacement override (the item compare
+-- tooltip's path), so nothing is equipped and the build is untouched. A jewel
+-- with variants is searched over the variants that can matter here: a
+-- skill-level jewel over the skills the build runs, a notable jewel over
+-- notables not yet allocated; a jewel with several picks is filled greedily,
+-- best single pick first, partners from the top singles.
+--
+-- Three steps so the single-variant pass can run across the worker pool:
+-- jewel_plan lists the (jewel, socket, variants) jobs, score_jewel_variants
+-- runs one job on any engine holding the build, jewel_finish ranks and fills
+-- partner picks on the main engine. suggest_unique_jewels runs all three in
+-- one engine.
+-- ---------------------------------------------------------------------------
+
+local JEWEL_PARTNER_POOL = 24
+local jewelRun = nil
+
+local function variantLines(item, idx)
+	local out = {}
+	for _, ml in ipairs(item.explicitModLines or {}) do
+		if ml.variantList and ml.variantList[idx] then out[#out + 1] = ml.line end
+	end
+	return out
+end
+
+local function pickNames(item, picks)
+	local names = array({})
+	for _, idx in ipairs(picks) do names[#names + 1] = item.variantList[idx] end
+	return names
+end
+
+local function dbJewelItem(dbItem, range)
+	local item = new("Item"):Item(dbItem:BuildRaw())
+	if range then
+		for _, ml in ipairs(item.rangeLineList or {}) do ml.range = range end
+	end
+	item:BuildAndParseRaw()
+	return item
+end
+
+local function activeJewelSockets()
+	pcall(build.itemsTab.UpdateSockets, build.itemsTab)
+	local out = {}
+	for _, slot in ipairs(build.itemsTab.orderedSlots) do
+		if slot.nodeId and not slot.inactive then
+			local node = build.spec.nodes[slot.nodeId] or (build.spec.tree.nodes and build.spec.tree.nodes[slot.nodeId])
+			out[#out + 1] = { slot = slot, node = node, label = slot.label or slot.slotName }
+		end
+	end
+	return out
+end
+
+local function socketRow(sk)
+	local item = sk.slot.selItemId and sk.slot.selItemId ~= 0 and build.itemsTab.items[sk.slot.selItemId] or nil
+	return {
+		socket = sk.label,
+		slot = sk.slot.slotName,
+		nodeId = sk.slot.nodeId,
+		item = item and item.name or null,
+		itemRarity = item and opt(item.rarity) or null,
+		sinister = sk.node and sk.node.sinister == true or false,
+	}
+end
+
+-- Sockets as callers name them: "Socket #2", "#2", 2, "Jewel 26725" or the node id.
+local function resolveJewelSockets(sockets, wanted)
+	if type(wanted) ~= "table" or #wanted == 0 then return sockets end
+	local out, unknown = {}, {}
+	for _, w in ipairs(wanted) do
+		local s = tostring(w):lower():gsub("^%s+", ""):gsub("%s+$", "")
+		local found
+		for i, sk in ipairs(sockets) do
+			local id = tostring(sk.slot.nodeId)
+			if s == sk.slot.slotName:lower() or s == (sk.label or ""):lower() or s == id or s == tostring(i)
+				or s == "#" .. i or s == "socket " .. i or s == "socket #" .. i or s == "jewel " .. id then
+				found = sk
+				break
+			end
+		end
+		if found then out[#out + 1] = found else unknown[#unknown + 1] = tostring(w) end
+	end
+	if #unknown > 0 then
+		local names = {}
+		for _, sk in ipairs(sockets) do names[#names + 1] = sk.label .. " (" .. sk.slot.slotName .. ")" end
+		error("unknown socket " .. table.concat(unknown, ", ") .. "; allocated sockets: " .. table.concat(names, ", "), 0)
+	end
+	return out
+end
+
+local function keystoneSet()
+	local set = {}
+	for _, name in ipairs(data.keystones or {}) do set[name] = true end
+	return set
+end
+
+-- What each variant name counts as, and how many of a kind one item takes.
+-- A pick marked required is filled even when every option costs something
+-- (a Flesh Crucible always carries its price).
+local JEWEL_PICK_RULES = {
+	["Flesh Crucible"] = function()
+		local ks = keystoneSet()
+		return {
+			category = function(name) return ks[name] and "keystone" or "price" end,
+			caps = { keystone = 1, price = 1 },
+			required = { price = true },
+		}
+	end,
+	["Heart of the Well"] = function()
+		return {
+			category = function(name) return name:match("^Prefix ") and "prefix" or name:match("^Suffix ") and "suffix" or "other" end,
+			caps = { prefix = 2, suffix = 2 },
+		}
+	end,
+}
+
+local function jewelKind(item)
+	local jd = item.jewelData or {}
+	if item.baseName == "Timeless Jewel" or jd.conqueredBy then return "timeless" end
+	-- PoB gives every jewel an empty fromNothingKeystones table.
+	if (jd.fromNothingKeystones and next(jd.fromNothingKeystones)) or jd.alternateClassStart or jd.intuitiveLeapLike then return "tree" end
+	for _, ml in ipairs(item.explicitModLines or {}) do
+		local l = ml.line:lower()
+		if l:find("can be allocated without being connected", 1, true) or l:find("sinister jewel socket", 1, true)
+			or l:find("can allocate passive skills from", 1, true) then
+			return "tree"
+		end
+	end
+	return "stat"
+end
+
+local function buildSkillNames()
+	local names = {}
+	for _, group in ipairs(build.skillsTab.socketGroupList) do
+		for _, gem in ipairs(group.gemList) do
+			local gd = gem.gemData
+			if gd and gd.grantedEffect and not gd.grantedEffect.support then
+				names[gd.name:lower()] = true
+				if gd.grantedEffect.name then names[gd.grantedEffect.name:lower()] = true end
+			end
+		end
+	end
+	return names
+end
+
+local function allocatedNodeNames()
+	local names = {}
+	for _, node in pairs(build.spec.allocNodes or {}) do
+		if node.name then names[node.name:lower()] = true end
+		if node.dn then names[node.dn:lower()] = true end
+	end
+	return names
+end
+
+-- Variants worth scoring on this build. A skill-level line for a skill the
+-- build does not run, or a notable it already has, cannot change a number;
+-- an old version of the item is not what drops.
+local function relevantVariants(item, ctx)
+	local hasCurrent = false
+	for _, name in ipairs(item.variantList) do
+		if name == "Current" then hasCurrent = true end
+	end
+	local out = {}
+	for idx, name in ipairs(item.variantList) do
+		local keep = not (hasCurrent and name:match("^Pre "))
+		for _, line in ipairs(variantLines(item, idx)) do
+			local skill = line:match("to Level of all (.+) Skills$")
+			if skill then keep = keep and ctx.skills[skill:lower()] == true end
+			local notable = line:match("^Allocates (.+)$")
+			if notable and ctx.allocated[notable:lower()] then keep = false end
+		end
+		if keep then out[#out + 1] = idx end
+	end
+	return out
+end
+
+local function hasCorruptedMagicJewel(sockets)
+	for _, sk in ipairs(sockets) do
+		local item = sk.slot.selItemId and sk.slot.selItemId ~= 0 and build.itemsTab.items[sk.slot.selItemId] or nil
+		if item and item.rarity == "MAGIC" and item.corrupted then return true end
+	end
+	return false
+end
+
+local function jewelDelta(before, after)
+	local d = optDelta(before, after)
+	local out = {}
+	for k, v in pairs(d) do
+		if not k:find("^Req") then out[k] = v end
+	end
+	return out
+end
+
+local function round3(x) return math.floor(x * 1000 + 0.5) / 1000 end
+
+local function jewelHeadline(calcFunc, slotName, item)
+	return optHeadline(withoutFullDPS(calcFunc, { repSlotName = slotName, repItem = item }))
+end
+
+-- Step 1: what to score. Keeps the run's state for jewel_finish.
+M.jewel_plan = function(p)
+	ensureBuild()
+	ensureItemDb()
+	p = p or {}
+	local range = tonumber(p.range)
+	if range == nil then range = main.defaultItemAffixQuality or 0.5 end
+	range = math.max(0, math.min(1, range))
+	local run = {
+		started = GetTime(),
+		preset = p.preset or "balanced",
+		w = OPT_PRESETS[p.preset or "balanced"] or OPT_PRESETS.balanced,
+		cfg = { resist = tonumber(p.resist) or 75, chaos = tonumber(p.chaos) or 0, moveSpeed = 1.0 },
+		range = range,
+		limit = tonumber(p.limit) or 20,
+		notScored = array({}),
+		errors = array({}),
+		jobs = {},
+		items = {},
+	}
+	run.allSockets = activeJewelSockets()
+	run.socketRows = array({})
+	for _, sk in ipairs(run.allSockets) do run.socketRows[#run.socketRows + 1] = socketRow(sk) end
+	run.sockets = {}
+	for _, sk in ipairs(resolveJewelSockets(run.allSockets, p.sockets)) do
+		-- A sinister socket takes no unique.
+		if not (sk.node and sk.node.sinister) then run.sockets[#run.sockets + 1] = sk end
+	end
+	jewelRun = run
+	if #run.sockets == 0 then
+		return { jobs = array({}), sockets = run.socketRows }
+	end
+
+	local wanted = nil
+	if type(p.names) == "table" and #p.names > 0 then
+		wanted = {}
+		for _, n in ipairs(p.names) do wanted[#wanted + 1] = tostring(n):lower() end
+	end
+	local candidates = {}
+	for name, dbItem in pairs(main.uniqueDB.list) do
+		if dbItem.type == "Jewel" then
+			local keep = wanted == nil
+			if wanted then
+				for _, q in ipairs(wanted) do
+					if name:lower():find(q, 1, true) then keep = true end
+				end
+			end
+			if keep then candidates[#candidates + 1] = { name = name, dbItem = dbItem } end
+		end
+	end
+	table.sort(candidates, function(a, b) return a.name < b.name end)
+	if #candidates == 0 then error("no unique jewel matches " .. table.concat(wanted, ", "), 0) end
+
+	local ctx = { skills = buildSkillNames(), allocated = allocatedNodeNames() }
+	local jobs = array({})
+	for _, cand in ipairs(candidates) do
+		local ok, err = pcall(function()
+			local item = dbJewelItem(cand.dbItem, range)
+			local kind = jewelKind(item)
+			local mods = activeModLines(item)
+			if kind == "timeless" then
+				run.notScored[#run.notScored + 1] = { name = cand.name, reason = "a Timeless Jewel changes the passives in its radius by seed; PoB needs the exact seed and socket, and a seed search is not available here", mods = mods }
+				return
+			end
+			if kind == "tree" then
+				run.notScored[#run.notScored + 1] = { name = cand.name, reason = "changes what the tree can allocate rather than a stat; plan the tree around it, PoB's numbers do not capture it", mods = mods }
+				return
+			end
+			if item.jewelData and item.jewelData.corruptedMagicJewelIncEffect and not hasCorruptedMagicJewel(run.allSockets) then
+				run.notScored[#run.notScored + 1] = { name = cand.name, reason = "multiplies corrupted magic jewels and none is socketed", mods = mods }
+				return
+			end
+			local variantIdx = item.variantList and relevantVariants(item, ctx) or {}
+			if item.variantList and #variantIdx == 0 then
+				run.notScored[#run.notScored + 1] = { name = cand.name, reason = "none of its " .. #item.variantList .. " variants applies to this build (its skills or unallocated notables)", mods = mods }
+				return
+			end
+			local radius = item.jewelRadiusIndex ~= nil or (item.jewelData and item.jewelData.radiusIndex ~= nil)
+			local ruleMaker = JEWEL_PICK_RULES[item.title or ""]
+			run.items[cand.name] = { item = item, radius = radius, rules = ruleMaker and ruleMaker() or nil, variantIdx = variantIdx }
+			local slots = radius and run.sockets or { run.sockets[1] }
+			for _, sk in ipairs(slots) do
+				local job = { name = cand.name, slot = sk.slot.slotName, range = range, idx = null }
+				if #variantIdx > 0 then
+					job.idx = array({})
+					for i, v in ipairs(variantIdx) do job.idx[i] = v end
+				end
+				jobs[#jobs + 1] = job
+				run.jobs[#run.jobs + 1] = job
+			end
+		end)
+		if not ok then run.errors[#run.errors + 1] = { name = cand.name, error = tostring(err) } end
+	end
+	return { jobs = jobs, sockets = run.socketRows }
+end
+
+-- Step 2: score one job's variants, singly. Any engine holding the build.
+M.score_jewel_variants = function(chunk)
+	ensureBuild()
+	ensureItemDb()
+	if not chunk or not chunk.name or not chunk.slot then error("params.name and params.slot are required", 0) end
+	local dbItem = main.uniqueDB.list[chunk.name]
+	if not dbItem then error("unknown unique " .. tostring(chunk.name), 0) end
+	local item = dbJewelItem(dbItem, tonumber(chunk.range))
+	local calcFunc = build.calcsTab:GetMiscCalculator()
+	local results = array({})
+	local idx = chunk.idx
+	if type(idx) ~= "table" or #idx == 0 then
+		results[1] = { idx = null, out = jewelHeadline(calcFunc, chunk.slot, item) }
+	else
+		for _, i in ipairs(idx) do
+			setPicks(item, { tonumber(i) })
+			item:BuildAndParseRaw()
+			results[#results + 1] = { idx = tonumber(i), out = jewelHeadline(calcFunc, chunk.slot, item) }
+		end
+	end
+	return { name = chunk.name, slot = chunk.slot, results = results }
+end
+
+-- Step 3: rank, fill partner picks, try stacks. Main engine only.
+M.jewel_finish = function(p)
+	ensureBuild()
+	local run = jewelRun
+	if not run then error("call jewel_plan first", 0) end
+	jewelRun = nil
+	if #run.sockets == 0 then
+		return {
+			summary = #run.allSockets == 0 and "No jewel socket is allocated on the tree, so no jewel can be socketed; allocate a socket node first."
+				or "Every allocated socket is a Sinister socket, which takes no unique jewel.",
+			sockets = run.socketRows, suggestions = array({}), notScored = array({}), errors = array({}), evaluations = 0,
+		}
+	end
+	local calcFunc = build.calcsTab:GetMiscCalculator()
+	local base = optHeadline(withoutFullDPS(calcFunc, {}))
+	local w, cfg = run.w, run.cfg
+	local baseScore = optScore(base, base, w, cfg)
+	local function scoreOf(out) return optScore(out, base, w, cfg) - baseScore end
+	local evals = 0
+	local function score(slotName, item)
+		evals = evals + 1
+		local out = jewelHeadline(calcFunc, slotName, item)
+		return scoreOf(out), out
+	end
+
+	-- Singles per job, merged from however many chunks scored them.
+	local singlesByJob = {}
+	for _, r in ipairs(p and p.results or {}) do
+		local key = r.name .. "\n" .. r.slot
+		local list = singlesByJob[key] or {}
+		singlesByJob[key] = list
+		for _, s in ipairs(r.results or {}) do
+			evals = evals + 1
+			list[#list + 1] = { idx = s.idx ~= null and tonumber(s.idx) or nil, out = s.out, score = scoreOf(s.out) }
+		end
+	end
+
+	local socketBySlot = {}
+	for _, sk in ipairs(run.sockets) do socketBySlot[sk.slot.slotName] = sk end
+
+	local function row(item, sk, picks, sc, out, extra)
+		local current = sk and sk.slot.selItemId and sk.slot.selItemId ~= 0 and build.itemsTab.items[sk.slot.selItemId] or nil
+		local r = {
+			name = item.name,
+			item = item.title or item.name,
+			base = opt(item.baseName),
+			socket = sk and sk.label or "any",
+			slot = sk and sk.slot.slotName or null,
+			replaces = current and current.name or null,
+			variants = picks and pickNames(item, picks) or array({}),
+			mods = activeModLines(item),
+			delta = jewelDelta(base, out),
+			score = round3(sc),
+			raw = item.raw,
+		}
+		for k, v in pairs(extra or {}) do r[k] = v end
+		return r
+	end
+
+	-- The best row for one jewel in one socket from its scored singles;
+	-- further picks are filled greedily from the top singles.
+	local function bestInSocket(entry, sk, singles)
+		local item, rules = entry.item, entry.rules
+		local slotName = sk.slot.slotName
+		if #singles == 0 then return nil end
+		local picks = variantPickCount(item)
+		if picks == 0 then
+			return row(item, sk, nil, singles[1].score, singles[1].out)
+		end
+		table.sort(singles, function(a, b)
+			if a.score ~= b.score then return a.score > b.score end
+			return a.idx < b.idx
+		end)
+		local chosen, counts = {}, {}
+		local function category(idx) return rules and rules.category(item.variantList[idx]) or "any" end
+		local function allowed(idx)
+			local c = category(idx)
+			local cap = rules and rules.caps and rules.caps[c]
+			return not cap or (counts[c] or 0) < cap
+		end
+		local function take(idx)
+			chosen[#chosen + 1] = idx
+			local c = category(idx)
+			counts[c] = (counts[c] or 0) + 1
+		end
+		local first
+		for _, s in ipairs(singles) do
+			if allowed(s.idx) and not (rules and rules.required and rules.required[category(s.idx)]) then
+				first = s
+				break
+			end
+		end
+		if not first then return nil end
+		take(first.idx)
+		local bestSc, bestOut = first.score, first.out
+		local alternatives = array({})
+		for _, s in ipairs(singles) do
+			if #alternatives >= 3 then break end
+			if s.idx ~= first.idx and category(s.idx) == category(first.idx) then
+				alternatives[#alternatives + 1] = { variants = pickNames(item, { s.idx }), score = round3(s.score), delta = jewelDelta(base, s.out) }
+			end
+		end
+		if picks > 1 then
+			local pool = {}
+			for i = 1, math.min(JEWEL_PARTNER_POOL, #singles) do pool[#pool + 1] = singles[i] end
+			-- A required category is filled from every option, not only the top singles.
+			if rules and rules.required then
+				local seen = {}
+				for _, s in ipairs(pool) do seen[s.idx] = true end
+				for _, s in ipairs(singles) do
+					if not seen[s.idx] and rules.required[category(s.idx)] then pool[#pool + 1] = s end
+				end
+			end
+			for _ = 2, picks do
+				local requiredLeft = nil
+				if rules and rules.required then
+					for c in pairs(rules.required) do
+						if (counts[c] or 0) < (rules.caps and rules.caps[c] or 1) then requiredLeft = c end
+					end
+				end
+				local best, bestEntrySc, bestEntryOut = nil, nil, nil
+				for _, s in ipairs(pool) do
+					local used = false
+					for _, idx in ipairs(chosen) do
+						if idx == s.idx then used = true end
+					end
+					if not used and allowed(s.idx) and (not requiredLeft or category(s.idx) == requiredLeft) then
+						local trial = {}
+						for _, idx in ipairs(chosen) do trial[#trial + 1] = idx end
+						trial[#trial + 1] = s.idx
+						setPicks(item, trial)
+						item:BuildAndParseRaw()
+						local sc, out = score(slotName, item)
+						local better = sc > bestSc + 1e-9
+						if (better or requiredLeft) and (not bestEntrySc or sc > bestEntrySc) then
+							best, bestEntrySc, bestEntryOut = s, sc, out
+						end
+					end
+				end
+				if not best then break end
+				take(best.idx)
+				bestSc, bestOut = bestEntrySc, bestEntryOut
+			end
+		end
+		setPicks(item, chosen)
+		item:BuildAndParseRaw()
+		return row(item, sk, chosen, bestSc, bestOut, { alternatives = alternatives })
+	end
+
+	-- k copies of a stackable jewel: real copies in the other sockets, the
+	-- last one through the override.
+	local function stacked(item, k, fn)
+		local added, saved = {}, {}
+		for i = 2, k do
+			local copy = new("Item"):Item(item.raw)
+			build.itemsTab:AddItem(copy, true)
+			saved[i] = run.sockets[i].slot.selItemId or 0
+			run.sockets[i].slot:SetSelItemId(copy.id)
+			added[#added + 1] = copy
+		end
+		local ok, a = pcall(fn)
+		for i = 2, k do run.sockets[i].slot:SetSelItemId(saved[i]) end
+		for _, c in ipairs(added) do build.itemsTab:DeleteItem(c, true) end
+		if not ok then error(a, 0) end
+		return a
+	end
+
+	local suggestions = array({})
+	local names = {}
+	for name in pairs(run.items) do names[#names + 1] = name end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		local entry = run.items[name]
+		local ok, err = pcall(function()
+			local best = nil
+			for _, job in ipairs(run.jobs) do
+				if job.name == name then
+					local sk = socketBySlot[job.slot]
+					local singles = singlesByJob[name .. "\n" .. job.slot]
+					if sk and singles then
+						local r = bestInSocket(entry, sk, singles)
+						if r then
+							if not entry.radius then
+								r.socket = "any"
+								r.slot = null
+								r.replaces = null
+							end
+							if not best or r.score > best.score then best = r end
+							if entry.radius then suggestions[#suggestions + 1] = r end
+						end
+					end
+				end
+			end
+			if best and not entry.radius then suggestions[#suggestions + 1] = best end
+			-- Copies of a stackable jewel, one per free socket.
+			local item = entry.item
+			local limitN = tonumber(item.limit) or 1
+			if best and not entry.radius and limitN > 1 and #run.sockets > 1 then
+				for k = 2, math.min(limitN, #run.sockets) do
+					local r = stacked(item, k, function()
+						local sc, out = score(run.sockets[1].slot.slotName, item)
+						return row(item, nil, nil, sc, out, { copies = k, socket = k .. " sockets", note = k .. " copies, one per socket" })
+					end)
+					suggestions[#suggestions + 1] = r
+				end
+			end
+		end)
+		if not ok then run.errors[#run.errors + 1] = { name = name, error = tostring(err) } end
+	end
+	refresh()
+
+	table.sort(suggestions, function(a, b) return a.score > b.score end)
+	local kept = array({})
+	for i = 1, math.min(run.limit, #suggestions) do kept[#kept + 1] = suggestions[i] end
+	local gains = 0
+	for _, s in ipairs(suggestions) do
+		if s.score > 1e-6 then gains = gains + 1 end
+	end
+	local parts = {}
+	for i = 1, math.min(3, #suggestions) do
+		local s = suggestions[i]
+		if s.score > 1e-6 then
+			local bits = {}
+			for _, k in ipairs({ "Life", "TotalEHP", "CombinedDPS" }) do
+				if s.delta[k] then bits[#bits + 1] = string.format("%s %+d", k, math.floor(s.delta[k] + 0.5)) end
+			end
+			local what = s.item .. (#s.variants > 0 and " (" .. table.concat(s.variants, ", ") .. ")" or "") .. (s.copies and " x" .. s.copies or "")
+			if s.slot ~= null then what = what .. " in " .. s.socket end
+			parts[#parts + 1] = what .. (#bits > 0 and ": " .. table.concat(bits, ", ") or "")
+		end
+	end
+	local summary
+	if gains == 0 then
+		summary = string.format("No unique jewel improves this build by PoB's numbers (%d options scored, %d not scored).", #suggestions, #run.notScored)
+	else
+		summary = string.format("%d of %d jewel options improve the build. Best: %s. Nothing is equipped.", gains, #suggestions, table.concat(parts, "; "))
+	end
+	return {
+		summary = summary,
+		preset = run.preset,
+		range = run.range,
+		sockets = run.socketRows,
+		baseline = { Life = base.Life, TotalEHP = base.TotalEHP, CombinedDPS = base.CombinedDPS, Armour = base.Armour },
+		suggestions = kept,
+		notScored = run.notScored,
+		errors = run.errors,
+		evaluations = evals,
+		ms = GetTime() - run.started,
+	}
+end
+
+-- One-engine form for the CLI and a pool-less host.
+M.suggest_unique_jewels = function(p)
+	local plan = M.jewel_plan(p)
+	local results = array({})
+	for _, job in ipairs(plan.jobs) do results[#results + 1] = M.score_jewel_variants(job) end
+	return M.jewel_finish({ results = results })
+end
+
 -- Exposed for `pobctl eval` scripting: __bridge.tree_click({ id = 123 })
 _G.__bridge = M
 
@@ -5549,8 +6306,9 @@ M.build_summary = function()
 	local active, persistent, trigger, meta = 0, 0, 0, 0
 	local mainSupports, mainName = 0, null
 	local skills = array({})
+	local granted = 0
 	for gi, group in ipairs(build.skillsTab.socketGroupList) do
-		local supports, skillName, press = 0, nil, nil
+		local supports, skillName, press, gemNote = 0, nil, nil, nil
 		for _, gem in ipairs(group.gemList) do
 			local gd = gem.gemData
 			local isSupport = (gd and gd.grantedEffect and gd.grantedEffect.support) and true or false
@@ -5559,6 +6317,7 @@ M.build_summary = function()
 			elseif not skillName then
 				skillName = gd and gd.name or gem.nameSpec
 				press = gemPressClass(gd)
+				gemNote = grantedGemNote(gd)
 			end
 		end
 		local isMain = gi == build.mainSocketGroup
@@ -5569,7 +6328,12 @@ M.build_summary = function()
 			press = "granted"
 		end
 		if skillName and skillName ~= "" then
-			if group.enabled ~= false and press ~= "granted" then
+			-- A default weapon attack or Raise Shield is there because of the
+			-- weapon; it is a button only if the build plays it, so it is
+			-- counted apart from the skills the player chose.
+			if group.enabled ~= false and press ~= "granted" and gemNote then
+				granted = granted + 1
+			elseif group.enabled ~= false and press ~= "granted" then
 				if press == "active" then active = active + 1
 				elseif press == "persistent" then persistent = persistent + 1
 				elseif press == "trigger" then trigger = trigger + 1
@@ -5584,8 +6348,17 @@ M.build_summary = function()
 				enabled = group.enabled ~= false,
 				main = isMain,
 				grantedBy = grantedBy(group),
+				granted = opt(gemNote),
 			}
 		end
+	end
+	-- Mark an item's copy of a skill that is also socketed with supports.
+	local byName = {}
+	for _, k in ipairs(skills) do
+		if k.grantedBy == null then byName[k.skill] = k.group end
+	end
+	for _, k in ipairs(skills) do
+		if k.grantedBy ~= null and byName[k.skill] then k.duplicateOf = byName[k.skill] end
 	end
 
 	-- Charm slots come from the belt. PoB's EmptyCharms counts charms not
@@ -5615,6 +6388,9 @@ M.build_summary = function()
 		persistentSkills = persistent,
 		triggerSkills = trigger,
 		metaSkills = meta,
+		-- Skills the weapon or an item hands out (default attacks, Raise
+		-- Shield): present because of the item, not chosen, not counted above.
+		grantedSkills = granted,
 		skills = skills,
 		-- pointsUsed counts weapon-set nodes too; the budget applies to the
 		-- main-tree figure.

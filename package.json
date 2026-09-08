@@ -14,6 +14,7 @@
     "sync": "cargo run -p pob-sync -- --tree-assets",
     "sync:fast": "cargo run -p pob-sync --",
     "ctl": "cargo run -p pob-engine --bin pobctl --",
+    "mcp": "bun scripts/mcp-call.ts",
     "release:tag": "bun scripts/release.mjs"
   },
   "dependencies": {
