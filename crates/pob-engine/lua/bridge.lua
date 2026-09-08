@@ -5709,8 +5709,10 @@ end
 
 local function dbJewelItem(dbItem, range)
 	local item = new("Item"):Item(dbItem:BuildRaw())
+	-- Every line, not rangeLineList: that holds only the lines active under
+	-- the default variant, and the scorer switches variants afterwards.
 	if range then
-		for _, ml in ipairs(item.rangeLineList or {}) do ml.range = range end
+		for _, ml in ipairs(item.explicitModLines or {}) do ml.range = range end
 	end
 	item:BuildAndParseRaw()
 	return item
@@ -5829,9 +5831,20 @@ local function allocatedNodeNames()
 	return names
 end
 
+-- Stat text of every notable by name, for judging what "Allocates X" gives.
+local function notableStatText()
+	local text = {}
+	for _, node in pairs(build.spec.tree.nodes or {}) do
+		if node.name and node.sd then text[node.name:lower()] = table.concat(node.sd, " "):lower() end
+	end
+	return text
+end
+
 -- Variants worth scoring on this build. A skill-level line for a skill the
 -- build does not run, or a notable it already has, cannot change a number;
--- an old version of the item is not what drops.
+-- an old version of the item is not what drops. With no mana pool (Blood
+-- Magic) or no energy shield, every line naming that pool is dead, including
+-- "while not on Low Mana", which PoB does not derive from the missing pool.
 local function relevantVariants(item, ctx)
 	local hasCurrent = false
 	for _, name in ipairs(item.variantList) do
@@ -5845,6 +5858,17 @@ local function relevantVariants(item, ctx)
 			if skill then keep = keep and ctx.skills[skill:lower()] == true end
 			local notable = line:match("^Allocates (.+)$")
 			if notable and ctx.allocated[notable:lower()] then keep = false end
+			if #ctx.deadPools > 0 then
+				local text = line:lower()
+				if notable then text = ctx.notables[notable:lower()] or text end
+				for _, pool in ipairs(ctx.deadPools) do
+					if text:find(pool, 1, true) then
+						keep = false
+						ctx.deadSkipped = (ctx.deadSkipped or 0) + 1
+						break
+					end
+				end
+			end
 		end
 		if keep then out[#out + 1] = idx end
 	end
@@ -5927,7 +5951,12 @@ M.jewel_plan = function(p)
 	table.sort(candidates, function(a, b) return a.name < b.name end)
 	if #candidates == 0 then error("no unique jewel matches " .. table.concat(wanted, ", "), 0) end
 
-	local ctx = { skills = buildSkillNames(), allocated = allocatedNodeNames() }
+	local mainOut = build.calcsTab.mainOutput or {}
+	local ctx = { skills = buildSkillNames(), allocated = allocatedNodeNames(), deadPools = {} }
+	if (mainOut.Mana or 0) <= 0 then ctx.deadPools[#ctx.deadPools + 1] = "mana" end
+	if (mainOut.EnergyShield or 0) <= 0 then ctx.deadPools[#ctx.deadPools + 1] = "energy shield" end
+	if #ctx.deadPools > 0 then ctx.notables = notableStatText() end
+	run.ctx = ctx
 	local jobs = array({})
 	for _, cand in ipairs(candidates) do
 		local ok, err = pcall(function()
@@ -6230,8 +6259,13 @@ M.jewel_finish = function(p)
 	else
 		summary = string.format("%d of %d jewel options improve the build. Best: %s. Nothing is equipped.", gains, #suggestions, table.concat(parts, "; "))
 	end
+	local notes = array({})
+	if run.ctx and #run.ctx.deadPools > 0 then
+		notes[#notes + 1] = string.format("The build has no %s, so %d variants naming it were skipped: a line about that pool, or a \"while not on Low ...\" condition on it, cannot work here.", table.concat(run.ctx.deadPools, " and no "), run.ctx.deadSkipped or 0)
+	end
 	return {
 		summary = summary,
+		notes = notes,
 		preset = run.preset,
 		range = run.range,
 		sockets = run.socketRows,
