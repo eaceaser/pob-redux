@@ -14,10 +14,12 @@
     type PowerStat,
     type SharedItem,
     type SlotsResponse,
+    type Tooltip,
     type TooltipLine,
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import ItemFrame from "$lib/components/ItemFrame.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
 
   let slotsResp = $state<SlotsResponse | null>(null);
@@ -53,7 +55,7 @@
   let craftEquip = $state(true);
 
   // selected item detail (tooltip, affixes, runes, modify flags)
-  let detail = $state<{ lines: TooltipLine[]; affixes: ItemAffixes | null; runes: ItemRunes | null } | null>(null);
+  let detail = $state<{ tt: Tooltip; affixes: ItemAffixes | null; runes: ItemRunes | null } | null>(null);
   let anointFlags = $state<AnointInfo | null>(null);
   let corruptInfo = $state<CorruptionInfo | null>(null);
   let catInfo = $state<{ usable: boolean; names: string[]; catalyst: number; quality: number } | null>(null);
@@ -69,7 +71,7 @@
       }
       Promise.all([engine.itemTooltip({ itemId: id }), engine.itemAffixes(id), engine.itemRunes(id)])
         .then(([t, a, r]) => {
-          if (selectedItem === id) detail = { lines: t.lines, affixes: a.crafted ? a : null, runes: r.socketCount > 0 ? r : null };
+          if (selectedItem === id) detail = { tt: t, affixes: a.crafted ? a : null, runes: r.socketCount > 0 ? r : null };
         })
         .catch(() => {
           detail = null;
@@ -258,9 +260,9 @@
   }
 
   // tooltip
-  let tip = $state<{ lines: TooltipLine[]; x: number; y: number } | null>(null);
+  let tip = $state<{ tt: Tooltip; x: number; y: number } | null>(null);
   let tipTimer = 0;
-  const tipCache = new Map<string, TooltipLine[]>();
+  const tipCache = new Map<string, Tooltip>();
 
   const activeSet = $derived(itemSets.find((s) => s.active));
   const shownSlots = $derived((slotsResp?.slots ?? []).filter((s) => s.shown && !s.inactive));
@@ -311,20 +313,20 @@
     build.run(() => engine.equipItem(slot, id));
   }
 
-  function showTip(e: MouseEvent, key: string, fetch: () => Promise<{ lines: TooltipLine[] }>) {
+  function showTip(e: MouseEvent, key: string, fetch: () => Promise<Tooltip>) {
     clearTimeout(tipTimer);
     const x = Math.min(e.clientX + 16, window.innerWidth - 560);
     const y = Math.min(e.clientY + 12, Math.max(window.innerHeight - 520, 40));
     tipTimer = window.setTimeout(async () => {
       const cached = tipCache.get(key);
       if (cached) {
-        tip = { lines: cached, x, y };
+        tip = { tt: cached, x, y };
         return;
       }
       try {
         const r = await fetch();
-        tipCache.set(key, r.lines);
-        tip = { lines: r.lines, x, y };
+        tipCache.set(key, r);
+        tip = { tt: r, x, y };
       } catch {
         tip = null;
       }
@@ -487,15 +489,21 @@
           <button class="btn sm ghost" onclick={() => (selectedItem = null)}>Back to database</button>
         </div>
         <div class="scroll detailpane">
-          <div class="ttbox">
-            {#each detail.lines as l}
-              {#if l.sep}
-                <div class="tsep"></div>
-              {:else}
-                <div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>
-              {/if}
-            {/each}
-          </div>
+          {#if detail.tt.header}
+            <div class="ttbox">
+              <ItemFrame lines={detail.tt.lines} header={detail.tt.header} runic={detail.tt.runic} uniqueGem={detail.tt.uniqueGem} />
+            </div>
+          {:else}
+            <div class="ttbox plain">
+              {#each detail.tt.lines as l}
+                {#if l.sep}
+                  <div class="tsep"></div>
+                {:else}
+                  <div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
 
           {#if detail.affixes}
             <div class="craftsec">
@@ -853,7 +861,7 @@
   {/if}
 
   {#if tip}
-    <PobTooltip lines={tip.lines} x={tip.x} y={tip.y} />
+    <PobTooltip lines={tip.tt.lines} header={tip.tt.header} runic={tip.tt.runic} uniqueGem={tip.tt.uniqueGem} x={tip.x} y={tip.y} />
   {/if}
 </div>
 
@@ -1140,7 +1148,7 @@
     flex-direction: column;
     gap: 12px;
   }
-  .ttbox {
+  .ttbox.plain {
     padding: 10px 12px;
     border: 1px solid var(--line-0);
     border-radius: var(--r-2);

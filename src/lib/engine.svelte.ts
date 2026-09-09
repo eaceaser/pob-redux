@@ -496,6 +496,18 @@ export interface TooltipLine {
   text: string;
   center: boolean;
   sep: boolean;
+  /** "FONTIN SC" on the lines PoB draws in the game font. */
+  font: string | null;
+}
+
+/** Rarity art PoB frames a tooltip with; null for plain tooltips. */
+export type TooltipHeader = "UNIQUE" | "RARE" | "MAGIC" | "NORMAL" | "RELIC" | "GEM" | null;
+
+export interface Tooltip {
+  lines: TooltipLine[];
+  header: TooltipHeader;
+  runic: boolean;
+  uniqueGem: boolean;
 }
 
 export type GemKind = "skill" | "spirit" | "support";
@@ -949,9 +961,9 @@ export const engine = {
   setSkillsOptions: (patch: Partial<SkillsOptions>) => call<SkillsOptions>("set_skills_options", patch),
   copySocketGroup: (index: number) => call<{ text: string }>("copy_socket_group", { index }),
   pasteSocketGroup: (text: string) => call<Skills>("paste_socket_group", { text }),
-  gemTooltip: (groupIndex: number, gemIndex: number) => call<{ lines: TooltipLine[] }>("gem_tooltip", { groupIndex, gemIndex }),
+  gemTooltip: (groupIndex: number, gemIndex: number) => call<Tooltip>("gem_tooltip", { groupIndex, gemIndex }),
   /** The same tooltip for any gem, socketed or not, at the build's default gem level. */
-  gemTooltipById: (gemId: string) => call<{ lines: TooltipLine[] }>("gem_tooltip", { gemId }),
+  gemTooltipById: (gemId: string) => call<Tooltip>("gem_tooltip", { gemId }),
   /** Every gem name with its kind, for highlighting names in prose. */
   gemNames: () => call<{ gems: GemName[] }>("gem_names"),
   selectSkillSet: (id: number) => call<Skills>("select_skill_set", { id }),
@@ -971,7 +983,7 @@ export const engine = {
   itemDbList: (opts: { db: "unique" | "rare"; query?: string; type?: string; limit?: number; offset?: number }) =>
     call<{ items: ItemDbRow[]; total: number; offset: number; types: { type: string; count: number }[] }>("item_db_list", opts),
   itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; raw?: string; slotName?: string | false }) =>
-    call<{ lines: TooltipLine[]; rarity: string | null }>("item_tooltip", opts),
+    call<Tooltip & { rarity: string | null }>("item_tooltip", opts),
   /** `variants`: one entry per pick, a variant's name, a substring of it, or its index. */
   itemDbEquip: (db: "unique" | "rare", name: string, slotName?: string, variants?: (string | number)[]) =>
     call<{ ok: boolean; itemId: number; slot: string; itemName: string; variants: string[]; mods: string[] }>("item_db_equip", { db, name, slotName, variants }),

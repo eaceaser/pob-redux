@@ -1,6 +1,6 @@
 <script lang="ts">
   import { isNumeric, parse, type Span } from "$lib/ai/markdown";
-  import type { TooltipLine } from "$lib/engine.svelte";
+  import type { Tooltip } from "$lib/engine.svelte";
   import { gems } from "$lib/state/gems.svelte";
   import PobTooltip from "./PobTooltip.svelte";
 
@@ -9,7 +9,7 @@
   // were rendered before it loaded.
   const blocks = $derived(parse(text, gems.pattern ? (t) => gems.scan(t) : undefined));
 
-  let tip = $state<{ lines: TooltipLine[]; x: number; y: number } | null>(null);
+  let tip = $state<{ tt: Tooltip; x: number; y: number } | null>(null);
   let tipTimer = 0;
 
   function showTip(e: MouseEvent, gemId: string) {
@@ -18,7 +18,7 @@
     const y = Math.min(e.clientY + 12, window.innerHeight - 420);
     tipTimer = window.setTimeout(async () => {
       try {
-        tip = { lines: await gems.tooltip(gemId), x, y };
+        tip = { tt: await gems.tooltip(gemId), x, y };
       } catch {
         tip = null;
       }
@@ -74,7 +74,7 @@
 </div>
 
 {#if tip}
-  <PobTooltip lines={tip.lines} x={tip.x} y={tip.y} />
+  <PobTooltip lines={tip.tt.lines} header={tip.tt.header} runic={tip.tt.runic} uniqueGem={tip.tt.uniqueGem} x={tip.x} y={tip.y} />
 {/if}
 
 <style>

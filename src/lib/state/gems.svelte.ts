@@ -1,4 +1,4 @@
-import { engine, type GemName, type TooltipLine } from "$lib/engine.svelte";
+import { engine, type GemName, type Tooltip } from "$lib/engine.svelte";
 
 export interface GemMatch {
   name: string;
@@ -19,7 +19,7 @@ class GemIndex {
   pattern = $state<RegExp | null>(null);
 
   private loading: Promise<void> | null = null;
-  private tips = new Map<string, TooltipLine[]>();
+  private tips = new Map<string, Tooltip>();
 
   load(): Promise<void> {
     if (this.byName.size) return Promise.resolve();
@@ -59,12 +59,12 @@ class GemIndex {
     return out;
   }
 
-  async tooltip(gemId: string): Promise<TooltipLine[]> {
+  async tooltip(gemId: string): Promise<Tooltip> {
     const cached = this.tips.get(gemId);
     if (cached) return cached;
     const r = await engine.gemTooltipById(gemId);
-    this.tips.set(gemId, r.lines);
-    return r.lines;
+    this.tips.set(gemId, r);
+    return r;
   }
 }
 

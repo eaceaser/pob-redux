@@ -1,9 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { engine, gemDpsParallel, type GemSearchRow, type SkillEntry, type SkillsOptions, type SocketGroup, type TooltipLine } from "$lib/engine.svelte";
+  import { engine, gemDpsParallel, type GemSearchRow, type SkillEntry, type SkillsOptions, type SocketGroup, type Tooltip } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import PobTooltip from "$lib/components/PobTooltip.svelte";
 
   const groups = $derived(build.skills?.socketGroups ?? []);
   const skillSets = $derived(build.skills?.skillSets ?? []);
@@ -41,9 +42,9 @@
   }
 
   // gem tooltip (PoB's GemTooltip lines)
-  let tip = $state<{ lines: TooltipLine[]; x: number; y: number } | null>(null);
+  let tip = $state<{ tt: Tooltip; x: number; y: number } | null>(null);
   let tipTimer = 0;
-  const tipCache = new Map<string, TooltipLine[]>();
+  const tipCache = new Map<string, Tooltip>();
 
   $effect(() => {
     if (sel) labelDraft = sel.label ?? "";
@@ -140,13 +141,13 @@
     tipTimer = window.setTimeout(async () => {
       const cached = tipCache.get(key);
       if (cached) {
-        tip = { lines: cached, x, y };
+        tip = { tt: cached, x, y };
         return;
       }
       try {
         const r = await engine.gemTooltip(groupIndex, gemIndex);
-        tipCache.set(key, r.lines);
-        tip = { lines: r.lines, x, y };
+        tipCache.set(key, r);
+        tip = { tt: r, x, y };
       } catch {
         tip = null;
       }
@@ -155,12 +156,6 @@
   function hideTip() {
     clearTimeout(tipTimer);
     tip = null;
-  }
-
-  function tipStyle(l: TooltipLine): string {
-    if (l.size >= 24) return "font-size:13px;font-weight:600";
-    if (l.size >= 18) return "font-size:12px";
-    return "font-size:11px";
   }
 
   const activeSet = $derived(skillSets.find((s) => s.active));
@@ -427,15 +422,7 @@
   </div>
 
   {#if tip}
-    <div class="gtip" style:left={`${tip.x}px`} style:top={`${tip.y}px`}>
-      {#each tip.lines as l}
-        {#if l.sep}
-          <div class="tsep"></div>
-        {:else}
-          <div class="tline" class:tcenter={l.center} style={tipStyle(l)}><PobText text={l.text} /></div>
-        {/if}
-      {/each}
-    </div>
+    <PobTooltip lines={tip.tt.lines} header={tip.tt.header} runic={tip.tt.runic} uniqueGem={tip.tt.uniqueGem} x={tip.x} y={tip.y} />
   {/if}
 </div>
 
@@ -741,32 +728,5 @@
   }
   input[type="checkbox"] {
     accent-color: var(--fg-0);
-  }
-  .gtip {
-    position: fixed;
-    width: 540px;
-    max-height: 60vh;
-    overflow: hidden;
-    padding: 10px 14px;
-    background: color-mix(in srgb, var(--bg-1) 96%, transparent);
-    border: 1px solid var(--line-1);
-    border-radius: var(--r-2);
-    box-shadow: var(--shadow-pop);
-    pointer-events: none;
-    backdrop-filter: blur(8px);
-    z-index: 10;
-    line-height: 1.45;
-  }
-  .tline {
-    color: var(--fg-1);
-    white-space: pre-wrap;
-  }
-  .tcenter {
-    text-align: center;
-  }
-  .tsep {
-    height: 1px;
-    background: var(--line-1);
-    margin: 6px 0;
   }
 </style>

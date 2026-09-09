@@ -1,3 +1,9 @@
+@font-face {
+  font-family: "Fontin SmallCaps";
+  src: url("./lib/assets/fontin-smallcaps.ttf") format("truetype");
+  font-display: block;
+}
+
 /* Design tokens: monochrome, hairline. Accents are semantic only.
    Dark is the base; `.scope-dark` pins an element (the tree canvas, which
    draws PoB's dark art) to it in either theme. */

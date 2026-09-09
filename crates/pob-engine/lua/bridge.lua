@@ -2477,6 +2477,28 @@ local function gemInstanceFor(p)
 	return gem
 end
 
+-- A PoB tooltip as sized, colour-coded lines. `header` names the rarity art
+-- PoB would frame it with (UNIQUE, RARE, MAGIC, NORMAL, RELIC, GEM); `font`
+-- is set on the lines PoB draws in the game font ("FONTIN SC").
+local function tooltipPayload(tt)
+	local lines = array({})
+	for _, l in ipairs(tt.lines) do
+		lines[#lines + 1] = {
+			size = l.size or 14,
+			text = l.text or "",
+			center = l.center == true,
+			sep = (l.separatorImage ~= nil or l.text == nil) and true or false,
+			font = opt(l.font),
+		}
+	end
+	return {
+		lines = lines,
+		header = tt.tooltipHeader and tostring(tt.tooltipHeader):upper() or null,
+		runic = tt.runicItem ~= nil,
+		uniqueGem = tt.isUniqueGem == true,
+	}
+end
+
 -- PoB's own gem tooltip (GemTooltip.lua), returned as sized, colour-coded lines.
 M.gem_tooltip = function(p)
 	ensureBuild()
@@ -2485,16 +2507,7 @@ M.gem_tooltip = function(p)
 	local tt = new("Tooltip"):Tooltip()
 	local ok, err = pcall(gemTooltipModule.AddGemTooltip, tt, build, gem)
 	if not ok then error("tooltip failed: " .. tostring(err), 0) end
-	local lines = array({})
-	for _, l in ipairs(tt.lines) do
-		lines[#lines + 1] = {
-			size = l.size or 14,
-			text = l.text or "",
-			center = l.center == true,
-			sep = (l.separatorImage ~= nil or l.text == nil) and true or false,
-		}
-	end
-	return { lines = lines }
+	return tooltipPayload(tt)
 end
 
 -- Every gem name with what kind of thing it is, for highlighting names in
@@ -3061,19 +3074,6 @@ M.item_db_list = function(p)
 	return { items = page, total = total, offset = offset, types = typeList }
 end
 
-local function tooltipLines(tt)
-	local lines = array({})
-	for _, l in ipairs(tt.lines) do
-		lines[#lines + 1] = {
-			size = l.size or 14,
-			text = l.text or "",
-			center = l.center == true,
-			sep = (l.separatorImage ~= nil or l.text == nil) and true or false,
-		}
-	end
-	return lines
-end
-
 local function resolveItem(p)
 	if p.itemId then
 		local item = build.itemsTab.items[tonumber(p.itemId)]
@@ -3107,7 +3107,9 @@ M.item_tooltip = function(p)
 	end
 	local tt = new("Tooltip"):Tooltip()
 	build.itemsTab:AddItemTooltip(tt, item, slot, dbMode and p.itemId == nil)
-	return { lines = tooltipLines(tt), rarity = opt(item.rarity) }
+	local r = tooltipPayload(tt)
+	r.rarity = opt(item.rarity)
+	return r
 end
 
 M.item_db_equip = function(p)
