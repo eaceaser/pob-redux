@@ -223,16 +223,16 @@
       <div class="dim small pad">Open a build to review it.</div>
     {:else if summary}
       <div class="facts">
-        <div class="fact"><span class="k">Buttons</span><span class="v mono">{summary.activeSkills}</span><span class="n dim">skills that need a keypress</span></div>
-        <div class="fact"><span class="k">Automatic</span><span class="v mono">{summary.persistentSkills + summary.triggerSkills + summary.metaSkills}</span><span class="n dim">persistent, trigger and meta gems</span></div>
-        <div class="fact"><span class="k">Points</span><span class="v mono">{summary.mainTreePointsUsed}<span class="dim"> / {summary.pointsAvailableMin === summary.pointsAvailableMax ? summary.pointsAvailableMax : `${summary.pointsAvailableMin}–${summary.pointsAvailableMax}`}</span></span><span class="n dim">main tree, budget at level {summary.characterLevel}</span></div>
-        <div class="fact"><span class="k">Spirit</span><span class="v mono">{summary.spiritReserved}<span class="dim"> / {summary.spirit}</span></span><span class="n dim">reserved</span></div>
-        <div class="fact"><span class="k">Charms</span><span class="v mono">{summary.charmsEquipped}<span class="dim"> / {summary.charmLimit}</span></span><span class="n dim">equipped, slots from the belt</span></div>
-        <div class="fact"><span class="k">Resists</span><span class="v mono"><span class:bad={summary.fireResist < 75}>{Math.round(summary.fireResist)}</span> / <span class:bad={summary.coldResist < 75}>{Math.round(summary.coldResist)}</span> / <span class:bad={summary.lightningResist < 75}>{Math.round(summary.lightningResist)}</span> / {Math.round(summary.chaosResist)}</span><span class="n dim">fire, cold, lightning, chaos</span></div>
+        <div class="fact" title="Skills that need a keypress"><span class="k">Active</span><span class="v mono">{summary.activeSkills}</span></div>
+        <div class="fact" title="Persistent, trigger and meta gems"><span class="k">Automatic</span><span class="v mono">{summary.persistentSkills + summary.triggerSkills + summary.metaSkills}</span></div>
+        <div class="fact" title="Main tree points, budget at level {summary.characterLevel}"><span class="k">Points</span><span class="v mono">{summary.mainTreePointsUsed}<span class="dim"> / {summary.pointsAvailableMin === summary.pointsAvailableMax ? summary.pointsAvailableMax : `${summary.pointsAvailableMin}–${summary.pointsAvailableMax}`}</span></span></div>
+        <div class="fact" title="Spirit reserved"><span class="k">Spirit</span><span class="v mono">{summary.spiritReserved}<span class="dim"> / {summary.spirit}</span></span></div>
+        <div class="fact" title="Charms equipped; slots come from the belt"><span class="k">Charms</span><span class="v mono">{summary.charmsEquipped}<span class="dim"> / {summary.charmLimit}</span></span></div>
+        <div class="fact" title="Fire, cold, lightning, chaos"><span class="k">Resists</span><span class="v mono"><span class="fire" class:bad={summary.fireResist < 75}>{Math.round(summary.fireResist)}</span> / <span class="cold" class:bad={summary.coldResist < 75}>{Math.round(summary.coldResist)}</span> / <span class="lightning" class:bad={summary.lightningResist < 75}>{Math.round(summary.lightningResist)}</span> / <span class="chaos">{Math.round(summary.chaosResist)}</span></span></div>
       </div>
       <div class="findings">
         {#if sanity && sanity.findings.length === 0}
-          <div class="dim small pad">No findings. This checks numbers only; it cannot see how skills interact in play.</div>
+          <div class="dim small pad">No findings.</div>
         {/if}
         {#each sanity?.findings ?? [] as f}
           <div class="finding">
@@ -244,14 +244,12 @@
           </div>
         {/each}
       </div>
-      <div class="dim small pad">Numbers only. A finding cannot see how skills interact in play; the assistant can read the gems for that.</div>
     {/if}
   </section>
 
   <section class="col gear">
     <div class="head">
       <span class="title">Gear</span>
-      <span class="dim small">Rares built from PoB's affix tables, scored by PoB's calculation</span>
     </div>
     <div class="controls">
       <div class="ctl">
@@ -293,8 +291,7 @@
             <span class="dim small">{progress?.note ?? "starting"}</span>
           </span>
         {:else}
-          <button class="btn sm primary" onclick={run} disabled={!build.loaded || chosen.size === 0}>Optimise {chosen.size} slot{chosen.size === 1 ? "" : "s"}</button>
-          <span class="dim small">Resistances stay at 75, requirements stay met, movement speed is kept. Nothing changes until you apply.</span>
+          <button class="btn sm primary" onclick={run} disabled={!build.loaded || chosen.size === 0} title="Resistances stay at 75, requirements stay met, movement speed is kept. Nothing changes until you apply.">Optimise {chosen.size} slot{chosen.size === 1 ? "" : "s"}</button>
         {/if}
       </div>
       {#if error}<div class="err small">{error}</div>{/if}
@@ -353,7 +350,6 @@
     {/if}
     <div class="head tree">
       <span class="title">Tree</span>
-      <span class="dim small">Every node scored by PoB for one stat</span>
     </div>
     <div class="controls">
       <div class="ctl">
@@ -368,7 +364,7 @@
         <button class="btn sm primary" onclick={scanTree} disabled={treeRunning || !build.loaded}>{treeRunning ? "Scanning…" : "Scan"}</button>
         <label class="chk small"><input type="checkbox" bind:checked={notablesOnly} disabled={treeRunning} /> notables only</label>
         {#if summary}
-          <span class="dim small"><span class="mono">{Math.max(0, summary.pointsAvailableMax - summary.mainTreePointsUsed)}</span> points unspent. Allocate takes the shortest path; Remove drops the node and what hangs off it.</span>
+          <span class="dim small"><span class="mono">{Math.max(0, summary.pointsAvailableMax - summary.mainTreePointsUsed)}</span> points unspent</span>
         {/if}
       </div>
       {#if treeError}<div class="err small">{treeError}</div>{/if}
@@ -438,7 +434,7 @@
   }
   .fact {
     display: grid;
-    grid-template-columns: 74px auto 1fr;
+    grid-template-columns: 74px auto;
     align-items: baseline;
     gap: 10px;
     padding: 4px 14px;
@@ -450,8 +446,20 @@
   .fact .v {
     font-size: var(--fs-md);
   }
-  .fact .n {
-    font-size: var(--fs-xs);
+  .fact .fire {
+    color: var(--c-fire);
+  }
+  .fact .cold {
+    color: var(--c-cold);
+  }
+  .fact .lightning {
+    color: var(--c-lightning);
+  }
+  .fact .chaos {
+    color: var(--c-chaos);
+  }
+  .fact .bad {
+    color: var(--bad);
   }
   .bad {
     color: var(--bad);

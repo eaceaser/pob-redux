@@ -2,21 +2,22 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { build, type ViewId } from "$lib/state/build.svelte";
+  import { ui } from "$lib/state/ui.svelte";
   import logo from "$lib/assets/logo.png";
 
   const win = getCurrentWindow();
   let maximized = $state(false);
 
   const tabs: { id: ViewId; label: string; key: string }[] = [
-    { id: "tree", label: "Tree", key: "1" },
-    { id: "skills", label: "Skills", key: "2" },
-    { id: "items", label: "Items", key: "3" },
-    { id: "calcs", label: "Calcs", key: "4" },
-    { id: "config", label: "Config", key: "5" },
-    { id: "notes", label: "Notes", key: "6" },
-    { id: "party", label: "Party", key: "7" },
-    { id: "optimise", label: "Optimise", key: "8" },
-    { id: "import", label: "Import / Export", key: "9" },
+    { id: "import", label: "Builds", key: "1" },
+    { id: "tree", label: "Tree", key: "2" },
+    { id: "skills", label: "Skills", key: "3" },
+    { id: "items", label: "Items", key: "4" },
+    { id: "calcs", label: "Calcs", key: "5" },
+    { id: "config", label: "Config", key: "6" },
+    { id: "notes", label: "Notes", key: "7" },
+    { id: "party", label: "Party", key: "8" },
+    { id: "optimise", label: "Optimise", key: "9" },
   ];
 
   // the build name lives in the sidebar; the OS title carries it for the taskbar
@@ -43,6 +44,10 @@
           build.redo();
           e.preventDefault();
         }
+        if (e.key === "b") {
+          ui.toggleSidebar();
+          e.preventDefault();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -54,13 +59,25 @@
 </script>
 
 <header class="titlebar" data-tauri-drag-region>
-  <div class="brand" data-tauri-drag-region>
+  <div class="brand" class:wide={!ui.sidebarCollapsed} data-tauri-drag-region>
     <img class="mark" src={logo} alt="" draggable="false" />
     <span class="name">PoB <span class="thin">Redux</span></span>
+    <button
+      class="sb"
+      class:on={!ui.sidebarCollapsed}
+      aria-label={ui.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      title={`${ui.sidebarCollapsed ? "Show" : "Hide"} sidebar (Ctrl+B)`}
+      onclick={() => ui.toggleSidebar()}
+    >
+      <svg width="14" height="12" viewBox="0 0 14 12" fill="none" stroke="currentColor" stroke-width="1">
+        <rect x="0.5" y="0.5" width="13" height="11" rx="1.5" />
+        <path d="M5 0.5v11" />
+      </svg>
+    </button>
   </div>
 
   <div class="tabs" role="tablist">
-    {#each tabs as t}
+    {#each tabs as t (t.id)}
       <button
         role="tab"
         class="tab"
@@ -100,7 +117,7 @@
   .titlebar {
     height: var(--titlebar-h);
     display: grid;
-    grid-template-columns: var(--sidebar-w) auto 1fr auto;
+    grid-template-columns: auto auto 1fr auto;
     align-items: stretch;
     background: var(--bg-1);
     border-bottom: 1px solid var(--line-0);
@@ -110,14 +127,40 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 14px;
+    padding: 0 10px 0 14px;
     border-right: 1px solid var(--line-0);
+  }
+  .brand.wide {
+    width: var(--sidebar-w);
+  }
+  .sb {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--fg-3);
+    margin-left: auto;
+    padding: 4px;
+    border-radius: var(--r-1);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+  }
+  .sb:hover {
+    color: var(--fg-0);
+    background: var(--bg-hover);
+  }
+  .sb.on {
+    color: var(--fg-2);
   }
   .mark {
     width: 16px;
     height: 16px;
     pointer-events: none;
     user-select: none;
+  }
+  :global(:root[data-theme="light"]) .mark {
+    filter: invert(1);
   }
   .name {
     font-size: var(--fs-sm);

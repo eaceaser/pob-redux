@@ -147,7 +147,7 @@
     </label>
     <span class="dim small">
       {#if visibility}
-        {Object.values(visibility).filter(Boolean).length} of {options.length} options apply to this build
+        {Object.values(visibility).filter(Boolean).length} of {options.length} apply
       {/if}
     </span>
   </div>
@@ -244,11 +244,10 @@
     <div class="modal" role="dialog" aria-label="Mod browser" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (browser = null)}>
       <div class="mhead">
         <span class="label">Mod browser</span>
-        <span class="dim small">Supported lines from tree nodes and item modifiers — click to add</span>
         <button class="btn sm ghost" onclick={() => (browser = null)}>Close</button>
       </div>
       <!-- svelte-ignore a11y_autofocus -->
-      <input class="input msearch" placeholder="Search mods…" bind:value={browserQuery} autofocus />
+      <input class="input msearch" placeholder="Search tree and item modifiers…" bind:value={browserQuery} autofocus />
       <div class="mlist">
         {#if !browserMods}
           <div class="dim small pad">Loading…</div>
@@ -452,7 +451,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgb(0 0 0 / 0.55);
+    background: var(--backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -467,7 +466,7 @@
     background: var(--bg-1);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+    box-shadow: var(--shadow-modal);
   }
   .mhead {
     display: flex;
@@ -496,7 +495,7 @@
     text-align: left;
     padding: 3px 8px;
     font-size: var(--fs-xs);
-    color: #8888ff;
+    color: var(--c-magic);
     cursor: pointer;
     border-radius: 3px;
     white-space: normal;

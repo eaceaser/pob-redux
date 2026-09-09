@@ -103,10 +103,6 @@
           </div>
         {/each}
       </div>
-      <p class="dim small pad">
-        Import a party member's build to model their auras, curses, warcries and link skills on this build. The support build must be
-        exported with "Export support with share code" enabled. Effects land in the Calcs tab like any other modifier.
-      </p>
     {/if}
   </div>
 </div>

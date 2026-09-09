@@ -4,6 +4,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { getVersion } from "@tauri-apps/api/app";
   import { appUpdate } from "$lib/state/update.svelte";
+  import { ui, type Theme } from "$lib/state/ui.svelte";
 
   const mcpUrl = $derived(mcp.status?.running ? mcp.status.url : null);
   const claudeCmd = $derived(mcpUrl ? `claude mcp add --transport http pob-redux ${mcpUrl}` : "");
@@ -21,6 +22,12 @@
   }
 
 
+  const themes: [Theme, string][] = [
+    ["system", "System"],
+    ["dark", "Dark"],
+    ["light", "Light"],
+  ];
+
   const v = $derived(appOptions.values);
 
   function close() {
@@ -35,6 +42,18 @@
         <span class="label">Options</span>
         <button class="btn sm ghost" onclick={close}>Close</button>
       </div>
+      <div class="shead"><span class="label">Appearance</span></div>
+      <div class="rows">
+        <div class="opt">
+          <span>Theme</span>
+          <div class="seg" role="radiogroup" aria-label="Theme">
+            {#each themes as [id, label] (id)}
+              <button role="radio" aria-checked={ui.theme === id} class:on={ui.theme === id} onclick={() => ui.setTheme(id)}>{label}</button>
+            {/each}
+          </div>
+        </div>
+      </div>
+      <div class="shead"><span class="label">Numbers and defaults</span></div>
       <div class="rows">
         <label class="opt">
           <span>Show thousands separators</span>
@@ -180,7 +199,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgb(0 0 0 / 0.55);
+    background: var(--backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -192,7 +211,7 @@
     background: var(--bg-1);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+    box-shadow: var(--shadow-modal);
   }
   .mhead {
     display: flex;
@@ -214,6 +233,27 @@
     border-bottom: 1px solid var(--line-0);
     font-size: var(--fs-sm);
     color: var(--fg-1);
+  }
+  .seg {
+    display: inline-flex;
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-2);
+    overflow: hidden;
+  }
+  .seg button {
+    padding: 3px 10px;
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--line-1);
+  }
+  .seg button:last-child {
+    border-right: 0;
+  }
+  .seg button.on {
+    color: var(--fg-0);
+    background: var(--bg-3);
   }
   .input.chr {
     width: 40px;

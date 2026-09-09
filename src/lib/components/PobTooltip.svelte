@@ -30,7 +30,7 @@
     background: color-mix(in srgb, var(--bg-1) 96%, transparent);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--shadow-pop);
     pointer-events: none;
     backdrop-filter: blur(8px);
     z-index: 10;

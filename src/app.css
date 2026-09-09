@@ -1,5 +1,8 @@
-/* Design tokens: dark, monochrome, hairline. Accents are semantic only. */
-:root {
+/* Design tokens: monochrome, hairline. Accents are semantic only.
+   Dark is the base; `.scope-dark` pins an element (the tree canvas, which
+   draws PoB's dark art) to it in either theme. */
+:root,
+.scope-dark {
   color-scheme: dark;
 
   --bg-0: #0b0b0c;
@@ -41,6 +44,64 @@
   --c-spirit: #f0cf74;
   --c-currency: #cba64c;
 
+  --primary-hover: #ffffff;
+  --pob-mix: 100%;
+  --backdrop: rgb(0 0 0 / 0.55);
+  --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.55);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* Light: warm paper ground, cool ink. Chrome sits a step darker than the
+   work area, and the game colours are deepened to hold contrast on white. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-0: #fbfaf7;
+  --bg-1: #f3f1ec;
+  --bg-2: #ebe8e1;
+  --bg-3: #e2dfd6;
+  --bg-hover: #e4e1d9;
+  --bg-active: #d9d5cb;
+
+  --line-0: #e4e0d8;
+  --line-1: #d6d1c7;
+  --line-2: #c2bcb0;
+
+  --fg-0: #1b1b1f;
+  --fg-1: #3f3f47;
+  --fg-2: #6d6d78;
+  --fg-3: #9c9ca6;
+  --fg-4: #c3c3ca;
+
+  --focus: #3b5bdb;
+  --ok: #1f8f4a;
+  --warn: #b26f0e;
+  --bad: #c92a2a;
+
+  --c-life: #c92a2a;
+  --c-mana: #2f5fd0;
+  --c-es: #0b8aa3;
+  --c-fire: #d9480f;
+  --c-cold: #1c7ed6;
+  --c-lightning: #a37d00;
+  --c-chaos: #8b3fc9;
+  --c-physical: #7a6a4a;
+  --c-unique: #b3641c;
+  --c-rare: #9c7f00;
+  --c-magic: #4c5fd6;
+  --c-normal: #3f3f47;
+  --c-gem: #0f8f78;
+  --c-spirit: #9a7412;
+  --c-currency: #8f6c14;
+
+  --primary-hover: #000000;
+  --pob-mix: 62%;
+  --backdrop: rgb(40 40 50 / 0.35);
+  --shadow-pop: 0 8px 30px rgba(30, 30, 40, 0.16);
+  --shadow-modal: 0 12px 40px rgba(30, 30, 40, 0.2);
+}
+
+:root {
   --font-ui: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
@@ -181,7 +242,7 @@ label:has(input:disabled) {
   font-weight: 500;
 }
 .btn.primary:hover {
-  background: #ffffff;
+  background: var(--primary-hover);
 }
 .btn.ghost {
   background: transparent;

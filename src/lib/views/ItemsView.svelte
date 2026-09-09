@@ -410,8 +410,6 @@
     <span class="vr"></span>
     <button class="btn sm" onclick={openCraft}>Craft item…</button>
     <button class="btn sm" onclick={() => openEdit(null)}>New item from text</button>
-    <span class="grow"></span>
-    <span class="dim small">Hover anything for PoB's tooltip; database tooltips include the equip comparison.</span>
   </div>
 
   <div class="cols">
@@ -458,7 +456,7 @@
           </div>
         {/each}
         {#if items.length === 0}
-          <div class="dim small pad">No items yet. Equip something from the database, or paste an item with "New item from text".</div>
+          <div class="dim small pad">No items yet.</div>
         {/if}
       </div>
       <div class="panel-head">
@@ -477,7 +475,7 @@
           </div>
         {/each}
         {#if shared.length === 0}
-          <div class="dim small pad">Nothing shared yet — select an item and use "Add to shared".</div>
+          <div class="dim small pad">Nothing shared yet.</div>
         {/if}
       </div>
     </section>
@@ -752,7 +750,6 @@
     <div class="modal">
       <div class="panel dialog">
         <div class="label">Corrupt item</div>
-        <div class="dim small">Pick up to {corruptInfo.enchantNum} corrupted implicits (PoB's own eligible-mod list), or reroll a unique's ranges. Anoints are kept.</div>
         {#each corruptSel as sel, i}
           <div class="crow">
             <span class="clabel">Implicit {i + 1}</span>
@@ -797,9 +794,6 @@
     <div class="modal">
       <div class="panel dialog">
         <div class="label">Find upgrades — {tradeOpen}</div>
-        <div class="dim small">
-          PoB's trade query generator scores every eligible mod against this build and produces a weighted trade-site search, opened in your browser.
-        </div>
         <div class="crow">
           <span class="clabel">League</span>
           {#if tradeLeagues}
@@ -889,9 +883,6 @@
     height: 16px;
     background: var(--line-1);
     margin: 0 4px;
-  }
-  .grow {
-    flex: 1;
   }
   .wset {
     display: inline-flex;
@@ -1116,7 +1107,7 @@
     inset: 0;
     display: grid;
     place-items: center;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--backdrop);
     z-index: 5;
   }
   .dialog {

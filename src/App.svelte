@@ -22,6 +22,7 @@
   import { mcp } from "$lib/state/mcp.svelte";
   import { chat } from "$lib/state/chat.svelte";
   import { appUpdate } from "$lib/state/update.svelte";
+  import { ui } from "$lib/state/ui.svelte";
 
   let status = $state<EngineStatus | null>(null);
   let paths = $state<AppPaths | null>(null);
@@ -90,7 +91,7 @@
   <TitleBar />
   <UpdateBanner />
   <div class="body">
-    <Sidebar />
+    {#if !ui.sidebarCollapsed}<Sidebar />{/if}
     <main class="view">
       {#if !status || status.state === "booting"}
         <div class="center">
@@ -168,6 +169,9 @@
     height: 40px;
     margin-bottom: 6px;
     user-select: none;
+  }
+  :global(:root[data-theme="light"]) .bootlogo {
+    filter: invert(1);
   }
   .boot {
     display: flex;

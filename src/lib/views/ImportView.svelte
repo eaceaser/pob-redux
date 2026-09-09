@@ -6,7 +6,6 @@
     engine,
     listBuilds,
     listBuildFolders,
-    createBuildFolder,
     renameBuild,
     moveBuild,
     deleteBuild,
@@ -27,7 +26,6 @@
   let { paths }: { paths: AppPaths | null } = $props();
 
   let code = $state("");
-  let newName = $state("New build");
   let builds = $state<BuildEntry[]>([]);
   let folders = $state<string[]>([]);
   let filter = $state("");
@@ -78,7 +76,7 @@
   let renameDraft = $state("");
   let moving = $state<string | null>(null);
   let confirmDelete = $state<string | null>(null);
-  let newFolder = $state(false);
+  let movingNew = $state<string | null>(null);
   let folderDraft = $state("");
 
   // recent builds (paths, most recent first)
@@ -379,6 +377,7 @@
 
   async function commitMove(b: BuildEntry, folder: string) {
     moving = null;
+    movingNew = null;
     if (folder === b.folder) return;
     try {
       const np = await moveBuild(b.path, folder);
@@ -396,19 +395,6 @@
       await deleteBuild(b.path);
       recent = recent.filter((p) => p !== b.path);
       say(`Deleted ${b.name}`);
-      refresh();
-    } catch (e) {
-      build.error = String(e);
-    }
-  }
-
-  async function commitNewFolder() {
-    const f = folderDraft.trim();
-    newFolder = false;
-    folderDraft = "";
-    if (!f) return;
-    try {
-      await createBuildFolder(f);
       refresh();
     } catch (e) {
       build.error = String(e);
@@ -456,14 +442,36 @@
           <select
             class="select xs"
             value={b.folder}
-            onchange={(e) => commitMove(b, (e.target as HTMLSelectElement).value)}
+            onchange={(e) => {
+              const v = (e.target as HTMLSelectElement).value;
+              if (v === "__new") {
+                moving = null;
+                movingNew = b.path;
+                folderDraft = "";
+              } else commitMove(b, v);
+            }}
             onblur={() => (moving = null)}
           >
             <option value="">(top level)</option>
             {#each folders as f}
               <option value={f}>{f}</option>
             {/each}
+            <option value="__new">New folder…</option>
           </select>
+        {:else if movingNew === b.path}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="input xs fdraft"
+            placeholder="Folder name"
+            bind:value={folderDraft}
+            autofocus
+            onkeydown={(e) => {
+              if (e.key === "Enter" && folderDraft.trim()) commitMove(b, folderDraft.trim());
+              if (e.key === "Escape") (movingNew = null);
+            }}
+          />
+          <button class="act" disabled={!folderDraft.trim()} onclick={() => commitMove(b, folderDraft.trim())}>move</button>
+          <button class="act" onclick={() => (movingNew = null)}>cancel</button>
         {:else if confirmDelete === b.path}
           <button class="act danger" onclick={() => commitDelete(b)}>confirm</button>
           <button class="act" onclick={() => (confirmDelete = null)}>keep</button>
@@ -479,38 +487,22 @@
 
 <div class="page">
   <section class="col">
-    <div class="panel-head">
-      <span class="label">Builds</span>
-      <span class="dim mono small">{paths?.builds_dir ?? ""}</span>
-    </div>
     <div class="toolbar">
-      <input class="input" placeholder="Filter…" bind:value={filter} />
-      <select class="select" bind:value={sort} title="Sort builds">
+      <input class="input" placeholder="Filter builds…" bind:value={filter} />
+      <select class="select" bind:value={sort} title="Sort">
         <option value="modified">Recent first</option>
         <option value="name">Name</option>
         <option value="level">Level</option>
         <option value="class">Class</option>
       </select>
-      {#if newFolder}
-        <input
-          class="input fdraft"
-          placeholder="folder/subfolder"
-          bind:value={folderDraft}
-          onblur={commitNewFolder}
-          onkeydown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            if (e.key === "Escape") (newFolder = false);
-          }}
-        />
-      {:else}
-        <button class="btn sm" onclick={() => (newFolder = true)}>New folder</button>
-      {/if}
+      <span class="vr"></span>
       <button class="btn sm" onclick={openXml}>Open file…</button>
+      <button class="btn sm primary" onclick={() => build.newBuild()} disabled={build.busy > 0}>New build</button>
     </div>
     <div class="list">
       {#if autosave && autosave.name !== build.info?.name}
         <div class="recover">
-          <span>Last open <b>{autosave.name}</b> · {fmtTime(autosave.at)}</span>
+          <span>Unsaved session <b>{autosave.name}</b> · {fmtTime(autosave.at)}</span>
           <span class="acts2">
             <button class="btn sm" onclick={restoreAutosave} disabled={build.busy > 0}>Restore</button>
             <button class="btn sm ghost" onclick={() => { localStorage.removeItem("pob-redux:autosave"); autosave = null; }}>Dismiss</button>
@@ -524,10 +516,10 @@
         {/each}
       {/if}
       {#if shown.length === 0}
-        <div class="dim small pad">No builds found. Builds are read from the same folder Path of Building uses.</div>
+        <div class="dim small pad">No builds yet.</div>
       {/if}
       {#each grouped as [folder, items] (folder)}
-        <div class="ghead">{folder === "" ? "Builds" : folder}</div>
+        <div class="ghead" title={paths?.builds_dir ?? ""}>{folder === "" ? "Builds" : folder}</div>
         {#each items as b (b.path)}
           {@render buildRow(b, false)}
         {/each}
@@ -535,17 +527,19 @@
           <div class="dim small pad">empty folder</div>
         {/if}
       {/each}
-      <div class="ghead gb">
-        <span>Game builds — in-game planner</span>
+      <div class="ghead gb" title={gameBuilds?.dir ?? ""}>
+        <span>Game Build Planner</span>
         <span class="dim num">{gameBuilds?.builds.length ?? 0}</span>
-        <button class="act" title="Change the Build Planner folder" onclick={() => (editPlannerDir = true)}>dir</button>
+        <button class="act" title="Change folder" onclick={() => (editPlannerDir = true)}>folder</button>
       </div>
       {#if editPlannerDir}
         <div class="pdirrow">
+          <!-- svelte-ignore a11y_autofocus -->
           <input
             class="input grow"
             bind:value={plannerDir}
             placeholder={gameBuilds?.dir ?? "Documents\\My Games\\Path of Exile 2\\BuildPlanner"}
+            autofocus
             onblur={commitPlannerDir}
             onkeydown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -553,11 +547,8 @@
             }}
           />
         </div>
-      {:else}
-        <div class="dim small mono pdir" title="The game's Build Planner folder — .build files here can be imported, and exports default here">{gameBuilds?.dir ?? ""}</div>
-      {/if}
-      {#if gameBuilds && !gameBuilds.exists}
-        <div class="dim small pad">Folder not found. Set the location with "dir" above.</div>
+      {:else if gameBuilds && !gameBuilds.exists}
+        <div class="dim small pad">Folder not found.</div>
       {/if}
       {#each gameBuildGroups as [group, items] (group)}
         {#if editAuthor === group}
@@ -623,80 +614,84 @@
     </div>
   </section>
 
-  <section class="col">
+  <section class="col side">
     <div class="panel-head"><span class="label">Import</span></div>
     <div class="block">
       <textarea
         class="textarea"
-        rows="7"
-        placeholder="Paste a PoB share code, a build's XML, or a link — pobb.in, Maxroll, poe.ninja, poe2db.tw, Pastebin, Rentry"
+        rows="5"
+        placeholder="Share code, build XML, or a link (pobb.in, Maxroll, poe.ninja, poe2db, Pastebin, Rentry)"
         bind:value={code}
       ></textarea>
       <div class="actions">
         <button class="btn primary" onclick={doImport} disabled={!code.trim() || build.busy > 0 || fetching}>
           {fetching ? "Fetching…" : "Import"}
         </button>
-        <button class="btn" onclick={pasteImport} disabled={build.busy > 0 || fetching}>Import from clipboard</button>
+        <button class="btn" onclick={pasteImport} disabled={build.busy > 0 || fetching}>Paste and import</button>
       </div>
     </div>
 
-    <div class="panel-head"><span class="label">New</span></div>
-    <div class="block row-inline">
-      <input class="input grow" bind:value={newName} placeholder="Build name" />
-      <button class="btn" onclick={() => build.newBuild(newName || undefined)} disabled={build.busy > 0}>New build</button>
-    </div>
-
-    <div class="panel-head"><span class="label">Export</span></div>
-    <div class="block row-inline">
-      <span class="label">Name</span>
-      {#if nameDraft !== null}
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="input grow"
-          bind:value={nameDraft}
-          autofocus
-          onblur={commitBuildName}
-          onkeydown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            if (e.key === "Escape") (nameDraft = null);
-          }}
-        />
-      {:else}
-        <button
-          class="bname grow"
-          onclick={() => (nameDraft = build.info?.name ?? "")}
-          disabled={!build.loaded}
-          title={(build.info?.file ? `${build.info.file}\n` : "Not saved yet. ") + "Click to rename. A saved build's file is renamed with it."}
-        >{build.info?.name ?? "—"}</button>
-      {/if}
-      <span class="label">Author</span>
-      <input class="input grow" bind:value={author} placeholder="Author" title="Written as the author of exported .build files" onblur={commitAuthor} />
-    </div>
-    <div class="block actions">
-      <button class="btn" onclick={copyCode} disabled={!build.loaded}>Copy share code</button>
-      <span class="joined">
-        <button class="btn" onclick={shareLink} disabled={!build.loaded || sharing} title="Upload the share code and copy the link">{sharing ? "Creating link…" : "Share link"}</button>
-        <select class="select xs" bind:value={shareSite} title="Where to upload" disabled={sharing}>
-          {#each SHARE_SITES as site}<option value={site}>{site}</option>{/each}
-        </select>
-      </span>
-      <button class="btn" onclick={exportXml} disabled={!build.loaded}>Export XML…</button>
-      <button class="btn" onclick={saveCurrent} disabled={!build.loaded}>Save</button>
-      <button class="btn" onclick={saveAs} disabled={!build.loaded}>Save as…</button>
-    </div>
-    <div class="block actions">
-      <button class="btn" onclick={saveGameBuild} disabled={!build.loaded} title="Export as a GGG Build Planner file the game can import (tree, skills, gear hints)">Save as .build…</button>
-    </div>
-    {#if shareUrl}
-      <div class="block row-inline">
-        <input class="input grow mono" readonly value={shareUrl} onfocus={(e) => (e.target as HTMLInputElement).select()} />
-        <button class="btn" onclick={() => copyToClipboard(shareUrl!, "Link")}>Copy</button>
+    {#if build.loaded}
+      <div class="panel-head">
+        <span class="label">Current build</span>
+        {#if build.info?.unsaved}<span class="dim small">unsaved changes</span>{/if}
+      </div>
+      <div class="block current">
+        <div class="fld">
+          <span class="label">Name</span>
+          {#if nameDraft !== null}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="input grow"
+              bind:value={nameDraft}
+              autofocus
+              onblur={commitBuildName}
+              onkeydown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") (nameDraft = null);
+              }}
+            />
+          {:else}
+            <button
+              class="bname grow"
+              onclick={() => (nameDraft = build.info?.name ?? "")}
+              title={(build.info?.file ? `${build.info.file}\n` : "Not saved yet. ") + "Click to rename."}
+            >{build.info?.name ?? "—"}</button>
+          {/if}
+        </div>
+        <div class="fld">
+          <span class="label">Author</span>
+          <input class="input grow" bind:value={author} placeholder="—" title="Written into exported .build files" onblur={commitAuthor} />
+        </div>
+        <div class="arow">
+          <span class="label">Save</span>
+          <button class="btn sm" onclick={saveCurrent} title={build.info?.file ?? "Choose a file"}>Save</button>
+          <button class="btn sm" onclick={saveAs}>Save as…</button>
+        </div>
+        <div class="arow">
+          <span class="label">Share</span>
+          <button class="btn sm" onclick={copyCode}>Copy code</button>
+          <span class="joined">
+            <button class="btn sm" onclick={shareLink} disabled={sharing} title="Upload the code and copy the link">{sharing ? "Creating link…" : "Link"}</button>
+            <select class="select xs" bind:value={shareSite} disabled={sharing}>
+              {#each SHARE_SITES as site}<option value={site}>{site}</option>{/each}
+            </select>
+          </span>
+        </div>
+        <div class="arow">
+          <span class="label">Export</span>
+          <button class="btn sm" onclick={exportXml}>XML…</button>
+          <button class="btn sm" onclick={saveGameBuild} title="A file the game's Build Planner can import">Game Build Planner…</button>
+        </div>
+        {#if shareUrl}
+          <div class="arow">
+            <input class="input grow mono" readonly value={shareUrl} onfocus={(e) => (e.target as HTMLInputElement).select()} />
+            <button class="btn sm" onclick={() => copyToClipboard(shareUrl!, "Link")}>Copy</button>
+          </div>
+        {/if}
       </div>
     {/if}
     {#if flash}<div class="flash">{flash}</div>{/if}
-    {#if build.info?.file}
-      <div class="dim small mono pad">{build.info.file}</div>
-    {/if}
   </section>
 </div>
 
@@ -704,7 +699,7 @@
   .page {
     flex: 1;
     display: grid;
-    grid-template-columns: minmax(360px, 1fr) minmax(380px, 520px);
+    grid-template-columns: minmax(360px, 1fr) minmax(360px, 460px);
     min-height: 0;
   }
   .col {
@@ -726,6 +721,12 @@
   .toolbar .input {
     flex: 1;
     min-width: 100px;
+  }
+  .vr {
+    width: 1px;
+    align-self: stretch;
+    margin: 2px 2px;
+    background: var(--line-1);
   }
   .fdraft {
     width: 150px;
@@ -757,12 +758,6 @@
   }
   .ghead.gb .act {
     margin-left: auto;
-  }
-  .pdir {
-    padding: 0 12px 4px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .pdirrow {
     display: flex;
@@ -862,9 +857,6 @@
     color: var(--fg-3);
     cursor: default;
   }
-  .row-inline .label {
-    flex: none;
-  }
   .recover {
     display: flex;
     justify-content: space-between;
@@ -945,7 +937,8 @@
   .act.danger {
     color: var(--red, #e06c75);
   }
-  .select.xs {
+  .select.xs,
+  .input.xs {
     height: 20px;
     font-size: var(--fs-xs);
   }
@@ -955,12 +948,29 @@
     flex-direction: column;
     gap: 8px;
   }
-  .row-inline {
-    flex-direction: row;
-    align-items: center;
-  }
   .grow {
     flex: 1;
+  }
+  .current {
+    gap: 6px;
+  }
+  .fld {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+  .fld .grow {
+    min-width: 0;
+  }
+  .arow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .arow .label {
+    width: 52px;
+    flex: none;
   }
   .actions {
     display: flex;

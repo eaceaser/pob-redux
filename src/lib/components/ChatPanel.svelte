@@ -265,7 +265,6 @@
       {/if}
       {#if !chat.turns.length && !chat.busy}
         <div class="dim empty">
-          Ask about the open build. Every number comes from Path of Building's own engine.
           <div class="egs">
             <button class="eg" onclick={() => { chat.input = "Why is my EHP low?"; chat.send(); }}>Why is my EHP low?</button>
             <button class="eg" onclick={() => { chat.input = "Summarise this build's defences."; chat.send(); }}>Summarise defences</button>

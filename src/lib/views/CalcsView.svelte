@@ -77,7 +77,6 @@
         <button class="t2" class:on={actor === "player"} onclick={() => (actor = "player")}>Player</button>
         <button class="t2" class:on={actor === "minion"} onclick={() => (actor = "minion")}>Minion</button>
       </span>
-      <span class="dim small">Click any value for its full breakdown — PoB's own calculation sections.</span>
     {:else}
       <input class="input rawfilter" placeholder="Filter output keys…" bind:value={filter} />
       <span class="dim num">{rows.length} / {Object.keys(stats).length}</span>
@@ -188,9 +187,6 @@
   }
   .rawfilter {
     width: 280px;
-  }
-  .small {
-    font-size: var(--fs-xs);
   }
   .body {
     flex: 1;

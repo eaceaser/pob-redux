@@ -118,7 +118,7 @@
   {#if info}
     <section class="head">
       <div class="buildname">
-        <span class="label">Build <button class="loact" title="Open Import / Export" onclick={() => (build.view = "import")}>⇱</button></span>
+        <span class="label">Build</span>
         {#if nameEdit !== null}
           <!-- svelte-ignore a11y_autofocus -->
           <input
@@ -325,7 +325,7 @@
     <div class="bdpop" style:top={`${bd.y}px`}>
       <div class="bdhead">
         <span class="label">Breakdown</span>
-        <span class="dim small">{bd.pinned ? "pinned · click the row to unpin" : "click the row to pin"}</span>
+        {#if bd.pinned}<span class="dim small">pinned</span>{/if}
       </div>
       <div class="bdscroll">
         <BreakdownPanel sections={bd.sections} />
@@ -524,7 +524,7 @@
     background: color-mix(in srgb, var(--bg-1) 96%, transparent);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--shadow-pop);
     backdrop-filter: blur(8px);
     z-index: 20;
     pointer-events: none;

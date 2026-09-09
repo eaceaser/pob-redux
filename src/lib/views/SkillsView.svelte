@@ -238,8 +238,6 @@
       <span class="label">Quality</span>
       <input class="input opt num" type="number" min="0" max="23" value={options?.defaultGemQuality ?? 0} onchange={(e) => setOptions({ defaultGemQuality: Number((e.target as HTMLInputElement).value) })} />
     </label>
-    <span class="grow"></span>
-    <span class="dim small">Socket groups hold an active skill and its supports. The ⌾ mark is the build's main skill.</span>
   </div>
 
   <div class="cols">
@@ -264,7 +262,7 @@
         </div>
       {/each}
       {#if groups.length === 0}
-        <div class="dim pad">No socket groups yet. Create one, then add an active skill gem to it.</div>
+        <div class="dim pad">No socket groups yet.</div>
       {/if}
     </section>
 
@@ -753,7 +751,7 @@
     background: color-mix(in srgb, var(--bg-1) 96%, transparent);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--shadow-pop);
     pointer-events: none;
     backdrop-filter: blur(8px);
     z-index: 10;

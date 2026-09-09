@@ -40,6 +40,7 @@ const HEX_ALIASES: Record<string, string> = {
   "ff9922": "var(--warn)",
   "33ff77": "var(--ok)",
   "fdb8b8": "var(--c-life)",
+  "70ff70": "var(--ok)",
 };
 
 export function parsePobText(s: string | null | undefined): Span[] {
@@ -59,7 +60,7 @@ export function parsePobText(s: string | null | undefined): Span[] {
       if (nx === "x" && i + 7 < s.length && /^[0-9a-fA-F]{6}$/.test(s.slice(i + 2, i + 8))) {
         flush();
         const hex = s.slice(i + 2, i + 8).toLowerCase();
-        color = HEX_ALIASES[hex] ?? `#${hex}`;
+        color = HEX_ALIASES[hex] ?? `color-mix(in srgb, #${hex} var(--pob-mix, 100%), var(--fg-0))`;
         i += 8;
         continue;
       }

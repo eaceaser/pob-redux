@@ -3,12 +3,14 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type PowerStat, type TreePower } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { ui } from "$lib/state/ui.svelte";
   import { parseTree, NodeIndex, type TreeModel, type TNode } from "$lib/tree/model";
   import { AssetStore } from "$lib/tree/assets";
   import PobText from "$lib/components/PobText.svelte";
 
   let canvas = $state<HTMLCanvasElement | null>(null);
   let wrap = $state<HTMLDivElement | null>(null);
+  let searchEl = $state<HTMLInputElement | null>(null);
   let model = $state<TreeModel | null>(null);
   let assets: AssetStore | null = null;
   let assetsMissing = $state(false);
@@ -90,7 +92,7 @@
     bad: "#f06a6a",
   };
   function readPalette() {
-    const cs = getComputedStyle(document.documentElement);
+    const cs = getComputedStyle(wrap ?? document.documentElement);
     const v = (n: string, fb: string) => cs.getPropertyValue(n).trim() || fb;
     palette.bg = v("--bg-0", palette.bg);
     palette.edge = v("--line-2", palette.edge);
@@ -787,7 +789,7 @@
     else if (e.key === "f" && !e.ctrlKey) fitAll();
     else if (e.key === "/" || (e.key === "f" && e.ctrlKey)) {
       e.preventDefault();
-      (wrap?.querySelector(".search") as HTMLInputElement | null)?.focus();
+      searchEl?.focus();
     } else return;
     e.preventDefault();
   }
@@ -944,19 +946,9 @@
   });
 </script>
 
-<div class="tree" bind:this={wrap}>
-  <canvas
-    bind:this={canvas}
-    onwheel={onWheel}
-    onpointerdown={onPointerDown}
-    onpointermove={onPointerMove}
-    onpointerup={onPointerUp}
-    onpointerleave={onLeave}
-    oncontextmenu={(e) => e.preventDefault()}
-  ></canvas>
-
-  <div class="hud">
-    <div class="hud-row">
+<div class="page" class:dockbottom={ui.treeBarDock === "bottom"}>
+  <div class="bar">
+    <div class="group">
       {#if renaming}
         <input
           class="input spec"
@@ -999,8 +991,8 @@
         {/each}
       </select>
     </div>
-    <div class="hud-row">
-      <input class="input search" placeholder="Search nodes…" bind:value={search} />
+    <div class="group">
+      <input class="input search" placeholder="Search nodes…" bind:value={search} bind:this={searchEl} />
       {#if matches.size}<span class="dim num">{matches.size}</span>{/if}
       <button class="btn sm ghost" onclick={focusClass} title="Center on class start (h)">Class</button>
       <button class="btn sm ghost" onclick={focusAscendancy} disabled={!currentAsc} title={currentAsc ? "Center on the ascendancy ring, where its 8 points are spent (a)" : "Pick an ascendancy in the sidebar first"}>Ascendancy</button>
@@ -1016,7 +1008,7 @@
       </button>
     </div>
     {#if powerOn}
-      <div class="hud-row">
+      <div class="group">
         <select class="select sm" value={powerStat ?? ""} onchange={(e) => (powerStat = (e.target as HTMLSelectElement).value || null)} title="Stat to score nodes by">
           {#each powerStats as s}
             <option value={s.stat ?? ""}>{s.label}</option>
@@ -1039,7 +1031,7 @@
       </div>
     {/if}
     {#if urlPanel}
-      <div class="hud-row">
+      <div class="group">
         <input class="input url" bind:value={urlDraft} placeholder="https://www.pathofexile.com/passive-skill-tree/…" readonly={urlPanel === "export"} onkeydown={(e) => e.key === "Enter" && urlPanel === "import" && importUrl()} />
         {#if urlPanel === "import"}
           <button class="btn sm primary" onclick={importUrl} disabled={!urlDraft.trim()}>Import</button>
@@ -1049,109 +1041,130 @@
         <button class="btn sm ghost" onclick={() => (urlPanel = null)}>Close</button>
       </div>
     {/if}
+    <button class="dock" title={ui.treeBarDock === "top" ? "Dock toolbar at the bottom" : "Dock toolbar at the top"} onclick={() => ui.setTreeBarDock(ui.treeBarDock === "top" ? "bottom" : "top")}>
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="11" height="11" rx="1.5" /><path d={ui.treeBarDock === "top" ? "M0.5 8.5h11" : "M0.5 3.5h11"} /></svg>
+    </button>
   </div>
-
-  {#if assetsMissing}
-    <div class="notice">Tree art not found: run <span class="mono">pnpm sync -- --tree-assets</span>. Showing wireframe.</div>
-  {/if}
-
-  {#if build.meta && build.tree && build.tree.treeVersion !== build.meta.latestTreeVersion}
-    <div class="banner">
-      <span>This tree uses passive tree version <b class="mono">{build.tree.treeVersion.replace("_", ".")}</b>; the current game version is <b class="mono">{build.meta.latestTreeVersion.replace("_", ".")}</b>. Converting keeps the old tree as a separate spec; passives that no longer exist are dropped.</span>
-      <button class="btn sm primary" onclick={() => build.convertTree(false)}>Convert this tree</button>
-      {#if build.specs.length > 1}
-        <button class="btn sm" onclick={() => build.convertTree(true)}>Convert all</button>
-      {/if}
-    </div>
-  {/if}
-
-  {#if powerOn && showReport}
-    <aside class="report">
-      <div class="report-head">
-        <span class="label">Power report</span>
-        <span class="dim small">{power?.label ?? ""}</span>
-      </div>
-      <div class="report-cols label">
-        <span>Node</span><span class="r">{power?.stat ? "per point" : "off/pt"}</span><span class="r">{power?.stat ? "node" : "def/pt"}</span><span class="r">pts</span>
-      </div>
-      <div class="report-list">
-        {#each reportRows as r (r.id)}
-          <button class="report-row" onclick={() => jumpTo(r.id)} onmouseenter={() => { const n = model?.nodes.get(r.id); if (n) setHover(n); }}>
-            <span class="rn">{r.name}</span>
-            <span class="r num"><PobText text={r.a} /></span>
-            <span class="r num"><PobText text={r.b} /></span>
-            <span class="r num dim">{r.dist}</span>
-          </button>
-        {/each}
-        {#if reportRows.length === 0}
-          <div class="dim small pad">{powerBusy ? "Scoring nodes…" : "No unallocated node improves this stat within the depth limit."}</div>
+  <div class="tree scope-dark" bind:this={wrap}>
+    <canvas
+      bind:this={canvas}
+      onwheel={onWheel}
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={onPointerUp}
+      onpointerleave={onLeave}
+      oncontextmenu={(e) => e.preventDefault()}
+    ></canvas>
+  
+  
+    {#if assetsMissing}
+      <div class="notice">Tree art not found: run <span class="mono">pnpm sync -- --tree-assets</span>. Showing wireframe.</div>
+    {/if}
+  
+    {#if build.meta && build.tree && build.tree.treeVersion !== build.meta.latestTreeVersion}
+      <div class="banner">
+        <span>This tree uses passive tree version <b class="mono">{build.tree.treeVersion.replace("_", ".")}</b>; the current game version is <b class="mono">{build.meta.latestTreeVersion.replace("_", ".")}</b>. Converting keeps the old tree as a separate spec; passives that no longer exist are dropped.</span>
+        <button class="btn sm primary" onclick={() => build.convertTree(false)}>Convert this tree</button>
+        {#if build.specs.length > 1}
+          <button class="btn sm" onclick={() => build.convertTree(true)}>Convert all</button>
         {/if}
       </div>
-    </aside>
-  {/if}
-
-  {#if loadError}
-    <div class="overlay err">{loadError}</div>
-  {:else if !model}
-    <div class="overlay dim">Loading tree…</div>
-  {/if}
-
-  {#if attrMenu}
-    <div class="menu" style:left={`${Math.min(attrMenu.x, w - 160)}px`} style:top={`${Math.min(attrMenu.y, h - 120)}px`}>
-      <div class="label">Attribute</div>
-      <button class="mi" onclick={() => pickAttribute(1)}><span style:color="var(--c-life)">Strength</span> <kbd>S</kbd></button>
-      <button class="mi" onclick={() => pickAttribute(2)}><span style:color="var(--ok)">Dexterity</span> <kbd>D</kbd></button>
-      <button class="mi" onclick={() => pickAttribute(3)}><span style:color="var(--c-mana)">Intelligence</span> <kbd>I</kbd></button>
-    </div>
-  {/if}
-
-  {#if classConfirm}
-    <div class="modal">
-      <div class="panel dialog">
-        <div class="label">Class change</div>
-        <p>
-          Switching to <b>{classConfirm.ascendClassName ?? classConfirm.className}</b> changes your class to <b>{classConfirm.className}</b>. Your tree is not
-          connected to that class's start, so it would be reset.
-        </p>
-        <div class="actions">
-          <button class="btn" onclick={() => confirmClass("connect")}>Connect a path instead</button>
-          <button class="btn primary" onclick={() => confirmClass("reset")}>Reset tree and switch</button>
-          <button class="btn ghost" onclick={() => (classConfirm = null)}>Cancel</button>
+    {/if}
+  
+    {#if powerOn && showReport}
+      <aside class="report">
+        <div class="report-head">
+          <span class="label">Power report</span>
+          <span class="dim small">{power?.label ?? ""}</span>
+        </div>
+        <div class="report-cols label">
+          <span>Node</span><span class="r">{power?.stat ? "per point" : "off/pt"}</span><span class="r">{power?.stat ? "node" : "def/pt"}</span><span class="r">pts</span>
+        </div>
+        <div class="report-list">
+          {#each reportRows as r (r.id)}
+            <button class="report-row" onclick={() => jumpTo(r.id)} onmouseenter={() => { const n = model?.nodes.get(r.id); if (n) setHover(n); }}>
+              <span class="rn">{r.name}</span>
+              <span class="r num"><PobText text={r.a} /></span>
+              <span class="r num"><PobText text={r.b} /></span>
+              <span class="r num dim">{r.dist}</span>
+            </button>
+          {/each}
+          {#if reportRows.length === 0}
+            <div class="dim small pad">{powerBusy ? "Scoring nodes…" : "No unallocated node improves this stat within the depth limit."}</div>
+          {/if}
+        </div>
+      </aside>
+    {/if}
+  
+    {#if loadError}
+      <div class="overlay err">{loadError}</div>
+    {:else if !model}
+      <div class="overlay dim">Loading tree…</div>
+    {/if}
+  
+    {#if attrMenu}
+      <div class="menu" style:left={`${Math.min(attrMenu.x, w - 160)}px`} style:top={`${Math.min(attrMenu.y, h - 120)}px`}>
+        <div class="label">Attribute</div>
+        <button class="mi" onclick={() => pickAttribute(1)}><span style:color="var(--c-life)">Strength</span> <kbd>S</kbd></button>
+        <button class="mi" onclick={() => pickAttribute(2)}><span style:color="var(--ok)">Dexterity</span> <kbd>D</kbd></button>
+        <button class="mi" onclick={() => pickAttribute(3)}><span style:color="var(--c-mana)">Intelligence</span> <kbd>I</kbd></button>
+      </div>
+    {/if}
+  
+    {#if classConfirm}
+      <div class="modal">
+        <div class="panel dialog">
+          <div class="label">Class change</div>
+          <p>
+            Switching to <b>{classConfirm.ascendClassName ?? classConfirm.className}</b> changes your class to <b>{classConfirm.className}</b>. Your tree is not
+            connected to that class's start, so it would be reset.
+          </p>
+          <div class="actions">
+            <button class="btn" onclick={() => confirmClass("connect")}>Connect a path instead</button>
+            <button class="btn primary" onclick={() => confirmClass("reset")}>Reset tree and switch</button>
+            <button class="btn ghost" onclick={() => (classConfirm = null)}>Cancel</button>
+          </div>
         </div>
       </div>
-    </div>
-  {/if}
-
-  {#if hover && !attrMenu}
-    {@const ov = overrides[String(hover.id)]}
-    <div class="tip" style:left={`${Math.min(mouse.x + 18, w - 340)}px`} style:top={`${Math.min(mouse.y + 18, h - 60)}px`}>
-      <div class="tip-head">
-        <span class="tip-name" class:key={hover.kind === "keystone"} class:notable={hover.kind === "notable"}>{ov?.name ?? hover.name}</span>
-        <span class="label">{hover.asc ?? hover.kind}</span>
-      </div>
-      {#each ov?.stats?.length ? ov.stats : hover.stats as s}
-        <div class="tip-stat">{s}</div>
-      {/each}
-      {#if hover.flavour}
-        <div class="tip-flav">{hover.flavour}</div>
-      {/if}
-      <div class="tip-foot num">
-        {#if allocated.has(hover.id)}
-          <span style:color="var(--ok)">allocated</span>
-          <span class="dim">{hoverDep.size > 1 ? `click removes ${hoverDep.size}` : "click to remove"}{hover.isAttribute ? " · right-click to switch" : ""}</span>
-        {:else if hoverCost != null}
-          <span>{hoverCost} point{hoverCost === 1 ? "" : "s"}</span>
-          <span class="dim">{shiftDown && trace.length ? "tracing · click to allocate path" : "click to allocate · hold Shift to trace"}</span>
-        {:else}
-          <span class="dim">…</span>
+    {/if}
+  
+    {#if hover && !attrMenu}
+      {@const ov = overrides[String(hover.id)]}
+      <div class="tip" style:left={`${Math.min(mouse.x + 18, w - 340)}px`} style:top={`${Math.min(mouse.y + 18, h - 60)}px`}>
+        <div class="tip-head">
+          <span class="tip-name" class:key={hover.kind === "keystone"} class:notable={hover.kind === "notable"}>{ov?.name ?? hover.name}</span>
+          <span class="label">{hover.asc ?? hover.kind}</span>
+        </div>
+        {#each ov?.stats?.length ? ov.stats : hover.stats as s}
+          <div class="tip-stat">{s}</div>
+        {/each}
+        {#if hover.flavour}
+          <div class="tip-flav">{hover.flavour}</div>
         {/if}
-        <span class="dim">#{hover.id}</span>
+        <div class="tip-foot num">
+          {#if allocated.has(hover.id)}
+            <span style:color="var(--ok)">allocated</span>
+            <span class="dim">{hoverDep.size > 1 ? `click removes ${hoverDep.size}` : "click to remove"}{hover.isAttribute ? " · right-click to switch" : ""}</span>
+          {:else if hoverCost != null}
+            <span>{hoverCost} point{hoverCost === 1 ? "" : "s"}</span>
+            <span class="dim">{shiftDown && trace.length ? "tracing · click to allocate path" : "click to allocate · hold Shift to trace"}</span>
+          {:else}
+            <span class="dim">…</span>
+          {/if}
+          <span class="dim">#{hover.id}</span>
+        </div>
       </div>
-    </div>
-  {/if}
+    {/if}
+  </div>
 </div>
 
 <style>
+  .page {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
   .tree {
     position: relative;
     flex: 1;
@@ -1164,23 +1177,43 @@
     cursor: crosshair;
     touch-action: none;
   }
-  .hud {
-    position: absolute;
-    top: 10px;
-    left: 10px;
+  .bar {
+    position: relative;
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 4px;
-    background: color-mix(in srgb, var(--bg-1) 88%, transparent);
-    border: 1px solid var(--line-0);
-    border-radius: var(--r-2);
-    backdrop-filter: blur(6px);
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 14px;
+    padding: 6px 34px 6px 10px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--line-0);
   }
-  .hud-row {
+  .page.dockbottom .bar {
+    order: 2;
+    border-bottom: 0;
+    border-top: 1px solid var(--line-0);
+  }
+  .group {
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+  .dock {
+    position: absolute;
+    top: 7px;
+    right: 8px;
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--fg-3);
+    padding: 4px;
+    border-radius: var(--r-1);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .dock:hover {
+    color: var(--fg-0);
+    background: var(--bg-hover);
   }
   .search {
     width: 220px;
@@ -1333,7 +1366,7 @@
     background: var(--bg-1);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-pop);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1364,7 +1397,7 @@
     inset: 0;
     display: grid;
     place-items: center;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--backdrop);
   }
   .dialog {
     width: 440px;
@@ -1392,7 +1425,7 @@
     background: color-mix(in srgb, var(--bg-1) 94%, transparent);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-pop);
     pointer-events: none;
     backdrop-filter: blur(8px);
     font-size: var(--fs-sm);
