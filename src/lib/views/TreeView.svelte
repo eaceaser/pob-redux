@@ -317,14 +317,6 @@
 
     // --- connectors, batched per state ---
     ctx.lineCap = "round";
-    const buckets: Record<LineState, { edges: typeof model.edges; dim: boolean }[]> = {
-      Normal: [],
-      Intermediate: [],
-      Active: [],
-      CompareGain: [],
-      CompareLoss: [],
-      Depend: [],
-    };
     const perState = new Map<string, typeof model.edges>();
     for (const e of model.edges) {
       const a = model.nodes.get(e.a)!;
@@ -337,7 +329,6 @@
       if (!list) perState.set(key, (list = []));
       list.push(e);
     }
-    void buckets;
     const order: LineState[] = ["Normal", "Intermediate", "Active", "CompareGain", "CompareLoss", "Depend"];
     for (const st of order) {
       for (const dim of [true, false]) {

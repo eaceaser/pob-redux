@@ -358,10 +358,6 @@ fn effort_capable(id: &str) -> bool {
         || l.contains("thinking")
 }
 
-/// Models a provider offers, newest first. Every provider here publishes a
-/// list endpoint, including Anthropic — Anthropic's just lives at `/v1/models`
-/// and wants its own auth header.
-///
 /// Load a local Ollama model into memory ahead of the first message and keep
 /// it there for a while. Ollama loads on first use, which for a 6 GB model is
 /// tens of seconds the user would otherwise wait on their first question. Only

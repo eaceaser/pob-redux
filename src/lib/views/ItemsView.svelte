@@ -27,7 +27,6 @@
   let itemSets = $state<ItemSetInfo[]>([]);
   let selectedItem = $state<number | null>(null);
 
-  // database browser
   let dbTab = $state<"unique" | "rare">("unique");
   let dbQuery = $state("");
   let dbType = $state("");
@@ -39,13 +38,11 @@
   let dbBusy = false;
   let dbStamp = 0;
 
-  // edit modal
   let editOpen = $state(false);
   let editText = $state("");
   let editItemId = $state<number | null>(null);
   let editError = $state<string | null>(null);
 
-  // craft modal
   let craftOpen = $state(false);
   let craftData = $state<{ types: string[]; bases: Record<string, CraftBase[]> } | null>(null);
   let craftType = $state("");
@@ -122,7 +119,6 @@
     }
   }
 
-  // anoint modal
   let anointOpen = $state(false);
   let anointInfo = $state<AnointInfo | null>(null);
   let anointQuery = $state("");
@@ -151,7 +147,6 @@
     await build.run(() => engine.setItemAnoint(selectedItem!, nodeId, anointSlot));
   }
 
-  // corrupt modal
   let corruptOpen = $state(false);
   let corruptSel = $state<string[]>([]);
   let corruptRanges = $state<Record<number, number>>({});
@@ -259,7 +254,6 @@
     return "font-size:11px";
   }
 
-  // tooltip
   let tip = $state<{ tt: Tooltip; x: number; y: number } | null>(null);
   let tipTimer = 0;
   const tipCache = new Map<string, Tooltip>();

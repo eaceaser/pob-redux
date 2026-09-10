@@ -31,7 +31,7 @@
   onMount(() => {
     let timer = 0;
     const tick = window.setInterval(() => (bootDots = (bootDots + 1) % 4), 400);
-    // Ctrl+K toggles the assistant. Single letters belong to the tree view.
+    // Single-letter keys belong to the tree view.
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
         e.preventDefault();

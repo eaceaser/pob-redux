@@ -9,7 +9,7 @@
   $effect(() => {
     const key = build.info ? build.info.name + build.info.file : null;
     if (key === null) return;
-    // reload notes when a different build is opened
+    // The engine restarts rev on load, so a drop means another build was opened.
     const rev = build.rev;
     if (loadedFor === -1 || rev < loadedFor) {
       engine.getNotes().then((r) => (text = r.text));

@@ -15,7 +15,6 @@
   let renamingSet = $state(false);
   let setDraft = $state("");
 
-  // mod browser modal
   let browser = $state<number | null>(null); // block index
   let browserMods = $state<{ text: string; sources: string[] }[] | null>(null);
   let browserQuery = $state("");

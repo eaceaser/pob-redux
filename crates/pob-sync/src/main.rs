@@ -29,7 +29,7 @@ struct Cli {
     /// Delete the destination first.
     #[arg(long)]
     clean: bool,
-    /// Decode the latest tree's sprite sheets into web-renderable PNGs (TreeData/<ver>/web/).
+    /// Decode the latest tree's sprite sheets into WebP (TreeData/<ver>/web/).
     #[arg(long)]
     tree_assets: bool,
     /// Proceed even if the checkout's HEAD differs from the pinned commit.

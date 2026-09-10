@@ -66,7 +66,7 @@ pub fn build_table(lua: &Lua, epoch: Instant) -> LuaResult<Table> {
             if ZlibDecoder::new(&bytes[..]).read_to_end(&mut out).is_ok() {
                 return Ok(Value::String(lua.create_string(&out)?));
             }
-            // raw-deflate fallback: codes exported by pre-fix builds of this app
+            // Share codes from earlier builds of this app are raw deflate, no zlib header.
             out.clear();
             let mut dec = DeflateDecoder::new(&bytes[..]);
             match dec.read_to_end(&mut out) {

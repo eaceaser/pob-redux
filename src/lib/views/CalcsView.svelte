@@ -8,7 +8,6 @@
   let mode = $state<"sections" | "raw">("sections");
   let actor = $state<"player" | "minion">("player");
 
-  // sections grid
   let sections = $state<CalcSection[]>([]);
   let bd = $state<{ sections: BreakdownSection[]; title: string } | null>(null);
 

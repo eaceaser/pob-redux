@@ -1,4 +1,4 @@
-//! Decodes PoB's passive-tree sprite sheets into PNGs for the web renderer.
+//! Decodes PoB's passive-tree sprite sheets into WebP for the web renderer.
 //!
 //! Each `<name>_<w>_<h>_<format>.dds.zst` is a zstd-compressed DDS array
 //! texture: one named asset per layer, all layers the same size. tree.json's
@@ -118,8 +118,7 @@ pub fn inspect(src_tree: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Icons stay lossless; large soft art (class plates, mastery effects) is
-/// lossy, which is where the bytes were.
+/// Icons stay lossless; large soft art (class plates, mastery effects) is lossy.
 fn save_webp(img: &RgbaImage, out: &Path, lossless: bool) -> Result<()> {
     let enc = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height());
     let mem = if lossless { enc.encode_lossless() } else { enc.encode(82.0) };

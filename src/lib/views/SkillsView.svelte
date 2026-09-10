@@ -16,7 +16,6 @@
   let setDraft = $state("");
   let labelDraft = $state("");
 
-  // gem picker
   let pickerQuery = $state("");
   let pickerRows = $state<GemSearchRow[]>([]);
   let pickerOpen = $state(false);
@@ -51,7 +50,6 @@
   });
 
   $effect(() => {
-    // refresh picker results when open, query, group, sort mode or build changes
     const q = pickerQuery;
     const g = sel?.index;
     const open = pickerOpen;

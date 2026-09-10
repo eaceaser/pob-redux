@@ -71,7 +71,6 @@
     if (name && name !== build.info?.name) build.rename(name).then(() => refresh());
   }
 
-  // per-row actions
   let renaming = $state<string | null>(null);
   let renameDraft = $state("");
   let moving = $state<string | null>(null);
@@ -94,7 +93,6 @@
     } catch {}
   }
 
-  // autosave recovery
   let autosave = $state<{ name: string; file: string | null; at: number; xml: string } | null>(null);
   try {
     autosave = JSON.parse(localStorage.getItem("pob-redux:autosave") ?? "null");

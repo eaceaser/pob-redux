@@ -136,9 +136,6 @@ local function grantedGemNote(gemData)
 	return "granted by an item or effect, not a gem"
 end
 
--- The build's attribute requirements as PoB computes them: the highest single
--- source per attribute (items, skill gems, and one "Support Gems" source of 5
--- per support of that colour), never a sum.
 -- Where an item-granted socket group comes from. Such a group cannot be
 -- removed or re-socketed; it leaves with the item.
 local function grantedBy(group)
@@ -2195,10 +2192,6 @@ M.move_gem = function(p)
 	return M.get_skills()
 end
 
--- Support/global-effect gems scored by their DPS impact on a group, exactly as
--- GemSelectControl does it: a hypothetical gem instance is appended to the
--- group, the misc calculator runs, and the instance is removed again. Cached
--- per (revision, group, field): ~2s cold for a full support list, then free.
 local gemDpsCache
 
 -- Gems worth scoring for a group: supports valid for one of its active
@@ -3197,7 +3190,6 @@ M.craft_bases = function()
 	return { types = types, bases = bases }
 end
 
--- Same construction as CraftItem's makeItem.
 -- `itemType` may be a typed list ("Boots: Armour") or its family ("Boots"),
 -- which searches every typed list of that family.
 local function findBase(itemType, baseName)
@@ -5100,10 +5092,6 @@ M.set_notes = function(p)
 	build.modFlag = true
 	return { ok = true }
 end
-
--- ---------------------------------------------------------------------------
--- Checks
--- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
 -- Gear optimiser. For each slot, a greedy search over the affix families that
