@@ -1,8 +1,10 @@
 <script lang="ts">
   import PobText from "./PobText.svelte";
   import BreakdownPanel from "./BreakdownPanel.svelte";
+  import Icon from "./Icon.svelte";
   import { engine, type BreakdownSection } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { groupSidebar } from "$lib/sidebar-groups";
 
   // breakdown popup for hovered/pinned stat rows
   let bd = $state<{ sections: BreakdownSection[]; row: number; y: number; pinned: boolean } | null>(null);
@@ -49,6 +51,7 @@
 
   const info = $derived(build.info);
   const side = $derived(build.sidebar);
+  const sections = $derived(side ? groupSidebar(side.rows) : []);
   const cls = $derived(build.classes.find((c) => c.id === info?.classId));
   const groups = $derived(build.skills?.socketGroups ?? []);
   const mainGroup = $derived(groups.find((g) => g.index === info?.mainSocketGroup));
@@ -170,15 +173,36 @@
                   <option value={l}>{l}</option>
                 {/each}
               </select>
-              <button class="loact" title="New loadout" onclick={() => (loEdit = { mode: "new", draft: "" })}>+</button>
-              <button class="loact" title="Copy loadout" disabled={!loadouts.active} onclick={() => (loEdit = { mode: "copy", draft: `${loadouts.active} (Copy)` })}>⧉</button>
-              <button class="loact" title="Rename loadout" disabled={!loadouts.active} onclick={() => (loEdit = { mode: "rename", draft: loadouts.active ?? "" })}>✎</button>
+              <button class="loact" title="New loadout" aria-label="New loadout" onclick={() => (loEdit = { mode: "new", draft: "" })}>
+                <Icon name="plus" size={13} />
+              </button>
               <button
                 class="loact"
-                title="Delete loadout (removes its tree, item, skill and config sets)"
-                disabled={loadouts.loadouts.length <= 1 || !loadouts.active}
-                onclick={() => loadouts.active && build.run(() => engine.deleteLoadout(loadouts.active!))}>×</button
+                title="Copy loadout"
+                aria-label="Copy loadout"
+                disabled={!loadouts.active}
+                onclick={() => (loEdit = { mode: "copy", draft: `${loadouts.active} (Copy)` })}
               >
+                <Icon name="copy" size={13} />
+              </button>
+              <button
+                class="loact"
+                title="Rename loadout"
+                aria-label="Rename loadout"
+                disabled={!loadouts.active}
+                onclick={() => (loEdit = { mode: "rename", draft: loadouts.active ?? "" })}
+              >
+                <Icon name="pencil" size={13} />
+              </button>
+              <button
+                class="loact danger"
+                title="Delete loadout (removes its tree, item, skill and config sets)"
+                aria-label="Delete loadout"
+                disabled={loadouts.loadouts.length <= 1 || !loadouts.active}
+                onclick={() => loadouts.active && build.run(() => engine.deleteLoadout(loadouts.active!))}
+              >
+                <Icon name="trash" size={13} />
+              </button>
             </div>
           {/if}
         </div>
@@ -280,30 +304,35 @@
 
     <div class="stats" class:busy={build.busy > 0}>
       {#if side}
-        {#each side.rows as r, rowIndex}
-          {@const k = kind(r)}
-          {#if k === "space"}
-            <div class="space"></div>
-          {:else if k === "head"}
-            <div class="shead"><PobText text={r.lhs} /></div>
-          {:else if k === "center"}
-            <div class="scenter"><PobText text={r.lhs} defaultColor="var(--fg-2)" /></div>
-          {:else}
-            <div
-              class="srow"
-              class:hasbd={r.hasBreakdown}
-              class:pinnedrow={bd?.pinned && bd.row === rowIndex + 1}
-              role="button"
-              tabindex={r.hasBreakdown ? 0 : -1}
-              onmouseenter={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, false)}
-              onmouseleave={rowLeave}
-              onclick={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, true)}
-              onkeydown={(e) => e.key === "Enter" && r.hasBreakdown && rowBreakdown(200, rowIndex + 1, true)}
-            >
-              <span class="k"><PobText text={r.lhs?.replace(/:\s*$/, "")} defaultColor="var(--fg-1)" /></span>
-              <span class="v num"><PobText text={r.rhs} /></span>
-            </div>
+        {#each sections as sec (sec.key)}
+          {#if sec.label}
+            <div class="sgroup"><span>{sec.label}</span></div>
           {/if}
+          {#each sec.items as { row: r, index: rowIndex } (rowIndex)}
+            {@const k = kind(r)}
+            {#if k === "space"}
+              <div class="space"></div>
+            {:else if k === "head"}
+              <div class="shead"><PobText text={r.lhs} /></div>
+            {:else if k === "center"}
+              <div class="scenter"><PobText text={r.lhs} defaultColor="var(--fg-2)" /></div>
+            {:else}
+              <div
+                class="srow"
+                class:hasbd={r.hasBreakdown}
+                class:pinnedrow={bd?.pinned && bd.row === rowIndex + 1}
+                role="button"
+                tabindex={r.hasBreakdown ? 0 : -1}
+                onmouseenter={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, false)}
+                onmouseleave={rowLeave}
+                onclick={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, true)}
+                onkeydown={(e) => e.key === "Enter" && r.hasBreakdown && rowBreakdown(200, rowIndex + 1, true)}
+              >
+                <span class="k"><PobText text={r.lhs?.replace(/:\s*$/, "")} defaultColor="var(--fg-1)" /></span>
+                <span class="v num"><PobText text={r.rhs} /></span>
+              </div>
+            {/if}
+          {/each}
         {/each}
         {#if side.warnings.length}
           <div class="warnings">
@@ -408,7 +437,7 @@
   .lorow {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
   }
   .lorow .select {
     flex: 1;
@@ -416,21 +445,30 @@
   }
   .loact {
     appearance: none;
-    border: 0;
-    background: none;
-    color: var(--fg-3);
-    font-size: var(--fs-sm);
-    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-1);
+    background: var(--bg-2);
+    color: var(--fg-1);
     cursor: pointer;
-    padding: 3px 4px;
-    border-radius: 3px;
+    transition: background 80ms linear, border-color 80ms linear, color 80ms linear;
   }
   .loact:hover:not(:disabled) {
-    background: var(--bg-active);
+    background: var(--bg-hover);
+    border-color: var(--line-2);
     color: var(--fg-0);
   }
+  .loact.danger:hover:not(:disabled) {
+    color: var(--bad);
+  }
   .loact:disabled {
-    opacity: 0.35;
+    opacity: 0.45;
     cursor: default;
   }
   .lvl .input {
@@ -467,6 +505,26 @@
   }
   .space {
     height: 7px;
+  }
+  .sgroup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 0 4px;
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+  }
+  .sgroup::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line-0);
+  }
+  .sgroup:first-child {
+    padding-top: 4px;
   }
   .shead {
     padding: 8px 0 3px;

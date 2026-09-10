@@ -13,6 +13,24 @@ local dkjson = require("dkjson")
 local main = launch.main
 local build = main.modes["BUILD"]
 
+-- PoB's sidebar rows carry only text. Feeding AddDisplayStatList one entry at
+-- a time tags every row it appends with the entry's stat key and actor, which
+-- is what the UI groups on; PoB's own spacer logic is unchanged by the split.
+do
+	local addStats = build.AddDisplayStatList
+	build.AddDisplayStatList = function(self, statList, actor, actorName)
+		local list = self.controls.statBox.list
+		for _, statData in ipairs(statList) do
+			local before = #list
+			addStats(self, { statData }, actor, actorName)
+			for i = before + 1, #list do
+				list[i].stat = statData.stat or statData.labelStat
+				list[i].actor = actorName
+			end
+		end
+	end
+end
+
 local function frame()
 	runCallback("OnFrame")
 end
@@ -528,6 +546,8 @@ M.get_sidebar = function()
 			breakdown = opt(row.breakdown),
 			hasBreakdown = (row.breakdown ~= nil or row.modNames ~= nil) and true or false,
 			align = opt(row.align),
+			stat = opt(row.stat),
+			actor = opt(row.actor),
 		}
 	end
 	local warnings = strArray(build.controls.warnings and build.controls.warnings.lines or {})

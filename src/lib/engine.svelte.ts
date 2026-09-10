@@ -228,6 +228,9 @@ export interface SidebarRow {
   breakdown: string | null;
   hasBreakdown: boolean;
   align: string | null;
+  /** PoB's output key for the row (`Life`, `TotalDPS`); null for spacers and PoB's own headings. */
+  stat: string | null;
+  actor: "player" | "minion" | null;
 }
 
 export type BreakdownSection =
