@@ -276,15 +276,7 @@
     const inView = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
 
     // --- background tile ---
-    if (A) {
-      const pat = A.pattern(ctx, "Background2");
-      if (pat) {
-        const r = A.rect("Background2")!;
-        pat.setTransform(new DOMMatrix([100 / r.w, 0, 0, 100 / r.h, 0, 0]));
-        ctx.fillStyle = pat;
-        ctx.fillRect(0, 0, w, h);
-      }
-    }
+    if (A) A.tile(ctx, "Background2", w, h, 100);
 
     // --- class hub and ascendancy backgrounds ---
     if (A) {

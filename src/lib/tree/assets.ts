@@ -88,19 +88,22 @@ export class AssetStore {
     return true;
   }
 
-  pattern(ctx: CanvasRenderingContext2D, name: string): CanvasPattern | null {
+  /**
+   * Tiles `name` over a w×h area at `size` px per tile, one drawImage per
+   * tile. A repeating CanvasPattern would be the natural tool, but filling
+   * with one while the window is being resized crashes WebView2's renderer
+   * (STATUS_INTEGER_DIVIDE_BY_ZERO) after roughly a hundred resize steps.
+   */
+  tile(ctx: CanvasRenderingContext2D, name: string, w: number, h: number, size: number): boolean {
     const r = this.rect(name);
-    if (!r) return null;
+    if (!r) return false;
     const img = this.image(r.file);
-    if (!img) return null;
-    // Sub-rect patterns need an intermediate canvas.
-    if (r.x !== 0 || r.y !== 0 || r.w !== img.width || r.h !== img.height) {
-      const c = document.createElement("canvas");
-      c.width = r.w;
-      c.height = r.h;
-      c.getContext("2d")!.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-      return ctx.createPattern(c, "repeat");
+    if (!img) return false;
+    for (let y = 0; y < h; y += size) {
+      for (let x = 0; x < w; x += size) {
+        ctx.drawImage(img, r.x, r.y, r.w, r.h, x, y, size, size);
+      }
     }
-    return ctx.createPattern(img, "repeat");
+    return true;
   }
 }
