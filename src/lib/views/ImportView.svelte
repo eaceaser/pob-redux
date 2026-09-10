@@ -10,6 +10,9 @@
     moveBuild,
     deleteBuild,
     fetchBuildCode,
+    isMobalyticsLink,
+    resolveMobalytics,
+    saveGameBuildFiles,
     listGameBuilds,
     setGameBuildMeta,
     shareBuildCode,
@@ -20,6 +23,8 @@
     type AppPaths,
     type BuildEntry,
     type GameBuildList,
+    type MobalyticsBuild,
+    type MobalyticsVariant,
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
 
@@ -173,6 +178,15 @@
   async function importGameBuildFile(path: string, name: string) {
     try {
       const json = await readTextFile(path);
+      await importGameBuildJson(json, name);
+    } catch (e) {
+      build.error = String(e);
+      say(`Import failed: ${String(e)}`);
+    }
+  }
+
+  async function importGameBuildJson(json: string, name: string) {
+    try {
       const r = await build.run(() => engine.importGameBuild(json, name));
       if (r) {
         const issues = [...r.warnings, ...r.missingPassives.map((p) => `unknown passive: ${p}`), ...r.missingSkills.map((s) => `unknown gem: ${s}`)];
@@ -245,15 +259,79 @@
     return build.loadFile(b.path);
   }
 
+  // A Mobalytics build page: the author's PoB build, if any, plus one Build
+  // Planner file per variant, offered in a dialog rather than loaded blind.
+  let moba = $state<MobalyticsBuild | null>(null);
+  let mobaBusy = $state(false);
+
+  async function loadCodeOrLink(codeOrLink: string) {
+    if (/^https?:\/\//i.test(codeOrLink)) {
+      const r = await fetchBuildCode(codeOrLink);
+      say(`Fetched from ${r.site}`);
+      return build.loadCode(r.code);
+    }
+    return build.loadCode(codeOrLink);
+  }
+
+  async function mobaImportPob() {
+    if (!moba?.pobCode) return;
+    mobaBusy = true;
+    try {
+      const ok = await loadCodeOrLink(moba.pobCode);
+      if (ok) {
+        moba = null;
+        build.view = "tree";
+      }
+    } catch (e) {
+      build.error = String(e);
+    } finally {
+      mobaBusy = false;
+    }
+  }
+
+  async function mobaOpenVariant(v: MobalyticsVariant) {
+    mobaBusy = true;
+    try {
+      await importGameBuildJson(v.json, v.name);
+      if (!build.error) moba = null;
+    } finally {
+      mobaBusy = false;
+    }
+  }
+
+  async function mobaSaveAll() {
+    if (!moba) return;
+    mobaBusy = true;
+    try {
+      const saved = await saveGameBuildFiles(moba.variants.map((v) => ({ name: v.name, json: v.json })), plannerDir || undefined);
+      const replaced = saved.filter((s) => s.replaced).length;
+      say(`Saved ${saved.length} Build Planner file${saved.length === 1 ? "" : "s"}${replaced ? ` (${replaced} replaced)` : ""} to ${gameBuilds?.dir ?? "the game folder"}`);
+      moba = null;
+      await refresh();
+    } catch (e) {
+      build.error = String(e);
+      say(`Save failed: ${String(e)}`);
+    } finally {
+      mobaBusy = false;
+    }
+  }
+
   async function doImport() {
     const text = code.trim();
     if (!text) return;
-    if (/^https?:\/\//i.test(text)) {
+    if (isMobalyticsLink(text)) {
       fetching = true;
       try {
-        const r = await fetchBuildCode(text);
-        say(`Fetched from ${r.site}`);
-        await build.loadCode(r.code);
+        moba = await resolveMobalytics(text);
+      } catch (e) {
+        build.error = String(e);
+      } finally {
+        fetching = false;
+      }
+    } else if (/^https?:\/\//i.test(text)) {
+      fetching = true;
+      try {
+        await loadCodeOrLink(text);
       } catch (e) {
         build.error = String(e);
       } finally {
@@ -618,7 +696,7 @@
       <textarea
         class="textarea"
         rows="5"
-        placeholder="Share code, build XML, or a link (pobb.in, Maxroll, poe.ninja, poe2db, Pastebin, Rentry)"
+        placeholder="Share code, build XML, or a link (pobb.in, Maxroll, Mobalytics, poe.ninja, poe2db, Pastebin, Rentry)"
         bind:value={code}
       ></textarea>
       <div class="actions">
@@ -628,6 +706,50 @@
         <button class="btn" onclick={pasteImport} disabled={build.busy > 0 || fetching}>Paste and import</button>
       </div>
     </div>
+
+    {#if moba}
+      <div class="overlay" role="presentation" onclick={() => !mobaBusy && (moba = null)} onkeydown={(e) => e.key === "Escape" && (moba = null)}>
+        <div class="modal" role="dialog" aria-label="Mobalytics build" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (moba = null)}>
+          <div class="mhead">
+            <span class="label">Mobalytics</span>
+            <span class="dim small mono">{moba.slug}</span>
+            <button class="btn sm ghost" onclick={() => (moba = null)} disabled={mobaBusy}>Close</button>
+          </div>
+          <div class="mbody">
+            {#if moba.pobCode}
+              <div class="mrow">
+                <div class="mtext">
+                  <div class="mtitle">Path of Building build</div>
+                  <div class="dim small">The author's own PoB build: tree, items and gems. The best way to load it here.</div>
+                </div>
+                <button class="btn primary sm" onclick={mobaImportPob} disabled={mobaBusy || build.busy > 0}>Import</button>
+              </div>
+            {/if}
+            {#if moba.variants.length}
+              <div class="mrow">
+                <div class="mtext">
+                  <div class="mtitle">Build Planner files <span class="dim num">{moba.variants.length}</span></div>
+                  <div class="dim small">
+                    For the game's own planner. Saved flat into {gameBuilds?.dir ?? "the BuildPlanner folder"}.
+                    {#if !moba.pobCode}Opening one here loses any tree nodes the author did not path from the class start.{/if}
+                  </div>
+                </div>
+                <button class="btn sm" class:primary={!moba.pobCode} onclick={mobaSaveAll} disabled={mobaBusy}>Save all</button>
+              </div>
+              <div class="mvariants">
+                {#each moba.variants as v (v.id)}
+                  <div class="mvar">
+                    <span class="mvname" title={v.name}>{v.name}</span>
+                    <span class="dim small num">{v.passives} passives · {v.skills} skills</span>
+                    <button class="act" onclick={() => mobaOpenVariant(v)} disabled={mobaBusy || build.busy > 0}>open here</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
 
     {#if build.loaded}
       <div class="panel-head">
@@ -988,5 +1110,88 @@
   }
   .pad {
     padding: 10px 12px;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--backdrop);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    width: 560px;
+    max-width: 90vw;
+    max-height: 78vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-1);
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-2);
+    box-shadow: var(--shadow-modal);
+  }
+  .mhead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line-0);
+  }
+  .mhead .btn {
+    margin-left: auto;
+  }
+  .mbody {
+    overflow-y: auto;
+    padding: 4px 0 8px;
+  }
+  .mrow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+  }
+  .mrow + .mrow {
+    border-top: 1px solid var(--line-0);
+  }
+  .mtext {
+    flex: 1;
+    min-width: 0;
+  }
+  .mtitle {
+    font-size: var(--fs-sm);
+    color: var(--fg-0);
+    margin-bottom: 2px;
+  }
+  .mvariants {
+    display: flex;
+    flex-direction: column;
+    padding: 0 6px;
+  }
+  .mvar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 3px 6px;
+    border-radius: 3px;
+  }
+  .mvar:hover {
+    background: var(--bg-2);
+  }
+  .mvar .act {
+    opacity: 0;
+  }
+  .mvar:hover .act,
+  .mvar .act:focus-visible {
+    opacity: 1;
+  }
+  .mvname {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-sm);
+    color: var(--fg-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

@@ -4152,17 +4152,23 @@ M.import_game_build = function(p)
 			problems[#problems + 1] = '"ascendancy": unknown ascendancy ' .. wantedAscend .. " (inferred from the tree instead)"
 		end
 	end
-	if not classId then
-		for nid in pairs(seen) do
-			local node = spec.nodes[nid]
-			if node and node.ascendancyName and spec.tree.ascendNameMap and spec.tree.ascendNameMap[node.ascendancyName] then
-				local m = spec.tree.ascendNameMap[node.ascendancyName]
-				classId, ascendClassId, classSource = m.classId, m.ascendClassId, "its " .. node.ascendancyName .. " passives"
-				break
-			end
+	local ascFromNodes, ascNodeName
+	for nid in pairs(seen) do
+		local node = spec.nodes[nid]
+		if node and node.ascendancyName and spec.tree.ascendNameMap and spec.tree.ascendNameMap[node.ascendancyName] then
+			ascFromNodes, ascNodeName = spec.tree.ascendNameMap[node.ascendancyName], node.ascendancyName
+			break
 		end
 	end
-	if classId and bestCid and #hashList > 0 and (reach[classId] or 0) * 2 < bestReach then
+	if not classId and ascFromNodes then
+		classId, ascendClassId, classSource = ascFromNodes.classId, ascFromNodes.ascendClassId, "its " .. ascNodeName .. " passives"
+	end
+	-- Ascendancy passives in the file settle the class. Guide sites export
+	-- trees that need not path from the class start (the game's planner only
+	-- highlights nodes), so reachability alone would misfile such a build
+	-- under whichever start its nodes happen to touch.
+	local pinned = ascFromNodes ~= nil and ascFromNodes.classId == classId
+	if not pinned and classId and bestCid and #hashList > 0 and (reach[classId] or 0) * 2 < bestReach then
 		problems[#problems + 1] = string.format(
 			"%s says %s, but the passives connect to the %s start (%d of %d reachable vs %d) — imported as %s without an ascendancy; the file's class label is wrong or the tree is",
 			classSource, className(classId), className(bestCid), reach[classId] or 0, #hashList, bestReach, className(bestCid))
@@ -4329,27 +4335,43 @@ M.import_game_build = function(p)
 			if not slotName and iid == "Flask1" then slotName = "Flask " .. (sx + 1) end
 			if not slotName and iid == "Charm1" then slotName = "Charm " .. (sx + 1) end
 			local text = tostring(slot.additional_text or "")
+			-- Guide sites wrap the hint text in their own markup (Maxroll:
+			-- `<rgb(1,2,3)>{<b>{name}}`) and pad it with headings and `#`
+			-- placeholder lines; only plain "base name, then one mod per line"
+			-- is something PoB's item parser can take.
 			local lines = {}
 			for line in (text .. "\n"):gmatch("(.-)\n") do
+				line = line:gsub("<[^<>]*>{", ""):gsub("}", ""):gsub("\r", "")
 				line = line:match("^%s*(.-)%s*$")
-				if line ~= "" then lines[#lines + 1] = line end
+				if line ~= "" and not line:find("#", 1, true) and not line:match("^%-+$") and not line:match(":$") then
+					lines[#lines + 1] = line
+				end
 			end
 			local baseName = lines[1]
 			local mods = {}
 			for j = 2, #lines do
 				mods[#mods + 1] = (lines[j]:gsub("^%d+[%.%)]%s*", ""))
 			end
+			local function makeItem(raw)
+				local ok, made = pcall(function() return new("Item"):Item(raw) end)
+				return ok and made or nil
+			end
 			local item
 			local uniqueName = type(slot.unique_name) == "string" and slot.unique_name ~= "" and slot.unique_name or nil
 			if uniqueName then
 				local dbItem = findUnique(uniqueName)
 				if dbItem then
-					item = new("Item"):Item(dbItem:BuildRaw())
+					item = makeItem(dbItem:BuildRaw())
 				elseif baseName then
-					item = new("Item"):Item("Rarity: UNIQUE\n" .. uniqueName .. "\n" .. baseName .. "\n" .. table.concat(mods, "\n"))
+					item = makeItem("Rarity: UNIQUE\n" .. uniqueName .. "\n" .. baseName .. "\n" .. table.concat(mods, "\n"))
 				end
 			elseif baseName then
-				item = new("Item"):Item("Rarity: RARE\nImported " .. baseName .. "\n" .. baseName .. "\n" .. table.concat(mods, "\n"))
+				item = makeItem("Rarity: RARE\nImported " .. baseName .. "\n" .. baseName .. "\n" .. table.concat(mods, "\n"))
+				if not (item and item.base) and baseName:find("%(") then
+					-- "Kamasan Tiara (Int Base)": the note after the base name is the author's
+					local bare = baseName:gsub("%s*%b()%s*$", "")
+					item = makeItem("Rarity: RARE\nImported " .. bare .. "\n" .. bare .. "\n" .. table.concat(mods, "\n"))
+				end
 			end
 			if item and item.base then
 				build.itemsTab:AddItem(item, true)

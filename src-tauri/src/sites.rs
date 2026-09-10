@@ -2,7 +2,7 @@
 //! Modules/BuildSiteTools.lua. Each download endpoint returns the raw PoB
 //! build code (base64+deflate), which the bridge's `load_build_code` decodes.
 
-pub const SUPPORTED: &str = "Maxroll, pobb.in, poe.ninja, poe2db.tw, Pastebin.com, PastebinP.com, Rentry.co";
+pub const SUPPORTED: &str = "Maxroll, Mobalytics, pobb.in, poe.ninja, poe2db.tw, Pastebin.com, PastebinP.com, Rentry.co";
 
 /// Map a share URL to (site label, raw-code download URL).
 pub fn download_url(url: &str) -> Option<(&'static str, String)> {

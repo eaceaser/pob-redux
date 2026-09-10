@@ -175,7 +175,7 @@ pub(crate) fn defs() -> Vec<ToolDef> {
         // Build
         rw(
             "load_build",
-            "Open a build in the app, replacing the one that is open. `source` may be a PoB share code, a pobb.in / Maxroll / poe.ninja / poe2db.tw / Pastebin / Rentry link, a local path to a .xml build or a GGG .build planner file, or raw PoB build XML.",
+            "Open a build in the app, replacing the one that is open. `source` may be a PoB share code, a pobb.in / Maxroll / Mobalytics / poe.ninja / poe2db.tw / Pastebin / Rentry link (a Mobalytics build page loads the PoB code its author attached), a local path to a .xml build or a GGG .build planner file, or raw PoB build XML.",
             obj(json!({ "source": prop("string", "Share code, link, file path, or XML"), "name": prop("string", "Build name to use (optional)") }), &["source"]),
         ),
         rw("new_build", "Start a blank build (default class, no items or skills). Replaces the open build.", obj(json!({ "name": prop("string", "Build name") }), &[])),
@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn registry_is_stable_and_measured() {
         let d = defs();
-        assert_eq!(d.len(), 74, "tool count changed");
+        assert_eq!(d.len(), 75, "tool count changed");
 
         let mut names: Vec<&str> = d.iter().map(|t| t.name).collect();
         names.sort_unstable();

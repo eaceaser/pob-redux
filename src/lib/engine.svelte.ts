@@ -143,6 +143,42 @@ export function fetchBuildCode(url: string): Promise<{ site: string; code: strin
   return invoke<{ site: string; code: string }>("fetch_build_code", { url });
 }
 
+export interface MobalyticsVariant {
+  id: string;
+  name: string;
+  /** The Build Planner file as the site produced it. */
+  json: string;
+  passives: number;
+  skills: number;
+}
+
+export interface MobalyticsBuild {
+  slug: string;
+  url: string;
+  /** A pobb.in link or a raw build code, when the author attached one. */
+  pobCode: string | null;
+  variants: MobalyticsVariant[];
+}
+
+export function isMobalyticsLink(url: string): boolean {
+  return /^https?:\/\/(www\.)?mobalytics\.gg\/poe-2\/builds\/[^/?#]+/i.test(url.trim());
+}
+
+export function resolveMobalytics(url: string): Promise<MobalyticsBuild> {
+  return invoke<MobalyticsBuild>("mobalytics_resolve", { url });
+}
+
+export interface SavedGameBuild {
+  name: string;
+  path: string;
+  replaced: boolean;
+}
+
+/** Write Build Planner files flat into the game's folder (or `dir`). */
+export function saveGameBuildFiles(files: { name: string; json: string }[], dir?: string): Promise<SavedGameBuild[]> {
+  return invoke<SavedGameBuild[]>("save_game_build_files", { dir: dir || null, files });
+}
+
 export function renameBuild(path: string, newName: string): Promise<string> {
   return invoke<string>("rename_build", { path, newName });
 }

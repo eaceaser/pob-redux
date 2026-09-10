@@ -13,7 +13,8 @@ because it runs the same code.
 
 What works today: every PoB tab (tree, skills, items, calcs, config, notes, party, import), with PoB's own
 numbers, tooltips and breakdowns. Builds import from share codes, PoB XML, pobb.in, Maxroll, poe.ninja,
-poe2db.tw, Pastebin and Rentry links, and GGG's `.build` planner files.
+poe2db.tw, Pastebin and Rentry links, and GGG's `.build` planner files. A Mobalytics build page offers
+its author's PoB build and its Build Planner files, which can be saved straight into the game's folder.
 
 Status: the tabs above are at parity with PoB. Windows is the current target, with installer polish,
 auto-update and error reporting in progress. Linux packages come after that.

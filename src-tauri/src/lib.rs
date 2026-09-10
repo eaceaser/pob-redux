@@ -6,11 +6,12 @@ mod tools;
 mod library;
 mod ai;
 mod sites;
+mod mobalytics;
 
 use std::sync::Arc;
 
 use pob_engine::{EngineConfig, EngineHandle, EnginePool, EngineStatus, PoolStatus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{Manager, State};
 
@@ -342,7 +343,78 @@ async fn share_build_code(site: String, code: String) -> Result<SharedLink, Stri
     Ok(SharedLink { site: target.label.to_string(), url: format!("{}{}", target.code_out, id) })
 }
 
+/// Resolve a Mobalytics build page: its PoB code, if the author attached one,
+/// and one Build Planner file per variant.
+#[tauri::command]
+async fn mobalytics_resolve(url: String) -> Result<mobalytics::Resolved, String> {
+    mobalytics::resolve(&url).await
+}
+
+#[derive(Deserialize)]
+struct GameBuildFile {
+    name: String,
+    json: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedGameBuild {
+    name: String,
+    path: String,
+    replaced: bool,
+}
+
+/// Write Build Planner files into the game's folder. The game only scans the
+/// folder root, so every file lands there flat. A file of the same name from
+/// the same `link` is replaced (the guide was updated); any other clash gets
+/// a numbered suffix.
+#[tauri::command]
+fn save_game_build_files(state: State<'_, AppState>, dir: Option<String>, files: Vec<GameBuildFile>) -> Result<Vec<SavedGameBuild>, String> {
+    let dir = planner_dir(&state, dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut out = Vec::with_capacity(files.len());
+    for file in files {
+        let parsed: serde_json::Value = serde_json::from_str(&file.json).map_err(|e| format!("{}: not a Build Planner file: {e}", file.name))?;
+        let link = parsed.get("link").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+        let mut stem: String = file.name.chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
+        stem = stem.trim().trim_end_matches('.').chars().take(120).collect();
+        if stem.is_empty() {
+            stem = "Build".into();
+        }
+        let mut path = dir.join(format!("{stem}.build"));
+        let mut replaced = false;
+        let mut n = 2;
+        while path.exists() {
+            let same_source = !link.is_empty()
+                && std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v.get("link").and_then(serde_json::Value::as_str).map(|l| l == link))
+                    .unwrap_or(false);
+            if same_source {
+                replaced = true;
+                break;
+            }
+            path = dir.join(format!("{stem} ({n}).build"));
+            n += 1;
+        }
+        std::fs::write(&path, file.json.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
+        out.push(SavedGameBuild { name: stem, path: path.to_string_lossy().to_string(), replaced });
+    }
+    Ok(out)
+}
+
 pub(crate) async fn fetch_code(url: &str) -> Result<FetchedCode, String> {
+    if mobalytics::build_slug(url).is_some() {
+        let r = mobalytics::resolve(url).await?;
+        let code = r.pob_code.ok_or_else(|| {
+            format!("That Mobalytics build has no Path of Building code, only {} Build Planner files (use the Builds tab to import those)", r.variants.len())
+        })?;
+        if code.starts_with("http://") || code.starts_with("https://") {
+            return Box::pin(fetch_code(&code)).await;
+        }
+        return Ok(FetchedCode { site: "Mobalytics".into(), code });
+    }
     let (site, download) =
         sites::download_url(url).ok_or_else(|| format!("Unrecognised build link. Supported sites: {}.", sites::SUPPORTED))?;
     let client = reqwest::Client::builder()
@@ -470,17 +542,19 @@ struct GameBuildEntry {
     modified: f64,
 }
 
+/// The game's Build Planner folder, or the user's override of it.
+fn planner_dir(state: &AppState, dir: Option<String>) -> PathBuf {
+    dir.filter(|d| !d.trim().is_empty()).map(PathBuf::from).unwrap_or_else(|| {
+        // user_dir is the Documents folder (PoB appends its own subdir)
+        state.user_dir.join("My Games").join("Path of Exile 2").join("BuildPlanner")
+    })
+}
+
 /// List the game's Build Planner files (*.build). `dir` overrides the default
 /// `Documents\My Games\Path of Exile 2\BuildPlanner`.
 #[tauri::command]
 fn list_game_builds(state: State<'_, AppState>, dir: Option<String>) -> Result<GameBuildList, String> {
-    let dir = dir
-        .filter(|d| !d.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            // user_dir is the Documents folder (PoB appends its own subdir)
-            state.user_dir.join("My Games").join("Path of Exile 2").join("BuildPlanner")
-        });
+    let dir = planner_dir(&state, dir);
     let mut builds = Vec::new();
     let exists = dir.is_dir();
     if exists {
@@ -798,6 +872,8 @@ pub fn run() {
             read_text_file,
             write_text_file,
             fetch_build_code,
+            mobalytics_resolve,
+            save_game_build_files,
             share_build_code,
             set_game_build_meta,
             rename_build,
