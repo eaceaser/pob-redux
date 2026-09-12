@@ -1260,8 +1260,12 @@ mod tests {
             }
         }
 
+        // What an MCP client pays for `tools/list`. The chat panel no longer
+        // pays it: since progressive disclosure it sends the core set and loads
+        // the rest through find_tools, so `bun run check:tools` is what watches
+        // the prompt. This is a tripwire for runaway growth, not a budget.
         let bytes = serde_json::to_string(&d).unwrap().len();
         println!("tool registry: {} tools, {} bytes serialized (~{} tokens)", d.len(), bytes, bytes / 4);
-        assert!(bytes < 40_000, "registry grew to {bytes} bytes; re-check the chat panel's token budget");
+        assert!(bytes < 60_000, "registry grew to {bytes} bytes; check what was added");
     }
 }
