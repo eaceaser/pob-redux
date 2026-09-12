@@ -1,9 +1,10 @@
 <script lang="ts">
   import { effortsFor, type Effort } from "$lib/ai/providers";
-  import { chat, MAX_WIDTH, MIN_WIDTH, type ToolTurn } from "$lib/state/chat.svelte";
+  import { chat, experimentDelta, MAX_WIDTH, MIN_WIDTH, type Mode, type ToolTurn } from "$lib/state/chat.svelte";
   import ProviderSettings from "$lib/components/ProviderSettings.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import Markdown from "$lib/components/Markdown.svelte";
+  import { build } from "$lib/state/build.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
   let scroller = $state<HTMLDivElement | undefined>();
@@ -30,6 +31,20 @@
     void slashHits.length;
     slashIndex = 0;
   });
+
+  // Try can be selected before a build is open, and the checkpoint needs one.
+  $effect(() => {
+    if (chat.mode === "try" && build.loaded && !chat.experiment && !chat.busy) void chat.openExperiment();
+  });
+
+  const MODES: [Mode, string, string][] = [
+    ["ask", "Ask", "Reads only. Explains and recommends without changing anything."],
+    ["build", "Build", "Changes the build, asking before each one."],
+    ["try", "Try", "Checkpoints first, then changes freely. Keep or undo the lot at the end."],
+  ];
+
+  const moved = $derived(chat.experiment ? experimentDelta(chat.experiment) : []);
+  const signed = (n: number, digits = 0) => `${n > 0 ? "+" : ""}${n.toFixed(digits)}`;
 
   function pickTool(name: string) {
     chat.input = `Use ${name} and tell me what it returns.`;
@@ -181,6 +196,34 @@
     </div>
   </div>
 
+  {#if chat.experiment}
+    <div class="trying" class:warn={chat.undoWarning}>
+      <div class="trow">
+        <span class="tlabel">Trying</span>
+        {#if moved.length}
+          <span class="tdelta">
+            {#each moved.slice(0, 3) as m}
+              <span class={m.pct > 0 ? "up" : "down"}>{signed(m.pct, 1)}% {m.label}</span>
+            {/each}
+          </span>
+        {:else}
+          <span class="tdelta dim">nothing changed yet</span>
+        {/if}
+        <div class="grow"></div>
+        <button class="btn sm" disabled={chat.busy} onclick={() => chat.keepExperiment()}>Keep</button>
+        <button class="btn sm ghost" disabled={chat.busy} onclick={() => chat.undoExperiment()}>Undo</button>
+      </div>
+      {#if chat.undoWarning}
+        <div class="trow sub">
+          <span>{chat.undoWarning}</span>
+          <div class="grow"></div>
+          <button class="btn sm" disabled={chat.busy} onclick={() => chat.undoExperiment(true)}>Undo anyway</button>
+          <button class="btn sm ghost" onclick={() => (chat.undoWarning = null)}>Cancel</button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if chat.settingsOpen}
     <ProviderSettings />
   {/if}
@@ -229,6 +272,7 @@
               <div class="approve">
                 <span>This changes the build.</span>
                 <button class="btn sm" onclick={() => chat.resolveApproval(turn.id, true)}>Run</button>
+                <button class="btn sm ghost" onclick={() => chat.resolveApproval(turn.id, true, true)}>Always</button>
                 <button class="btn sm ghost" onclick={() => chat.resolveApproval(turn.id, false)}>Skip</button>
                 <label class="always"><input type="checkbox" bind:checked={chat.allowWrites} /> allow all</label>
               </div>
@@ -298,6 +342,18 @@
         disabled={chat.busy}
       ></textarea>
       <div class="bar">
+        <div class="modes" role="group" aria-label="Assistant mode">
+          {#each MODES as [id, label, hint]}
+            <button
+              class="mode"
+              class:on={chat.mode === id}
+              title={hint}
+              aria-pressed={chat.mode === id}
+              disabled={chat.busy}
+              onclick={() => chat.setMode(id)}>{label}</button>
+          {/each}
+        </div>
+
         <select
           class="pill"
           value={chat.provider}
@@ -747,6 +803,72 @@
   }
   .warm.failed .wdot {
     background: var(--bad);
+  }
+  .modes {
+    display: flex;
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-1);
+    overflow: hidden;
+  }
+  .mode {
+    background: none;
+    border: 0;
+    border-right: 1px solid var(--line-1);
+    color: var(--fg-3);
+    font-family: var(--font-ui);
+    font-size: var(--fs-xs);
+    padding: 2px 7px;
+    cursor: pointer;
+  }
+  .mode:last-child {
+    border-right: 0;
+  }
+  .mode:hover:not(:disabled):not(.on) {
+    background: var(--bg-hover);
+    color: var(--fg-1);
+  }
+  .mode.on {
+    background: var(--bg-3);
+    color: var(--fg-0);
+  }
+  .mode:disabled {
+    cursor: default;
+    color: var(--fg-4);
+  }
+  .trying {
+    border-bottom: 1px solid var(--line-1);
+    background: var(--bg-2);
+    font-size: var(--fs-2xs);
+  }
+  .trying.warn {
+    border-left: 2px solid var(--warn);
+  }
+  .trow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+  }
+  .trow.sub {
+    border-top: 1px solid var(--line-1);
+    color: var(--warn);
+  }
+  .tlabel {
+    color: var(--fg-2);
+  }
+  .tdelta {
+    display: flex;
+    gap: 7px;
+    font-family: var(--font-mono);
+  }
+  .tdelta .up {
+    color: var(--ok);
+  }
+  .tdelta .down {
+    color: var(--bad);
+  }
+  .tdelta.dim {
+    color: var(--fg-4);
   }
   .pill {
     appearance: none;

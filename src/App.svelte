@@ -20,7 +20,7 @@
   import { build } from "$lib/state/build.svelte";
   import { appOptions } from "$lib/state/options.svelte";
   import { mcp } from "$lib/state/mcp.svelte";
-  import { chat } from "$lib/state/chat.svelte";
+  import { chat, type Mode } from "$lib/state/chat.svelte";
   import { appUpdate } from "$lib/state/update.svelte";
   import { ui } from "$lib/state/ui.svelte";
 
@@ -55,6 +55,7 @@
         await chat.init(paths?.chat_open).catch(() => {});
         if (paths?.chat_provider) await chat.setProvider(paths.chat_provider).catch(() => {});
         if (paths?.chat_model) chat.setModel(paths.chat_model);
+        if (paths?.chat_mode) await chat.setMode(paths.chat_mode as Mode).catch(() => {});
         appUpdate.init();
         // shared items added in this app are ours to restore (PoB's own
         // settings file, which also holds shared items, is never written)

@@ -38,12 +38,19 @@ class BuildStore {
   rev = $state(0);
   /** Set to ask the tree view to centre on the ascendancy ring; the view clears it. */
   ascendancyFocus = $state(false);
+  /**
+   * Mutations the user made in the app. The assistant's own writes arrive as
+   * `mcp:changed` and pass `user: false`, so a Try experiment can tell whether
+   * rolling back would also discard something the user did by hand.
+   */
+  userEdits = $state(0);
 
   get loaded() {
     return this.info !== null;
   }
 
-  async run<T>(fn: () => Promise<T>, opts: { sync?: boolean } = {}): Promise<T | undefined> {
+  async run<T>(fn: () => Promise<T>, opts: { sync?: boolean; user?: boolean } = {}): Promise<T | undefined> {
+    if (opts.user !== false) this.userEdits++;
     this.busy++;
     try {
       const r = await fn();

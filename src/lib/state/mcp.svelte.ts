@@ -9,8 +9,27 @@ export interface McpStatus {
   running: boolean;
   port: number;
   url: string | null;
+  /** Bearer token every request must carry. Known only while running. */
+  token: string | null;
   error: string | null;
   calls: number;
+}
+
+/** A client config block for the running server, ready to paste. */
+export function mcpConfigJson(status: McpStatus | null): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        "pob-redux": {
+          type: "http",
+          url: status?.url ?? `http://127.0.0.1:${MCP_DEFAULT_PORT}/mcp`,
+          headers: { Authorization: `Bearer ${status?.token ?? "<start the server to see the token>"}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
 }
 
 /**
@@ -38,7 +57,7 @@ class McpStore {
       // a client changed the build; re-pull so every view shows PoB's new state
       clearTimeout(this.syncTimer);
       this.syncTimer = setTimeout(() => {
-        build.run(async () => {}).then(() => {
+        build.run(async () => {}, { user: false }).then(() => {
           if (build.view === "import" && build.loaded) build.view = "tree";
         });
       }, 60);
@@ -74,7 +93,7 @@ class McpStore {
       this.enabled = this.status.running;
     } catch (e) {
       this.enabled = false;
-      this.status = { running: false, port: this.port, url: null, error: String(e), calls: 0 };
+      this.status = { running: false, port: this.port, url: null, token: null, error: String(e), calls: 0 };
     } finally {
       this.persist();
       this.busy = false;
@@ -86,7 +105,7 @@ class McpStore {
     try {
       this.status = await invoke<McpStatus>("mcp_stop");
     } catch (e) {
-      this.status = { running: false, port: this.port, url: null, error: String(e), calls: 0 };
+      this.status = { running: false, port: this.port, url: null, token: null, error: String(e), calls: 0 };
     } finally {
       this.enabled = false;
       this.persist();

@@ -1,10 +1,11 @@
 //! A pool of extra PoB engines for embarrassingly parallel calc work (node
 //! power, gem DPS scoring). Each worker is a full, independent Lua state
-//! (~120 MB live); they boot lazily on first use and are synced to the main
-//! engine's build by XML before a scatter.
+//! (~240 MB live); they boot lazily on first use, are synced to the main
+//! engine's build by XML before a scatter, and are dropped again once the
+//! pool goes idle.
 
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -18,6 +19,7 @@ pub struct EnginePool {
     /// The build every worker holds, as saved XML. Held for the whole of a
     /// sync so a second caller with the same build waits and then skips.
     synced_xml: Mutex<Option<String>>,
+    last_used: Mutex<Instant>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -29,7 +31,13 @@ pub struct PoolStatus {
 
 impl EnginePool {
     pub fn new(cfg: EngineConfig, size: usize) -> Self {
-        Self { cfg, size: size.max(1), workers: Mutex::new(Vec::new()), synced_xml: Mutex::new(None) }
+        Self {
+            cfg,
+            size: size.max(1),
+            workers: Mutex::new(Vec::new()),
+            synced_xml: Mutex::new(None),
+            last_used: Mutex::new(Instant::now()),
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -54,6 +62,7 @@ impl EnginePool {
     /// with a fresh one rather than failing every scan from then on; the
     /// replacement holds no build, so the caller is told to load one.
     fn workers(&self) -> Result<(Vec<EngineHandle>, bool)> {
+        *self.last_used.lock().unwrap() = Instant::now();
         self.warm();
         let mut respawned = false;
         let ws = {
@@ -141,6 +150,29 @@ impl EnginePool {
                 .collect()
         });
         log::info!("pool: trimmed {} workers in {} ms; live heaps MB {:?}", ws.len(), t0.elapsed().as_millis(), heaps);
+    }
+
+    /// Drop every worker once the pool has been unused for `min_idle`, giving
+    /// the OS back their Lua heaps. `workers()` boots fresh ones on the next
+    /// scan, so this only costs that scan its boot. Returns how many went.
+    ///
+    /// `trim` collects each worker's garbage; only this returns the ~240 MB a
+    /// live worker holds regardless.
+    pub fn shrink_if_idle(&self, min_idle: Duration) -> usize {
+        // Same lock order as `sync`: synced_xml, then workers.
+        let mut held = self.synced_xml.lock().unwrap();
+        if self.last_used.lock().unwrap().elapsed() < min_idle {
+            return 0;
+        }
+        let mut ws = self.workers.lock().unwrap();
+        let n = ws.len();
+        if n == 0 {
+            return 0;
+        }
+        ws.clear();
+        *held = None;
+        log::info!("pool: released {n} idle workers");
+        n
     }
 
     /// Run `method` once per chunk across the workers and return the results

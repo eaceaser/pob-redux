@@ -10,6 +10,8 @@ mod mobalytics;
 
 use std::sync::Arc;
 
+// Pulls mimalloc's static library into this target so `mi_collect` resolves.
+use libmimalloc_sys as _;
 use pob_engine::{EngineConfig, EngineHandle, EnginePool, EngineStatus, PoolStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -24,7 +26,7 @@ pub(crate) struct AppState {
 }
 
 /// Worker engines for parallel scoring: half the cores, capped — each is a
-/// ~120 MB Lua state. `POB_REDUX_POOL=n` overrides.
+/// ~240 MB Lua state, booted on first use. `POB_REDUX_POOL=n` overrides.
 fn pool_size() -> usize {
     if let Some(n) = std::env::var("POB_REDUX_POOL").ok().and_then(|v| v.parse::<usize>().ok()) {
         return n.clamp(1, 16);
@@ -36,6 +38,50 @@ fn pool_size() -> usize {
 #[tauri::command]
 fn pool_status(state: State<'_, AppState>) -> PoolStatus {
     state.pool.status()
+}
+
+/// How long the pool must go unused before its workers are dropped.
+const POOL_IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(120);
+const POOL_REAP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Watch the pool and drop its workers once scanning stops. This lives here
+/// rather than on a frontend timer because scans also arrive over MCP, which
+/// never touches the UI.
+///
+/// Dropping a worker ends its thread, but mimalloc holds the heap that thread
+/// abandoned and a later worker maps fresh pages instead of reusing it, so the
+/// process grows by a poolful on every scan cycle. `mi_collect` reclaims those
+/// segments. It runs a tick after the release because the threads wind down on
+/// their own time, and there is nothing to reclaim until they have.
+fn spawn_pool_reaper(pool: Arc<EnginePool>) {
+    // libmimalloc-sys re-exports only the allocation entry points; the symbol
+    // itself is in the static library mimalloc links.
+    extern "C" {
+        fn mi_collect(force: bool);
+    }
+    std::thread::spawn(move || {
+        let mut collect_next = false;
+        loop {
+            std::thread::sleep(POOL_REAP_EVERY);
+            if std::mem::take(&mut collect_next) {
+                // SAFETY: mi_collect takes no pointers and is safe to call from
+                // any thread at any time.
+                unsafe { mi_collect(true) };
+                log::info!("pool: reclaimed the released workers' heaps");
+            }
+            collect_next = pool.shrink_if_idle(POOL_IDLE_RELEASE) > 0;
+        }
+    });
+}
+
+/// Give back the worker engines once scanning has stopped. Each holds ~240 MB
+/// whatever its garbage collector does, so trimming alone does not get it back.
+#[tauri::command]
+async fn pool_release(state: State<'_, AppState>) -> Result<usize, String> {
+    let pool = state.pool.clone();
+    tauri::async_runtime::spawn_blocking(move || pool.shrink_if_idle(POOL_IDLE_RELEASE))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Push the current build to the workers while the user is idle, so the
@@ -158,6 +204,8 @@ struct AppPaths {
     chat_allow: Option<String>,
     /// Dev hook: write the transcript here when a run ends (POB_REDUX_CHAT_LOG).
     chat_log: Option<String>,
+    /// Dev hook: mode to start in, ask/build/try (POB_REDUX_CHAT_MODE).
+    chat_mode: Option<String>,
     /// Dev hooks: provider id and model to select on boot (POB_REDUX_CHAT_PROVIDER, POB_REDUX_CHAT_MODEL).
     chat_provider: Option<String>,
     chat_model: Option<String>,
@@ -187,6 +235,7 @@ fn app_paths(state: State<'_, AppState>) -> AppPaths {
         chat_allow: std::env::var("POB_REDUX_CHAT_ALLOW").ok(),
         chat_log: std::env::var("POB_REDUX_CHAT_LOG").ok(),
         chat_provider: std::env::var("POB_REDUX_CHAT_PROVIDER").ok(),
+        chat_mode: std::env::var("POB_REDUX_CHAT_MODE").ok(),
         chat_model: std::env::var("POB_REDUX_CHAT_MODEL").ok(),
     }
 }
@@ -836,13 +885,11 @@ pub fn run() {
                 user_dir: user_dir.clone(),
             };
             let engine = EngineHandle::spawn(cfg.clone());
+            // Workers boot on the first scan and are released again once the
+            // pool goes idle. Warming them here cost every session ~240 MB per
+            // worker for a feature most sessions never reach.
             let pool = Arc::new(EnginePool::new(cfg, pool_size()));
-            // boot the workers once the main engine has had the CPU to itself
-            let warm = pool.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(1500));
-                warm.warm();
-            });
+            spawn_pool_reaper(pool.clone());
             app.manage(AppState { engine, pool, pob_root, user_dir, mcp: mcp::McpState::new() });
             app.manage(ai::AiState::new(&app.handle().clone()));
             // POB_REDUX_MCP=<port> brings the MCP server up at launch (scripts, tests)
@@ -863,6 +910,7 @@ pub fn run() {
             pool_status,
             pool_presync,
             pool_trim,
+            pool_release,
             power_scan_parallel,
             gem_dps_parallel,
             app_paths,

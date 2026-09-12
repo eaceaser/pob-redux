@@ -138,8 +138,41 @@ pub(crate) struct ToolDef {
     pub(crate) name: &'static str,
     pub(crate) description: String,
     pub(crate) schema: Value,
+    pub(crate) output_schema: Option<Value>,
     pub(crate) read_only: bool,
     pub(crate) destructive: bool,
+    pub(crate) idempotent: bool,
+    pub(crate) open_world: bool,
+    /// Seconds rather than milliseconds: run as a task where the client allows it.
+    pub(crate) slow: bool,
+}
+
+impl ToolDef {
+    fn destructive(mut self) -> Self {
+        self.destructive = true;
+        self
+    }
+
+    fn idempotent(mut self) -> Self {
+        self.idempotent = true;
+        self
+    }
+
+    fn open_world(mut self) -> Self {
+        self.open_world = true;
+        self
+    }
+
+    fn slow(mut self) -> Self {
+        self.slow = true;
+        self
+    }
+
+    /// For writes that return the bridge result unwrapped, with no `stats`/`delta`.
+    fn no_output_schema(mut self) -> Self {
+        self.output_schema = None;
+        self
+    }
 }
 
 fn obj(props: Value, required: &[&str]) -> Value {
@@ -157,13 +190,25 @@ fn prop(ty: &str, desc: &str) -> Value {
 }
 
 fn none() -> Value {
-    obj(json!({}), &[])
+    json!({ "type": "object", "additionalProperties": false })
+}
+
+/// What `ToolContext::with_stats` adds to every write.
+fn write_output() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "stats": { "type": ["object", "null"], "description": "Headline stats after the change" },
+            "delta": { "type": ["object", "null"], "description": "Change against the previous state, per stat that moved" }
+        },
+        "additionalProperties": true
+    })
 }
 
 pub(crate) fn defs() -> Vec<ToolDef> {
-    let ro = |name, description: &str, schema| ToolDef { name, description: description.into(), schema, read_only: true, destructive: false };
-    let rw = |name, description: &str, schema| ToolDef { name, description: description.into(), schema, read_only: false, destructive: false };
-    let del = |name, description: &str, schema| ToolDef { name, description: description.into(), schema, read_only: false, destructive: true };
+    let ro = |name, description: &str, schema| ToolDef { name, description: description.into(), schema, output_schema: None, read_only: true, destructive: false, idempotent: false, open_world: false, slow: false };
+    let rw = |name, description: &str, schema| ToolDef { name, description: description.into(), schema, output_schema: Some(write_output()), read_only: false, destructive: false, idempotent: false, open_world: false, slow: false };
+    let del = |name, description: &str, schema| ToolDef { name, description: description.into(), schema, output_schema: Some(write_output()), read_only: false, destructive: true, idempotent: false, open_world: false, slow: false };
     let index = |what: &str| prop("integer", &format!("1-based index of the {what}"));
     let group_index = || prop("integer", "1-based socket group index (see get_skills)");
     let gem_index = || prop("integer", "1-based gem index within the group (see get_skills)");
@@ -177,14 +222,14 @@ pub(crate) fn defs() -> Vec<ToolDef> {
             "load_build",
             "Open a build in the app, replacing the one that is open. `source` may be a PoB share code, a pobb.in / Maxroll / Mobalytics / poe.ninja / poe2db.tw / Pastebin / Rentry link (a Mobalytics build page loads the PoB code its author attached), a local path to a .xml build or a GGG .build planner file, or raw PoB build XML.",
             obj(json!({ "source": prop("string", "Share code, link, file path, or XML"), "name": prop("string", "Build name to use (optional)") }), &["source"]),
-        ),
-        rw("new_build", "Start a blank build (default class, no items or skills). Replaces the open build.", obj(json!({ "name": prop("string", "Build name") }), &[])),
+        ).open_world().destructive(),
+        rw("new_build", "Start a blank build (default class, no items or skills). Replaces the open build.", obj(json!({ "name": prop("string", "Build name") }), &[])).destructive(),
         ro("list_local_builds", "List the .xml builds in the user's Path of Building builds folder. Paths can be passed to load_build.", none()),
         rw(
             "save_build",
             "Save the open build to disk as PoB XML. Uses the build's own file unless `path` is given.",
             obj(json!({ "path": prop("string", "Absolute path of the .xml file to write (optional)") }), &[]),
-        ),
+        ).no_output_schema(),
         ro(
             "export_build",
             "Export the open build as a shareable PoB code (default) or as full PoB XML.",
@@ -192,13 +237,13 @@ pub(crate) fn defs() -> Vec<ToolDef> {
         ),
         // Character
         ro("get_character", "Class, ascendancy, level, passive points used, main skill group, and file name of the open build.", none()),
-        rw("set_level", "Set the character level (1 to 100).", obj(json!({ "level": prop("integer", "Character level") }), &["level"])),
+        rw("set_level", "Set the character level (1 to 100).", obj(json!({ "level": prop("integer", "Character level") }), &["level"])).idempotent(),
         ro("list_classes", "Every class and its ascendancies with ids for select_class.", none()),
         rw(
             "select_class",
             "Change class and/or ascendancy. Omit an id to leave it unchanged. Changing class deallocates nodes the new class cannot reach. An invalid id leaves the build untouched.",
             obj(json!({ "class_id": prop("integer", "Class id from list_classes"), "ascend_class_id": prop("integer", "Ascendancy id from list_classes (0 for none)") }), &[]),
-        ),
+        ).idempotent(),
         // Stats
         ro(
             "get_stats",
@@ -267,7 +312,7 @@ pub(crate) fn defs() -> Vec<ToolDef> {
                 }),
                 &[],
             ),
-        ),
+        ).slow(),
         ro("list_power_stats", "Every stat tree_suggest can score.", none()),
         ro("node_info", "Name, type, stats, mods, allocation state, and path cost of one node.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         ro("node_path_cost", "How many points allocating a node would cost from the current tree, and the path PoB would take. Does not allocate.", obj(json!({ "node_id": node_id() }), &["node_id"])),
@@ -307,18 +352,18 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
                 }),
                 &["attribute"],
             ),
-        ),
+        ).idempotent(),
         rw("alloc_node", "Allocate a node and the shortest path to it, exactly as clicking it in the tree would, then recalculate.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         rw("dealloc_node", "Deallocate a node and every node that depended on it for connectivity, then recalculate.", obj(json!({ "node_id": node_id() }), &["node_id"])),
         rw("tree_undo", "Undo the last tree change.", none()),
         ro("export_tree_url", "The pathofexile.com passive tree URL for the active tree.", none()),
-        rw("import_tree_url", "Replace the active tree's allocation from a pathofexile.com passive tree URL.", obj(json!({ "url": prop("string", "Passive tree URL") }), &["url"])),
+        rw("import_tree_url", "Replace the active tree's allocation from a pathofexile.com passive tree URL.", obj(json!({ "url": prop("string", "Passive tree URL") }), &["url"])).idempotent(),
         // Specs
         ro("list_specs", "The build's passive tree specs (alternate trees) and which one is active.", none()),
-        rw("select_spec", "Switch the active tree spec. Every tree tool then works on it.", obj(json!({ "index": index("spec (see list_specs)") }), &["index"])),
+        rw("select_spec", "Switch the active tree spec. Every tree tool then works on it.", obj(json!({ "index": index("spec (see list_specs)") }), &["index"])).idempotent(),
         rw("create_spec", &format!("Create a blank tree spec with the current class. {activates}"), obj(json!({ "title": title() }), &[])),
         rw("copy_spec", &format!("Duplicate a tree spec (default: the active one). {activates}"), obj(json!({ "index": index("spec to copy"), "title": title() }), &[])),
-        rw("rename_spec", "Rename a tree spec.", obj(json!({ "index": index("spec"), "title": title() }), &["index", "title"])),
+        rw("rename_spec", "Rename a tree spec.", obj(json!({ "index": index("spec"), "title": title() }), &["index", "title"])).no_output_schema().idempotent(),
         del("delete_spec", "Delete a tree spec. Fails if it is the only one.", obj(json!({ "index": index("spec") }), &["index"])),
         // Items
         ro("get_items", "Every visible equipment, flask, charm and jewel slot with the item in it (if any). Hidden and inactive slots are left out.", none()),
@@ -328,8 +373,8 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
             "Parse in-game item text (as copied from the game or written in PoB's item format) and equip it. Without `slot`, the first slot the item fits is used.",
             obj(json!({ "item_text": prop("string", "Raw item text"), "slot": prop("string", "Slot name from get_items") }), &["item_text"]),
         ),
-        rw("equip_item", "Equip an item the build already owns (see list_items) into a slot.", obj(json!({ "item_id": prop("integer", "Item id from list_items"), "slot": prop("string", "Slot name from get_items") }), &["item_id", "slot"])),
-        rw("unequip_item", "Empty a slot. The item stays in the build's item list.", obj(json!({ "slot": prop("string", "Slot name from get_items") }), &["slot"])),
+        rw("equip_item", "Equip an item the build already owns (see list_items) into a slot.", obj(json!({ "item_id": prop("integer", "Item id from list_items"), "slot": prop("string", "Slot name from get_items") }), &["item_id", "slot"])).idempotent(),
+        rw("unequip_item", "Empty a slot. The item stays in the build's item list.", obj(json!({ "slot": prop("string", "Slot name from get_items") }), &["slot"])).idempotent(),
         del("delete_item", "Remove an item from the build entirely.", obj(json!({ "item_id": prop("integer", "Item id from list_items") }), &["item_id"])),
         ro(
             "search_item_db",
@@ -371,7 +416,7 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
                 }),
                 &[],
             ),
-        ),
+        ).slow(),
         ro(
             "suggest_unique_jewels",
             "Score every unique jewel PoB knows against the open build and rank them. Each is evaluated in every allocated jewel socket through PoB's own calculation (a radius jewel per socket, others once), and a jewel with variants is searched over the ones that can apply: a skill-level jewel over the skills the build runs, a notable jewel over notables not yet allocated, a multi-pick jewel filled greedily (best pick first), a stackable jewel also as 2 or 3 copies. Each suggestion carries the `socket`, the chosen `variants`, its `mods`, a stat `delta` against the build now, a `score` (log-ratio gain in DPS, life and effective HP weighted by `aim`, minus penalties for resistances or attributes it breaks; 0.1 is roughly a 10% gain), `alternatives` (the next best single variants) and `raw` (item text for equip_item_raw). `notScored` lists jewels PoB's numbers cannot judge (tree-planning and Timeless jewels) with why. Nothing is equipped. Takes 5 to 20 seconds. This is the tool for \"which unique jewel should I use\"; do not equip jewels one by one to find out.",
@@ -385,12 +430,12 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
                 }),
                 &[],
             ),
-        ),
+        ).slow(),
         rw(
             "set_gem_levels",
             "Cap every skill gem at the highest level the character's level allows (tier ladder: level 40 allows level 10 gems, 58 allows 14, 90 allows 20). Imported planner builds carry max-level gems at every stage, which inflates attribute requirements and damage; call this after set_level on a levelling build.",
             obj(json!({ "level": prop("integer", "Character level to cap for (default: the build's level)") }), &[]),
-        ),
+        ).idempotent(),
         ro(
             "list_bases",
             "Item bases of one type with the numbers that decide between them: weapon damage, attack rate and crit; armour, evasion and energy shield; requirements; implicit; rune sockets. `type` is a family (Boots, Helmet, Ring, Two Hand Mace) or a typed list (Boots: Armour); omit it for the list of types. The best endgame bases are usually the highest requirement ones.",
@@ -430,10 +475,10 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
         ),
         // Item sets
         ro("list_item_sets", "The build's gear sets and which one is active.", none()),
-        rw("select_item_set", "Switch the active gear set.", obj(json!({ "id": prop("integer", "Item set id from list_item_sets") }), &["id"])),
+        rw("select_item_set", "Switch the active gear set.", obj(json!({ "id": prop("integer", "Item set id from list_item_sets") }), &["id"])).idempotent(),
         rw("create_item_set", &format!("Create an empty gear set. {activates}"), obj(json!({ "title": title() }), &[])),
         rw("copy_item_set", &format!("Duplicate a gear set (default: the active one). {activates}"), obj(json!({ "id": prop("integer", "Item set id to copy"), "title": title() }), &[])),
-        rw("rename_item_set", "Rename a gear set.", obj(json!({ "id": prop("integer", "Item set id"), "title": title() }), &["id", "title"])),
+        rw("rename_item_set", "Rename a gear set.", obj(json!({ "id": prop("integer", "Item set id"), "title": title() }), &["id", "title"])).no_output_schema().idempotent(),
         del("delete_item_set", "Delete a gear set. Fails if it is the only one.", obj(json!({ "id": prop("integer", "Item set id") }), &["id"])),
         // Skills
         ro("get_skills", "Socket groups, the gems in each (name, level, quality, enabled), and which group is the main skill.", none()),
@@ -463,8 +508,8 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
                 }),
                 &[],
             ),
-        ),
-        rw("set_main_skill", "Choose which socket group is the main skill for DPS, by skill name or group index.", obj(json!({ "skill": prop("string", "Name of the group's active skill"), "group_index": group_index() }), &[])),
+        ).idempotent(),
+        rw("set_main_skill", "Choose which socket group is the main skill for DPS, by skill name or group index.", obj(json!({ "skill": prop("string", "Name of the group's active skill"), "group_index": group_index() }), &[])).idempotent(),
         rw(
             "add_gem",
             "Add a gem to a socket group. Identify it by gem_id (internal id such as Metadata/Items/Gems/SkillGemFireball, from list_gems), by skill_id, or by name_spec (display name). Level defaults to the highest gem level the character's level allows, so requirements match the stage; pass `level` to override.",
@@ -494,7 +539,7 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
                 }),
                 &["group_index", "gem_index"],
             ),
-        ),
+        ).idempotent(),
         del("remove_gem", "Remove a gem from a socket group.", obj(json!({ "group_index": group_index(), "gem_index": gem_index() }), &["group_index", "gem_index"])),
         ro(
             "list_gems",
@@ -529,12 +574,12 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
             "set_config",
             "Set a configuration option. Pass null to reset it to its default. See list_config_options for var names and value types.",
             obj(json!({ "var": prop("string", "Option var from list_config_options"), "value": { "type": ["boolean", "number", "string", "null"], "description": "New value, or null to reset" } }), &["var"]),
-        ),
+        ).idempotent(),
         // Notes and loadouts
         ro("get_notes", "The build's notes text.", none()),
-        rw("set_notes", "Replace the build's notes text.", obj(json!({ "text": prop("string", "Notes text") }), &["text"])),
+        rw("set_notes", "Replace the build's notes text.", obj(json!({ "text": prop("string", "Notes text") }), &["text"])).no_output_schema().idempotent(),
         ro("get_loadouts", "The build's loadouts (named tree + items + skills + config combinations) and which one is active.", none()),
-        rw("select_loadout", "Activate a loadout by name.", obj(json!({ "name": prop("string", "Loadout name from get_loadouts") }), &["name"])),
+        rw("select_loadout", "Activate a loadout by name.", obj(json!({ "name": prop("string", "Loadout name from get_loadouts") }), &["name"])).idempotent(),
     ]
 }
 

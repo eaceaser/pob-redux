@@ -1,14 +1,17 @@
 <script lang="ts">
   import { appOptions } from "$lib/state/options.svelte";
-  import { mcp } from "$lib/state/mcp.svelte";
+  import { mcp, mcpConfigJson } from "$lib/state/mcp.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { getVersion } from "@tauri-apps/api/app";
   import { appUpdate } from "$lib/state/update.svelte";
   import { ui, type Theme } from "$lib/state/ui.svelte";
 
   const mcpUrl = $derived(mcp.status?.running ? mcp.status.url : null);
-  const claudeCmd = $derived(mcpUrl ? `claude mcp add --transport http pob-redux ${mcpUrl}` : "");
-  const jsonCfg = $derived(mcpUrl ? JSON.stringify({ mcpServers: { "pob-redux": { url: mcpUrl } } }) : "");
+  const mcpToken = $derived(mcp.status?.token ?? "");
+  const claudeCmd = $derived(
+    mcpUrl ? `claude mcp add --transport http pob-redux ${mcpUrl} --header "Authorization: Bearer ${mcpToken}"` : "",
+  );
+  const jsonCfg = $derived(mcpUrl ? mcpConfigJson(mcp.status) : "");
   let copied = $state("");
   let checked = $state(false);
   let version = $state("");
@@ -143,6 +146,11 @@
               <span class="dim">URL</span>
               <code class="mono selectable">{mcpUrl}</code>
               <button class="btn sm ghost" onclick={() => copy("url", mcpUrl)}>{copied === "url" ? "Copied" : "Copy"}</button>
+            </div>
+            <div class="row">
+              <span class="dim">Token</span>
+              <code class="mono selectable">{mcpToken}</code>
+              <button class="btn sm ghost" onclick={() => copy("token", mcpToken)}>{copied === "token" ? "Copied" : "Copy"}</button>
             </div>
             <div class="row">
               <span class="dim">Claude Code</span>

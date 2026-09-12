@@ -66,3 +66,40 @@ export const ALLOWED = new Set([
   // the approval gate plus checkpoint cover the missing undo.
   "remove_socket_group",
 ]);
+
+/**
+ * The tools loaded at the start of every conversation. The rest of ALLOWED is
+ * reachable through `find_tools`, which adds what it finds for the rest of the
+ * conversation.
+ *
+ * The whole set costs ~6,300 tokens of definitions. This is about a quarter of
+ * that. The trade is one cache write per expansion against a smaller prompt on
+ * every turn, which is a clear win on the first turn and for providers that do
+ * not cache a prefix at all.
+ *
+ * tree_suggest, optimise_gear and suggest_unique_jewels are deliberately out:
+ * their descriptions are the longest in the registry and a conversation that
+ * never touches gear or jewels should not carry them.
+ */
+export const CORE = new Set([
+  "get_character",
+  "get_stats",
+  "get_sidebar",
+  "build_summary",
+  "sanity_check",
+  "library",
+  "checkpoint",
+  "rollback",
+  "get_items",
+  "get_skills",
+  "get_config",
+  "get_tree_state",
+  "search_tree",
+  "node_info",
+  "path_plan",
+  "alloc_path",
+  "alloc_node",
+  "dealloc_node",
+  "set_level",
+  "set_config",
+]);

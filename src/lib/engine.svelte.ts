@@ -74,6 +74,7 @@ export interface AppPaths {
   chat_log: string | null;
   chat_provider: string | null;
   chat_model: string | null;
+  chat_mode: string | null;
   initial_view: string | null;
   chat_open: string | null;
   chat_ask: string | null;
@@ -127,6 +128,11 @@ export function poolPresync(): Promise<void> {
 /** Collect garbage in every engine; for a quiet moment after a scan. */
 export function poolTrim(): Promise<void> {
   return invoke<void>("pool_trim");
+}
+
+/** Drop the worker engines if the pool has gone idle. Returns how many went. */
+export function poolRelease(): Promise<number> {
+  return invoke<number>("pool_release");
 }
 
 /** Node power scored across the worker pool (falls back to PoB's sequential builder). */

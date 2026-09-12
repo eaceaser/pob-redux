@@ -12,8 +12,17 @@ import {
   type ProviderStatus,
 } from "$lib/ai/providers";
 import { proxyFetch } from "$lib/ai/transport";
-import { STYLE } from "$lib/ai/prompt";
-import { callTool, loadToolDefs, toToolSet, type ToolDef } from "$lib/ai/tools";
+import { MODE_PROMPT, STYLE, type Mode } from "$lib/ai/prompt";
+import {
+  callTool,
+  CORE,
+  findTools,
+  FIND_TOOLS,
+  FIND_TOOLS_DEF,
+  loadToolDefs,
+  toToolSet,
+  type ToolDef,
+} from "$lib/ai/tools";
 import { writeTextFile } from "$lib/engine.svelte";
 import { stripPobText } from "$lib/pobtext";
 import { build } from "$lib/state/build.svelte";
@@ -29,6 +38,46 @@ const KEY = "pob-redux:chat";
 const MAX_STEPS = 48;
 /** Anthropic cache breakpoint; see markCacheBreakpoint for the lifetime choice. */
 const CACHE = { type: "ephemeral", ttl: "1h" } as const;
+/**
+ * Characters of one tool result the model sees. optimise_gear and
+ * suggest_unique_jewels return tens of kilobytes; the panel still shows all of
+ * it. Roughly 1,500 tokens.
+ */
+const MAX_RESULT_CHARS = 6000;
+/** Past this, the oldest tool results are elided. Roughly 100k tokens. */
+const MAX_HISTORY_CHARS = 400_000;
+/** Tool rounds whose results survive compaction intact. */
+const KEEP_RESULTS = 6;
+/** The numbers a Try experiment reports on. */
+const TRY_STATS: [string, string][] = [
+  ["CombinedDPS", "DPS"],
+  ["Life", "life"],
+  ["TotalEHP", "EHP"],
+  ["EnergyShield", "ES"],
+];
+
+export type { Mode };
+
+/** An open Try experiment: one checkpoint, resolved by Keep or Undo. */
+export interface Experiment {
+  label: string;
+  before: Record<string, number>;
+  now: Record<string, number>;
+  /** `build.userEdits` when the checkpoint was taken. */
+  editsAt: number;
+}
+
+/** The moved numbers a Try strip shows, biggest relative change first. */
+export function experimentDelta(e: Experiment): { label: string; pct: number; abs: number }[] {
+  return TRY_STATS.map(([key, label]) => {
+    const before = e.before[key] ?? 0;
+    const now = e.now[key] ?? before;
+    return { label, pct: before ? ((now - before) / before) * 100 : 0, abs: now - before };
+  })
+    .filter((r) => Math.abs(r.abs) > 0.5)
+    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+}
+
 export const MIN_WIDTH = 320;
 export const MAX_WIDTH = 900;
 
@@ -70,6 +119,13 @@ function compact(v: unknown, max = 1500): string {
   return t == null ? "" : t.length > max ? `${t.slice(0, max)}… (${t.length} chars)` : t;
 }
 
+/** A tool result cut down to what the model is sent. */
+function clipResult(name: string, v: unknown): string {
+  const t = (typeof v === "string" ? v : JSON.stringify(v)) ?? "";
+  if (t.length <= MAX_RESULT_CHARS) return t;
+  return `${t.slice(0, MAX_RESULT_CHARS)}\n[cut: ${t.length - MAX_RESULT_CHARS} more characters. Call ${name} again with a limit, a filter or a narrower argument if you need the rest.]`;
+}
+
 /** One tool call as the panel shows it. */
 export interface ToolTurn {
   kind: "tool";
@@ -102,16 +158,20 @@ function explainError(e: unknown, providerLabel: string): string {
   // Match on everything the error carries: the status and body live in `cause`.
   const t = describeError(e).toLowerCase();
 
-  if (t.includes("credit balance is too low") || t.includes("insufficient_quota") || t.includes("exceeded your current quota") || t.includes("402")) {
+  // Match the status line describeError emits, not a bare number: a tool result
+  // or a model id containing "402" is not a billing failure.
+  const status = (code: number) => t.includes(`statuscode: ${code}`) || t.includes(`"status":${code}`);
+
+  if (t.includes("credit balance is too low") || t.includes("insufficient_quota") || t.includes("exceeded your current quota") || status(402)) {
     return `${providerLabel} rejected the request for billing: the account is out of credit. Top it up, then try again.`;
   }
-  if (t.includes("401") || t.includes("authentication_error") || t.includes("invalid api key") || t.includes("invalid_api_key")) {
+  if (status(401) || t.includes("authentication_error") || t.includes("invalid api key") || t.includes("invalid_api_key")) {
     return `${providerLabel} rejected the key. Check it in provider settings.`;
   }
-  if (t.includes("429") || t.includes("rate_limit")) {
+  if (status(429) || t.includes("rate_limit")) {
     return `${providerLabel} is rate limiting this key. Wait a moment and try again.`;
   }
-  if (t.includes("model is unavailable") || t.includes("model_not_found") || t.includes("not_found_error") || t.includes("does not exist") || t.includes("statuscode: 404")) {
+  if (t.includes("model is unavailable") || t.includes("model_not_found") || t.includes("not_found_error") || t.includes("does not exist") || status(404)) {
     return `${providerLabel} cannot serve this model. Pick another in the model list.`;
   }
   if (t.includes("fetch failed") || t.includes("connection") || t.includes("econnrefused")) {
@@ -146,6 +206,14 @@ class ChatStore {
   width = $state(400);
   /** Skip the approval prompt for the rest of this conversation. */
   allowWrites = $state(false);
+  /** Tools approved for the rest of this conversation, by name. */
+  allowedTools = $state<string[]>([]);
+  /** ask reads only, build writes with approval, try writes freely inside a checkpoint. */
+  mode = $state<Mode>("build");
+  /** The open Try experiment, if any. Outlives a single message. */
+  experiment = $state<Experiment | null>(null);
+  /** Set when Undo would also discard something the user did by hand. */
+  undoWarning = $state<string | null>(null);
   /** Tool names, for the `/` menu. */
   toolNames = $state<ToolDef[]>([]);
   /** Dev hook: transcript file written when a run ends (POB_REDUX_CHAT_LOG). */
@@ -168,6 +236,10 @@ class ChatStore {
   private lastRequestAt = 0;
 
   private defs: ToolDef[] = [];
+  /** Tool names loaded beyond CORE, added by find_tools and kept for the conversation. */
+  private active = new Set<string>();
+  /** Tool rounds elided to stay inside the context window. */
+  private elided = 0;
   private history: ModelMessage[] = [];
   private abort: AbortController | null = null;
   private pending = new Map<string, (ok: boolean) => void>();
@@ -195,6 +267,8 @@ class ChatStore {
       if (typeof saved.provider === "string") this.provider = saved.provider;
       if (typeof saved.model === "string") this.model = saved.model;
       if (typeof saved.effort === "string") this.effort = saved.effort;
+      // An experiment does not survive a restart, so Try would have no undo.
+      if (saved.mode === "ask" || saved.mode === "build") this.mode = saved.mode;
       if (typeof saved.open === "boolean") this.open = saved.open;
       if (Number.isFinite(saved.width)) this.width = clampWidth(saved.width);
     } catch {}
@@ -240,12 +314,12 @@ class ChatStore {
       this.warm = "priming";
       this.warmNote = "priming the prompt";
       if (!this.defs.length) this.defs = await loadToolDefs();
-      const instructions = (await invoke<string>("ai_instructions").catch(() => "")) + STYLE;
+      const instructions = (await invoke<string>("ai_instructions").catch(() => "")) + STYLE + MODE_PROMPT[this.mode];
       // The same request shape as a real turn, one token long, so the cached
       // prefix matches what the first question will send.
       const result = streamText({
         model: this.buildModel("open-ai-compatible"),
-        tools: toToolSet(this.defs),
+        tools: toToolSet(this.activeDefs()),
         maxOutputTokens: 1,
         instructions: { role: "system", content: instructions },
         messages: [{ role: "user", content: "Ready?" }],
@@ -283,6 +357,7 @@ class ChatStore {
           provider: this.provider,
           model: this.model,
           effort: this.effort,
+          mode: this.mode,
           open: this.open,
           width: this.width,
         }),
@@ -304,6 +379,84 @@ class ChatStore {
   setEffort(e: Effort) {
     this.effort = e;
     this.persist();
+  }
+
+  /**
+   * Switching into Try opens an experiment. Switching out of it leaves the
+   * changes in place and stops tracking them: discarding someone's work
+   * because they changed a dropdown would be the wrong default.
+   */
+  async setMode(m: Mode) {
+    if (m === this.mode) return;
+    const leavingTry = this.mode === "try" && this.experiment;
+    this.mode = m;
+    this.persist();
+    if (m === "try") {
+      await this.startExperiment();
+    } else if (leavingTry) {
+      this.experiment = null;
+      this.undoWarning = null;
+      this.notice = "Experiment closed and the changes kept. Switch back to Try to start a new one.";
+    }
+  }
+
+  private async readStats(): Promise<Record<string, number>> {
+    try {
+      const out = (await callTool("get_stats", { fields: TRY_STATS.map(([k]) => k) })) as {
+        stats?: Record<string, number>;
+      };
+      return out?.stats ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Open a Try experiment if the mode calls for one and none is open. */
+  async openExperiment() {
+    await this.startExperiment();
+  }
+
+  private async startExperiment() {
+    if (!build.loaded || this.experiment) return;
+    const label = `try-${Date.now().toString(36)}`;
+    try {
+      await callTool("checkpoint", { label });
+    } catch (e) {
+      this.notice = `Could not checkpoint the build, so Try has no undo: ${String(e)}`;
+      return;
+    }
+    const before = await this.readStats();
+    this.experiment = { label, before, now: { ...before }, editsAt: build.userEdits };
+    this.undoWarning = null;
+  }
+
+  /** Keep the experiment's changes and stop tracking them. */
+  keepExperiment() {
+    this.experiment = null;
+    this.undoWarning = null;
+  }
+
+  /**
+   * Roll the build back to the checkpoint. Asks twice when the user has edited
+   * the build themselves since, because the checkpoint is build-wide and their
+   * change would go with it.
+   */
+  async undoExperiment(confirmed = false) {
+    const e = this.experiment;
+    if (!e || this.busy) return;
+    if (!confirmed && build.userEdits > e.editsAt) {
+      const n = build.userEdits - e.editsAt;
+      this.undoWarning = `You changed the build ${n === 1 ? "once" : `${n} times`} since this started. Undo restores the checkpoint, so those changes go too.`;
+      return;
+    }
+    this.undoWarning = null;
+    try {
+      await callTool("rollback", { label: e.label });
+      this.experiment = null;
+      this.notice = "Rolled back to the checkpoint.";
+    } catch (err) {
+      this.notice = `Could not roll back: ${String(err)}`;
+    }
   }
 
   /** Live update while dragging; `commit` writes it to storage on release. */
@@ -352,8 +505,12 @@ class ChatStore {
     this.turns = this.turns.map((t) => (t.kind === "tool" && t.id === id ? { ...t, ...patch } : t));
   }
 
-  /** Answer a pending approval chip. */
-  resolveApproval(id: string, ok: boolean) {
+  /** Answer a pending approval chip. `always` covers that tool for the rest of the conversation. */
+  resolveApproval(id: string, ok: boolean, always = false) {
+    const turn = this.turns.find((t) => t.kind === "tool" && t.id === id) as ToolTurn | undefined;
+    if (ok && always && turn && !this.allowedTools.includes(turn.name)) {
+      this.allowedTools = [...this.allowedTools, turn.name];
+    }
     const fn = this.pending.get(id);
     if (fn) {
       this.pending.delete(id);
@@ -362,7 +519,11 @@ class ChatStore {
   }
 
   private approve(turn: ToolTurn): Promise<boolean> {
-    if (turn.readOnly || this.allowWrites) return Promise.resolve(true);
+    // Try auto-approves: everything the panel can reach is inside the
+    // checkpoint, so Undo covers it.
+    if (turn.readOnly || this.allowWrites || this.mode === "try" || this.allowedTools.includes(turn.name)) {
+      return Promise.resolve(true);
+    }
     return new Promise((resolve) => this.pending.set(turn.id, resolve));
   }
 
@@ -370,10 +531,17 @@ class ChatStore {
     this.stop();
     this.turns = [];
     this.history = [];
+    this.active.clear();
+    this.elided = 0;
     this.error = null;
     this.notice = null;
     this.usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     this.allowWrites = false;
+    this.allowedTools = [];
+    // The build keeps whatever the experiment did; a new conversation only
+    // stops tracking it.
+    this.experiment = null;
+    this.undoWarning = null;
   }
 
   stop() {
@@ -410,6 +578,8 @@ class ChatStore {
     // A send during warm-up waits for it; the composer button is disabled
     // meanwhile, but a boot-time message must not be lost.
     if (this.warming) await this.warming;
+    // Try was selected before a build was open, or the checkpoint failed.
+    if (this.mode === "try" && !this.experiment) await this.startExperiment();
     this.input = "";
     this.error = null;
     this.notice = null;
@@ -499,6 +669,45 @@ class ChatStore {
    * already keeps tools, system prompt and history in a stable, append-only
    * order, which is all they need. The other providers ignore the option.
    */
+  /** The tool definitions loaded for this step. */
+  private activeDefs(): ToolDef[] {
+    const loaded = this.defs.filter((d) => CORE.has(d.name) || this.active.has(d.name));
+    const forMode = this.mode === "ask" ? loaded.filter((d) => d.read_only) : loaded;
+    return [FIND_TOOLS_DEF, ...forMode];
+  }
+
+  /**
+   * Drop the bodies of old tool results once the conversation outgrows the
+   * budget, keeping the most recent rounds whole. The panel still shows every
+   * result; this is only what the model carries forward.
+   *
+   * Eliding invalidates the cached prefix from that point on, which is the
+   * trade being made: one cache write against staying inside the window.
+   */
+  private compactHistory() {
+    const size = () => this.history.reduce((n, m) => n + JSON.stringify(m.content ?? "").length, 0);
+    if (size() < MAX_HISTORY_CHARS) return;
+    const toolRounds = this.history.flatMap((m, i) => (m.role === "tool" ? [i] : []));
+    const cutoff = toolRounds[Math.max(0, toolRounds.length - KEEP_RESULTS)] ?? 0;
+    for (let i = 0; i < cutoff; i++) {
+      const m = this.history[i];
+      if (m.role !== "tool" || !Array.isArray(m.content)) continue;
+      m.content = m.content.map((part) => {
+        if (part.type !== "tool-result" || part.output?.type !== "text") return part;
+        const text = part.output.value;
+        if (text.length < 200) return part;
+        this.elided++;
+        return {
+          ...part,
+          output: {
+            type: "text",
+            value: `[dropped to save context: ${part.toolName}, ${text.length} characters. Call it again if you still need it.]`,
+          },
+        } as ToolResultPart;
+      });
+    }
+  }
+
   private markCacheBreakpoint() {
     const mark = { anthropic: { cacheControl: CACHE } };
     for (let i = 0; i < this.history.length; i++) {
@@ -513,12 +722,11 @@ class ChatStore {
     this.abort = new AbortController();
     try {
       if (!this.defs.length) this.defs = await loadToolDefs();
-      const tools = toToolSet(this.defs);
       const readOnly = new Map(this.defs.map((d) => [d.name, d.read_only]));
       const kind = this.current?.kind ?? "anthropic";
       const model = this.buildModel(kind);
       const providerOptions = this.supportsEffort ? effortOptions(kind, this.effort) : undefined;
-      const instructions = (await invoke<string>("ai_instructions").catch(() => "")) + STYLE;
+      const instructions = (await invoke<string>("ai_instructions").catch(() => "")) + STYLE + MODE_PROMPT[this.mode];
       // Set when the model itself ends the turn, so exhausting the step budget
       // can be told apart from finishing.
       let done = false;
@@ -531,12 +739,13 @@ class ChatStore {
       let nudged = false;
 
       for (let step = 0; step < MAX_STEPS; step++) {
+        this.compactHistory();
         this.markCacheBreakpoint();
         const result = streamText({
           model,
           abortSignal: this.abort.signal,
           stopWhen: isStepCount(1),
-          tools,
+          tools: toToolSet(this.activeDefs()),
           providerOptions,
           // v7 takes the system prompt here, not as a message. Marked cacheable:
           // this plus the tool block dominates the prompt and repeats every turn.
@@ -611,6 +820,23 @@ class ChatStore {
           };
           this.turns = [...this.turns, turn];
 
+          if (call.toolName === FIND_TOOLS) {
+            const query = String((call.input as { query?: unknown })?.query ?? "");
+            const found = findTools(this.defs, query, 8, this.mode === "ask");
+            for (const d of found) this.active.add(d.name);
+            const value = found.length
+              ? { loaded: found.map((d) => ({ name: d.name, description: d.description, writes: !d.read_only })) }
+              : { loaded: [], note: "Nothing matched. Try a different word, or work with the tools you have." };
+            this.patchTool(turn.id, { result: value, status: "done" });
+            outputs.push({
+              type: "tool-result",
+              toolName: call.toolName,
+              toolCallId: call.toolCallId,
+              output: { type: "text", value: JSON.stringify(value) },
+            });
+            continue;
+          }
+
           const key = `${call.toolName}:${JSON.stringify(call.input ?? {})}`;
           if (turn.readOnly) {
             const n = (seen.get(key) ?? 0) + 1;
@@ -646,11 +872,17 @@ class ChatStore {
           try {
             const value = await callTool(call.toolName, call.input);
             this.patchTool(turn.id, { result: value, status: "done" });
+            // Every write returns absolute headline stats, so the strip stays
+            // correct against the checkpoint without another round trip.
+            const stats = (value as { stats?: Record<string, number> })?.stats;
+            if (this.experiment && stats) {
+              this.experiment = { ...this.experiment, now: { ...this.experiment.now, ...stats } };
+            }
             outputs.push({
               type: "tool-result",
               toolName: call.toolName,
               toolCallId: call.toolCallId,
-              output: { type: "text", value: JSON.stringify(value) },
+              output: { type: "text", value: clipResult(call.toolName, value) },
             });
           } catch (e) {
             this.patchTool(turn.id, { error: String(e), status: "error" });
@@ -701,10 +933,13 @@ class ChatStore {
       provider: this.provider,
       model: this.model,
       effort: this.supportsEffort ? this.effort : undefined,
+      mode: this.mode,
       error: this.error,
       errorDetail: this.lastErrorDetail || undefined,
       notice: this.notice,
       usage: this.usage,
+      tools: this.activeDefs().length,
+      elided: this.elided || undefined,
       turns,
     };
   }
