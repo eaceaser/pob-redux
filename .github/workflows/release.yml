@@ -1,12 +1,9 @@
 name: release
 
-# Tag-driven. `git tag v0.2.0 && git push --tags` builds both platforms, signs
-# the updater artifacts, and publishes a GitHub Release containing latest.json.
-#
-# While the repo is private the release assets need auth to download, so the
-# in-app updater cannot reach them yet and installs are manual. Nothing here has
-# to change when that flips — making the repo public (or pointing the endpoint
-# in tauri.conf.json at another host) is enough.
+# Tag-driven. `git tag vX.Y.Z && git push --tags` builds both platforms, signs
+# the updater artifacts, and creates a draft GitHub Release containing
+# latest.json. Publish the draft to make the update available: the in-app
+# updater reads the latest release's latest.json from the public repo.
 on:
   push:
     tags: ["v*"]
