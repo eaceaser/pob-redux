@@ -3388,6 +3388,7 @@ dependencies = [
  "clap",
  "image",
  "image_dds",
+ "mlua",
  "serde",
  "serde_json",
  "toml 0.8.2",

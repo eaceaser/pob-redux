@@ -1,6 +1,7 @@
 # PoB Redux
 
-A modern Path of Building UI for Path of Exile 2, powered by the community fork.
+A modern Path of Building UI for Path of Exile 1 and 2, powered by the community projects. Pick a game
+on first start and switch any time from the title bar; each game runs its own Path of Building.
 
 ![PoB Redux showing the passive tree of a Mercenary build](.github/screenshot.png)
 
@@ -9,8 +10,8 @@ A modern Path of Building UI for Path of Exile 2, powered by the community fork.
 Get `PoB Redux_<version>_x64-setup.exe` from the [Releases](../../releases) page and run it. It
 installs for the current user only, and fetches the WebView2 runtime if Windows does not have it.
 
-Your builds stay where Path of Building keeps them, in `Documents/Path of Building (PoE2)/Builds`, so
-both apps can open the same files.
+Your builds stay where Path of Building keeps them, in `Documents/Path of Building (PoE2)/Builds` and
+`Documents/Path of Building/Builds`, so both apps can open the same files.
 
 Windows is the current target. CI also builds Linux packages, but nobody has tested them yet.
 
@@ -21,7 +22,9 @@ items, calcs, config, notes, party and builds. The calculations are Path of Buil
 Lua code, run headless, so the numbers match.
 
 Builds import from share codes, PoB XML, GGG's `.build` planner files, and links from pobb.in,
-Maxroll, Mobalytics, poe.ninja, poe2db.tw, Pastebin and Rentry.
+Maxroll, Mobalytics, poe.ninja, poe2db.tw, poedb.tw, Pastebin and Rentry. A build from the other game
+switches the app to it. The assistant, the MCP server and the Build Planner import are PoE2 features
+for now.
 
 Three things are new.
 
@@ -78,7 +81,9 @@ Keep the numbers PoB's own. Do not reimplement calculations in Rust or TypeScrip
 PoB Redux is a shell. The hard part, the calculations, belongs to other people.
 
 - **[Path of Building Community](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2)**
-  maintains the Path of Exile 2 fork whose Lua code and game data this app runs and bundles. Every
+  maintains the Path of Exile 2 fork and the
+  [Path of Exile 1 project](https://github.com/PathOfBuildingCommunity/PathOfBuilding) whose Lua code
+  and game data this app runs and bundles, one per game. Every
   number PoB Redux shows comes from their work.
 
 Built with [LuaJIT](https://luajit.org) through [mlua](https://github.com/mlua-rs/mlua),

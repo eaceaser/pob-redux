@@ -1,8 +1,10 @@
-//! Vendors the parts of a PathOfBuilding-PoE2 checkout that the headless
-//! engine needs into `src-tauri/resources/pob`, mirroring the file set of an
-//! installed PoB release (see upstream `manifest.cfg`).
+//! Vendors the parts of a Path of Building checkout that the headless
+//! engine needs into `src-tauri/resources/<pob|pob1>`, mirroring the file set
+//! of an installed PoB release (see upstream `manifest.cfg`). One checkout per
+//! game: `--game poe2` (the default) takes the PathOfBuilding-PoE2 fork,
+//! `--game poe1` the PathOfBuilding repository.
 //!
-//!   cargo run -p pob-sync -- [--source <checkout>] [--dest <dir>] [--clean] [--tree-assets]
+//!   cargo run -p pob-sync -- [--game poe1|poe2] [--source <checkout>] [--dest <dir>] [--clean] [--tree-assets]
 
 use std::collections::HashSet;
 use std::fs;
@@ -16,20 +18,53 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 mod assets;
+mod lua_json;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
+enum Game {
+    Poe1,
+    Poe2,
+}
+
+impl Game {
+    fn id(self) -> &'static str {
+        match self {
+            Game::Poe1 => "poe1",
+            Game::Poe2 => "poe2",
+        }
+    }
+    /// Resource directory under `src-tauri/resources`; PoE2 keeps the original name.
+    fn dest_name(self) -> &'static str {
+        match self {
+            Game::Poe1 => "pob1",
+            Game::Poe2 => "pob",
+        }
+    }
+    fn repo_name(self) -> &'static str {
+        match self {
+            Game::Poe1 => "PathOfBuilding",
+            Game::Poe2 => "PathOfBuilding-PoE2",
+        }
+    }
+}
 
 #[derive(Parser)]
-#[command(name = "pob-sync", about = "Vendor Path of Building (PoE2) into app resources")]
+#[command(name = "pob-sync", about = "Vendor Path of Building (PoE1 or PoE2) into app resources")]
 struct Cli {
-    /// PathOfBuilding-PoE2 checkout root. Defaults to `source_path` in pob-sync.toml.
+    /// Which game's Path of Building to vendor.
+    #[arg(long, value_enum, default_value = "poe2")]
+    game: Game,
+    /// Checkout root. Defaults to the game's `source_path` in pob-sync.toml.
     #[arg(long, env = "POB_SOURCE")]
     source: Option<PathBuf>,
-    /// Output directory. Defaults to <workspace>/src-tauri/resources/pob.
+    /// Output directory. Defaults to <workspace>/src-tauri/resources/pob (PoE2) or pob1 (PoE1).
     #[arg(long)]
     dest: Option<PathBuf>,
     /// Delete the destination first.
     #[arg(long)]
     clean: bool,
-    /// Decode the latest tree's sprite sheets into WebP (TreeData/<ver>/web/).
+    /// Build the latest tree's sprite manifest (TreeData/<ver>/web/): decoded
+    /// DDS sheets for PoE2, the shipped PNG/JPG/WebP sheets for PoE1.
     #[arg(long)]
     tree_assets: bool,
     /// Proceed even if the checkout's HEAD differs from the pinned commit.
@@ -40,14 +75,36 @@ struct Cli {
     inspect_assets: bool,
 }
 
-#[derive(Deserialize, Default)]
-struct SyncToml {
+#[derive(Deserialize, Default, Clone)]
+struct GameToml {
     source_path: Option<String>,
     commit: Option<String>,
 }
 
+/// `[poe1]` and `[poe2]` tables; bare `source_path`/`commit` keys are the PoE2 profile.
+#[derive(Deserialize, Default)]
+struct SyncToml {
+    source_path: Option<String>,
+    commit: Option<String>,
+    poe1: Option<GameToml>,
+    poe2: Option<GameToml>,
+}
+
+impl SyncToml {
+    fn profile(&self, game: Game) -> GameToml {
+        match game {
+            Game::Poe1 => self.poe1.clone().unwrap_or_default(),
+            Game::Poe2 => self
+                .poe2
+                .clone()
+                .unwrap_or_else(|| GameToml { source_path: self.source_path.clone(), commit: self.commit.clone() }),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct SyncInfo {
+    game: String,
     upstream_commit: String,
     upstream_commit_date: String,
     upstream_version: String,
@@ -71,6 +128,7 @@ const ROOT_FILES: &[&str] = &["changelog.txt", "LICENSE.md", "help.txt"];
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let game = cli.game;
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
@@ -80,14 +138,15 @@ fn main() -> Result<()> {
         .ok()
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default();
+    let profile = toml_cfg.profile(game);
 
     let source = match cli.source {
         Some(s) => s,
         None => {
-            let rel = toml_cfg
+            let rel = profile
                 .source_path
                 .as_deref()
-                .context("no --source given and pob-sync.toml has no source_path")?;
+                .with_context(|| format!("no --source given and pob-sync.toml has no source_path for {}", game.id()))?;
             workspace.join(rel)
         }
     };
@@ -96,11 +155,11 @@ fn main() -> Result<()> {
         .with_context(|| format!("source {} not found", source.display()))?;
     let src = source.join("src");
     if !src.join("Launch.lua").is_file() {
-        bail!("{} does not look like a PathOfBuilding-PoE2 checkout (no src/Launch.lua)", source.display());
+        bail!("{} does not look like a {} checkout (no src/Launch.lua)", source.display(), game.repo_name());
     }
     let dest = cli
         .dest
-        .unwrap_or_else(|| workspace.join("src-tauri/resources/pob"));
+        .unwrap_or_else(|| workspace.join("src-tauri/resources").join(game.dest_name()));
 
     if cli.inspect_assets {
         let tree_root = src.join("TreeData");
@@ -110,7 +169,7 @@ fn main() -> Result<()> {
 
     let head = git(&source, &["rev-parse", "HEAD"]).unwrap_or_else(|_| "unknown".into());
     let head_date = git(&source, &["log", "-1", "--format=%cI"]).unwrap_or_default();
-    if let Some(pinned) = &toml_cfg.commit {
+    if let Some(pinned) = &profile.commit {
         if pinned != &head {
             let msg = format!("checkout HEAD {head} differs from pinned commit {pinned}");
             if cli.allow_commit_mismatch {
@@ -130,7 +189,10 @@ fn main() -> Result<()> {
     let mut wanted: HashSet<PathBuf> = HashSet::new();
     let mut stats = (0usize, 0u64);
 
-    // Program files (src/ minus exclusions).
+    // Program files (src/ minus exclusions). PoE1's timeless jewel archives
+    // (170 MB of .zip.part files) ship as upstream does: PoB inflates them on
+    // first use and caches the result next to them, which the host redirects
+    // to the user's cache directory.
     for entry in WalkDir::new(&src).into_iter().filter_entry(|e| {
         if e.depth() == 1 && e.file_type().is_dir() {
             let name = e.file_name().to_string_lossy();
@@ -151,9 +213,11 @@ fn main() -> Result<()> {
         wanted.insert(rel);
     }
 
-    // Tree data: Lua tables for the engine, JSON for the renderer.
+    // Tree data: Lua tables for the engine, JSON for the renderer. PoE1 ships
+    // no tree.json, so one is generated from tree.lua per version.
     let tree_root = src.join("TreeData");
     let latest = latest_tree_version(&tree_root);
+    let mut generated = 0usize;
     for entry in WalkDir::new(&tree_root) {
         let entry = entry?;
         if !entry.file_type().is_file() {
@@ -165,14 +229,32 @@ fn main() -> Result<()> {
         let keep = name.ends_with(".lua") || name == "tree.json";
         if keep {
             copy_one(entry.path(), &dest.join(&rel), &mut stats)?;
-            wanted.insert(rel);
+            wanted.insert(rel.clone());
+        }
+        if name == "tree.lua" && !entry.path().with_file_name("tree.json").is_file() {
+            let out_rel = rel.with_file_name("tree.json");
+            let out = dest.join(&out_rel);
+            if !up_to_date(entry.path(), &out) {
+                let json = lua_json::eval_file(entry.path())?;
+                fs::write(&out, serde_json::to_vec(&json)?)?;
+                stats.0 += 1;
+                stats.1 += fs::metadata(&out)?.len();
+                generated += 1;
+            }
+            wanted.insert(out_rel);
         }
     }
 
     let web_rel = latest.as_ref().map(|v| Path::new("TreeData").join(v).join("web"));
     if cli.tree_assets {
         let latest = latest.as_ref().context("no TreeData/<major>_<minor> directory found")?;
-        let a = assets::build(&tree_root.join(latest), &dest.join("TreeData").join(latest), latest)?;
+        let src_tree = tree_root.join(latest);
+        let dest_tree = dest.join("TreeData").join(latest);
+        let a = if src_tree.join("sprites.lua").is_file() {
+            assets::build_sprites(&src_tree, &dest_tree, latest)?
+        } else {
+            assets::build(&src_tree, &dest_tree, latest)?
+        };
         println!(
             "tree assets: {} sheets, {} layers -> {} files, {:.1} MB",
             a.sheets,
@@ -221,10 +303,11 @@ fn main() -> Result<()> {
     wanted.insert(PathBuf::from("manifest.xml"));
 
     let info = SyncInfo {
+        game: game.id().to_string(),
         upstream_commit: head.clone(),
         upstream_commit_date: head_date,
         upstream_version: version.clone(),
-        pinned_commit: toml_cfg.commit.clone(),
+        pinned_commit: profile.commit.clone(),
         synced_at_unix: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         files: stats.0,
         bytes: stats.1,
@@ -254,7 +337,8 @@ fn main() -> Result<()> {
     }
 
     println!(
-        "synced PoB {version} @ {} -> {}\n  {} files, {:.1} MB copied, {} stale removed",
+        "synced PoB {version} ({}) @ {} -> {}\n  {} files, {:.1} MB copied ({generated} tree.json generated), {} stale removed",
+        game.id(),
         &head[..head.len().min(10)],
         dest.display(),
         stats.0,
@@ -262,6 +346,18 @@ fn main() -> Result<()> {
         removed
     );
     Ok(())
+}
+
+/// True when `to` exists, is not empty, and is not older than `from`.
+fn up_to_date(from: &Path, to: &Path) -> bool {
+    let (Ok(src_md), Ok(dst_md)) = (fs::metadata(from), fs::metadata(to)) else { return false };
+    if dst_md.len() == 0 {
+        return false;
+    }
+    match (src_md.modified(), dst_md.modified()) {
+        (Ok(s), Ok(d)) => s <= d,
+        _ => false,
+    }
 }
 
 fn copy_one(from: &Path, to: &Path, stats: &mut (usize, u64)) -> Result<()> {
@@ -301,13 +397,14 @@ fn read_version(manifest: &Path) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
-/// Highest "<major>_<minor>" directory under TreeData.
+/// Highest "<major>_<minor>" directory under TreeData. Variant trees
+/// ("3_29_ruthless") are skipped: they are not the live game's tree.
 fn latest_tree_version(tree_root: &Path) -> Option<String> {
     let mut best: Option<((u32, u32), String)> = None;
     for e in fs::read_dir(tree_root).ok()?.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         let mut parts = name.split('_');
-        if let (Some(a), Some(b)) = (parts.next(), parts.next()) {
+        if let (Some(a), Some(b), None) = (parts.next(), parts.next(), parts.next()) {
             if let (Ok(a), Ok(b)) = (a.parse::<u32>(), b.parse::<u32>()) {
                 if best.as_ref().map(|(k, _)| (a, b) > *k).unwrap_or(true) {
                     best = Some(((a, b), name.clone()));

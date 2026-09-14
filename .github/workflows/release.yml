@@ -35,19 +35,24 @@ jobs:
           # shallow clone carries neither history nor tags.
           fetch-depth: 0
 
-      - name: Read pinned PoB commit
+      - name: Read pinned PoB commits
         id: pin
         shell: bash
-        run: echo "commit=$(grep '^commit' pob-sync.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+        run: |
+          pin() { awk -v s="[$1]" '$0 == s {f=1; next} /^\[/ {f=0} f && /^commit/' pob-sync.toml | cut -d'"' -f2; }
+          echo "commit=$(pin poe2)" >> "$GITHUB_OUTPUT"
+          echo "commit1=$(pin poe1)" >> "$GITHUB_OUTPUT"
 
-      # Same cache as build.yml, so a tag usually reuses the vendored tree that
-      # main already produced for this pinned commit.
+      # Same cache as check.yml, so a tag usually reuses the vendored trees
+      # that main already produced for these pinned commits.
       - name: Cache vendored Path of Building
         id: pob
         uses: actions/cache@v6
         with:
-          path: src-tauri/resources/pob
-          key: pob-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('crates/pob-sync/**/*.rs', 'crates/pob-sync/Cargo.toml', 'pob-sync.toml') }}
+          path: |
+            src-tauri/resources/pob
+            src-tauri/resources/pob1
+          key: pob-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ steps.pin.outputs.commit1 }}-${{ hashFiles('crates/pob-sync/**/*.rs', 'crates/pob-sync/Cargo.toml', 'pob-sync.toml') }}
 
       - name: Checkout PathOfBuilding-PoE2
         if: steps.pob.outputs.cache-hit != 'true'
@@ -56,6 +61,14 @@ jobs:
           repository: PathOfBuildingCommunity/PathOfBuilding-PoE2
           ref: ${{ steps.pin.outputs.commit }}
           path: upstream/PathOfBuilding-PoE2
+
+      - name: Checkout PathOfBuilding (PoE1)
+        if: steps.pob.outputs.cache-hit != 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: PathOfBuildingCommunity/PathOfBuilding
+          ref: ${{ steps.pin.outputs.commit1 }}
+          path: upstream/PathOfBuilding
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -96,7 +109,9 @@ jobs:
 
       - name: Vendor Path of Building
         if: steps.pob.outputs.cache-hit != 'true'
-        run: cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets
+        run: |
+          cargo run -p pob-sync -- --source upstream/PathOfBuilding-PoE2 --tree-assets
+          cargo run -p pob-sync -- --game poe1 --source upstream/PathOfBuilding --tree-assets
 
       # Builds, signs the updater artifacts with the minisign key, creates or
       # updates the release, and generates latest.json from the signatures.

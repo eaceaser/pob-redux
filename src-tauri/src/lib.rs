@@ -7,6 +7,7 @@ mod library;
 mod ai;
 mod sites;
 mod mobalytics;
+mod game;
 
 use std::sync::Arc;
 
@@ -17,12 +18,42 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{Manager, State};
 
-pub(crate) struct AppState {
+use game::Game;
+
+/// The engine and pool booted on one game's PoB. Replaced whole when the
+/// user switches game, so every clone taken before the switch keeps driving
+/// the engine it was taken from until it is dropped.
+pub(crate) struct Runtime {
+    pub(crate) game: Game,
     pub(crate) engine: EngineHandle,
     pub(crate) pool: Arc<EnginePool>,
-    pob_root: PathBuf,
+    pub(crate) pob_root: PathBuf,
+}
+
+pub(crate) struct AppState {
+    rt: std::sync::RwLock<Runtime>,
     pub(crate) user_dir: PathBuf,
     pub(crate) mcp: mcp::McpState,
+    /// True until a game has been chosen, inferred from a file, or set by env.
+    first_run: std::sync::atomic::AtomicBool,
+}
+
+impl AppState {
+    pub(crate) fn engine(&self) -> EngineHandle {
+        self.rt.read().unwrap().engine.clone()
+    }
+    pub(crate) fn pool(&self) -> Arc<EnginePool> {
+        self.rt.read().unwrap().pool.clone()
+    }
+    pub(crate) fn pob_root(&self) -> PathBuf {
+        self.rt.read().unwrap().pob_root.clone()
+    }
+    pub(crate) fn game(&self) -> Game {
+        self.rt.read().unwrap().game
+    }
+    pub(crate) fn builds_dir(&self) -> PathBuf {
+        builds_dir(&self.user_dir, self.game())
+    }
 }
 
 /// Worker engines for parallel scoring: half the cores, capped — each is a
@@ -37,7 +68,7 @@ fn pool_size() -> usize {
 
 #[tauri::command]
 fn pool_status(state: State<'_, AppState>) -> PoolStatus {
-    state.pool.status()
+    state.pool().status()
 }
 
 /// How long the pool must go unused before its workers are dropped.
@@ -53,7 +84,7 @@ const POOL_REAP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 /// process grows by a poolful on every scan cycle. `mi_collect` reclaims those
 /// segments. It runs a tick after the release because the threads wind down on
 /// their own time, and there is nothing to reclaim until they have.
-fn spawn_pool_reaper(pool: Arc<EnginePool>) {
+fn spawn_pool_reaper(app: tauri::AppHandle) {
     // libmimalloc-sys re-exports only the allocation entry points; the symbol
     // itself is in the static library mimalloc links.
     extern "C" {
@@ -69,7 +100,7 @@ fn spawn_pool_reaper(pool: Arc<EnginePool>) {
                 unsafe { mi_collect(true) };
                 log::info!("pool: reclaimed the released workers' heaps");
             }
-            collect_next = pool.shrink_if_idle(POOL_IDLE_RELEASE) > 0;
+            collect_next = app.state::<AppState>().pool().shrink_if_idle(POOL_IDLE_RELEASE) > 0;
         }
     });
 }
@@ -78,7 +109,7 @@ fn spawn_pool_reaper(pool: Arc<EnginePool>) {
 /// whatever its garbage collector does, so trimming alone does not get it back.
 #[tauri::command]
 async fn pool_release(state: State<'_, AppState>) -> Result<usize, String> {
-    let pool = state.pool.clone();
+    let pool = state.pool();
     tauri::async_runtime::spawn_blocking(move || pool.shrink_if_idle(POOL_IDLE_RELEASE))
         .await
         .map_err(|e| e.to_string())
@@ -88,8 +119,8 @@ async fn pool_release(state: State<'_, AppState>) -> Result<usize, String> {
 /// next parallel scan skips its sync. Fire-and-forget from the frontend.
 #[tauri::command]
 async fn pool_presync(state: State<'_, AppState>) -> Result<(), String> {
-    let engine = state.engine.clone();
-    let pool = state.pool.clone();
+    let engine = state.engine();
+    let pool = state.pool();
     if pool.status().ready < pool.size() {
         return Ok(());
     }
@@ -103,8 +134,8 @@ async fn pool_presync(state: State<'_, AppState>) -> Result<(), String> {
 /// and only freed memory goes back to the OS.
 #[tauri::command]
 async fn pool_trim(state: State<'_, AppState>) -> Result<(), String> {
-    let engine = state.engine.clone();
-    let pool = state.pool.clone();
+    let engine = state.engine();
+    let pool = state.pool();
     tauri::async_runtime::spawn_blocking(move || {
         pool.trim();
         engine.call("gc", Value::Null).map(|_| ()).map_err(|e| e.to_string())
@@ -121,8 +152,8 @@ async fn power_scan_parallel(
     stat: Option<String>,
     max_depth: Option<f64>,
 ) -> Result<CallResult, String> {
-    let engine = state.engine.clone();
-    let pool = state.pool.clone();
+    let engine = state.engine();
+    let pool = state.pool();
     tauri::async_runtime::spawn_blocking(move || {
         let t0 = std::time::Instant::now();
         let result = match pob_engine::pool::power_scan(&engine, &pool, stat.as_deref(), max_depth) {
@@ -146,8 +177,8 @@ async fn power_scan_parallel(
 /// sequential path in place.
 #[tauri::command]
 async fn gem_dps_parallel(state: State<'_, AppState>, group_index: u32) -> Result<CallResult, String> {
-    let engine = state.engine.clone();
-    let pool = state.pool.clone();
+    let engine = state.engine();
+    let pool = state.pool();
     tauri::async_runtime::spawn_blocking(move || {
         let t0 = std::time::Instant::now();
         let result = pob_engine::pool::gem_dps_fill(&engine, &pool, group_index).map_err(|e| e.to_string())?;
@@ -169,7 +200,7 @@ async fn engine_call(
     method: String,
     params: Option<Value>,
 ) -> Result<CallResult, String> {
-    let engine = state.engine.clone();
+    let engine = state.engine();
     let out = tauri::async_runtime::spawn_blocking(move || {
         engine.call(&method, params.unwrap_or(Value::Null))
     })
@@ -181,11 +212,12 @@ async fn engine_call(
 
 #[tauri::command]
 fn engine_status(state: State<'_, AppState>) -> EngineStatus {
-    state.engine.status()
+    state.engine().status()
 }
 
 #[derive(Serialize)]
 struct AppPaths {
+    game: Game,
     pob_root: String,
     user_dir: String,
     builds_dir: String,
@@ -220,13 +252,15 @@ fn open_on_start() -> Option<String> {
 
 #[tauri::command]
 fn app_paths(state: State<'_, AppState>) -> AppPaths {
-    let sync = std::fs::read_to_string(state.pob_root.join("SYNC.json"))
+    let pob_root = state.pob_root();
+    let sync = std::fs::read_to_string(pob_root.join("SYNC.json"))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
     AppPaths {
-        pob_root: state.pob_root.to_string_lossy().to_string(),
+        game: state.game(),
+        pob_root: pob_root.to_string_lossy().to_string(),
         user_dir: state.user_dir.to_string_lossy().to_string(),
-        builds_dir: builds_dir(&state.user_dir).to_string_lossy().to_string(),
+        builds_dir: state.builds_dir().to_string_lossy().to_string(),
         sync,
         open_on_start: open_on_start(),
         initial_view: std::env::var("POB_REDUX_VIEW").ok(),
@@ -240,8 +274,8 @@ fn app_paths(state: State<'_, AppState>) -> AppPaths {
     }
 }
 
-pub(crate) fn builds_dir(user_dir: &Path) -> PathBuf {
-    user_dir.join("Path of Building (PoE2)").join("Builds")
+pub(crate) fn builds_dir(user_dir: &Path, game: Game) -> PathBuf {
+    user_dir.join(game.user_subdir()).join("Builds")
 }
 
 #[tauri::command]
@@ -249,7 +283,7 @@ fn read_tree_json(state: State<'_, AppState>, version: String) -> Result<String,
     if !version.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err("invalid tree version".into());
     }
-    let path = state.pob_root.join("TreeData").join(&version).join("tree.json");
+    let path = state.pob_root().join("TreeData").join(&version).join("tree.json");
     std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -266,7 +300,7 @@ pub(crate) struct BuildEntry {
 
 #[tauri::command]
 fn list_builds(state: State<'_, AppState>) -> Result<Vec<BuildEntry>, String> {
-    scan_builds(&builds_dir(&state.user_dir))
+    scan_builds(&state.builds_dir())
 }
 
 pub(crate) fn scan_builds(root: &Path) -> Result<Vec<BuildEntry>, String> {
@@ -356,9 +390,10 @@ struct SharedLink {
 /// Upload a build code to a sharing site and return the link, as PoB's
 /// Import/Export tab does with its "Share" button.
 #[tauri::command]
-async fn share_build_code(site: String, code: String) -> Result<SharedLink, String> {
-    let target = sites::upload_target(&site).ok_or_else(|| {
-        format!("Unknown share site {site:?}. Sites: {}.", sites::UPLOAD_TARGETS.iter().map(|t| t.label).collect::<Vec<_>>().join(", "))
+async fn share_build_code(state: State<'_, AppState>, site: String, code: String) -> Result<SharedLink, String> {
+    let game = state.game();
+    let target = sites::upload_target(game, &site).ok_or_else(|| {
+        format!("Unknown share site {site:?}. Sites: {}.", sites::upload_targets(game).iter().map(|t| t.label).collect::<Vec<_>>().join(", "))
     })?;
     let code = code.trim();
     if code.is_empty() {
@@ -513,7 +548,7 @@ fn safe_folder(root: &Path, folder: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 fn rename_build(state: State<'_, AppState>, path: String, new_name: String) -> Result<String, String> {
     let src = PathBuf::from(&path);
-    ensure_in_builds(&builds_dir(&state.user_dir), &src)?;
+    ensure_in_builds(&state.builds_dir(), &src)?;
     let dst = src.with_file_name(format!("{}.xml", safe_name(&new_name)?));
     if dst.exists() {
         return Err(format!("{} already exists", dst.display()));
@@ -524,7 +559,7 @@ fn rename_build(state: State<'_, AppState>, path: String, new_name: String) -> R
 
 #[tauri::command]
 fn move_build(state: State<'_, AppState>, path: String, folder: String) -> Result<String, String> {
-    let root = builds_dir(&state.user_dir);
+    let root = state.builds_dir();
     let src = PathBuf::from(&path);
     ensure_in_builds(&root, &src)?;
     let dir = safe_folder(&root, &folder)?;
@@ -543,7 +578,7 @@ fn move_build(state: State<'_, AppState>, path: String, folder: String) -> Resul
 #[tauri::command]
 fn delete_build(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let src = PathBuf::from(&path);
-    ensure_in_builds(&builds_dir(&state.user_dir), &src)?;
+    ensure_in_builds(&state.builds_dir(), &src)?;
     if src.extension().and_then(|e| e.to_str()) != Some("xml") {
         return Err("only .xml builds can be deleted".into());
     }
@@ -552,13 +587,13 @@ fn delete_build(state: State<'_, AppState>, path: String) -> Result<(), String> 
 
 #[tauri::command]
 fn create_build_folder(state: State<'_, AppState>, folder: String) -> Result<(), String> {
-    let dir = safe_folder(&builds_dir(&state.user_dir), &folder)?;
+    let dir = safe_folder(&state.builds_dir(), &folder)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn list_build_folders(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let root = builds_dir(&state.user_dir);
+    let root = state.builds_dir();
     let mut out = Vec::new();
     if !root.is_dir() {
         return Ok(out);
@@ -778,21 +813,112 @@ async fn ai_call_tool(
         })
 }
 
-/// Locate the vendored PoB program: an explicit override, the bundled
+/// Locate a game's vendored PoB program: an explicit override, the bundled
 /// resources, or (dev builds) the pob-sync output next to this crate.
-fn find_pob_root(app: &tauri::AppHandle) -> Option<PathBuf> {
+fn find_pob_root(app: &tauri::AppHandle, game: Game) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(p) = std::env::var("POB_REDUX_POB_ROOT") {
+    if let Ok(p) = std::env::var(game.env_root()) {
         candidates.push(PathBuf::from(p));
     }
     if let Ok(res) = app.path().resource_dir() {
-        candidates.push(res.join("pob"));
-        candidates.push(res.join("resources").join("pob"));
+        candidates.push(res.join(game.resource_dir()));
+        candidates.push(res.join("resources").join(game.resource_dir()));
     }
     if cfg!(debug_assertions) {
-        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("resources").join("pob"));
+        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("resources").join(game.resource_dir()));
     }
     candidates.into_iter().find(|p| p.join("Launch.lua").is_file())
+}
+
+fn available_games(app: &tauri::AppHandle) -> Vec<Game> {
+    Game::ALL.into_iter().filter(|g| find_pob_root(app, *g).is_some()).collect()
+}
+
+/// The game to boot: `POB_REDUX_GAME`, then the build file given on the
+/// command line, then the saved choice. With none of those the app boots
+/// PoE2 and asks (`first_run`).
+fn startup_game(app: &tauri::AppHandle) -> (Game, bool) {
+    if let Some(g) = std::env::var("POB_REDUX_GAME").ok().and_then(|v| Game::from_id(&v)) {
+        return (g, false);
+    }
+    if let Some(g) = open_on_start().and_then(|p| Game::of_build_xml(&read_head(Path::new(&p), 4096))) {
+        return (g, false);
+    }
+    match game::load_settings(app).game {
+        Some(g) => (g, false),
+        None => (Game::Poe2, true),
+    }
+}
+
+/// Boot an engine, and an idle pool, on a game's PoB root.
+fn boot_runtime(app: &tauri::AppHandle, game: Game, user_dir: &Path) -> Runtime {
+    let pob_root = find_pob_root(app, game).unwrap_or_else(|| {
+        log::error!("no PoB program found for {}; run `cargo run -p pob-sync -- --game {}` first", game.id(), game.id());
+        PathBuf::from("resources").join(game.resource_dir())
+    });
+    log::info!("pob root: {}", pob_root.display());
+    let cfg = EngineConfig { pob_root: pob_root.clone(), user_dir: user_dir.to_path_buf() };
+    let engine = EngineHandle::spawn(cfg.clone());
+    // Workers boot on the first scan and are released again once the pool
+    // goes idle. Warming them here cost every session ~240 MB per worker for
+    // a feature most sessions never reach.
+    let pool = Arc::new(EnginePool::new(cfg, pool_size()));
+    Runtime { game, engine, pool, pob_root }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameStatus {
+    game: Game,
+    first_run: bool,
+    available: Vec<Game>,
+}
+
+fn game_status_of(app: &tauri::AppHandle, state: &AppState) -> GameStatus {
+    GameStatus {
+        game: state.game(),
+        first_run: state.first_run.load(std::sync::atomic::Ordering::Relaxed),
+        available: available_games(app),
+    }
+}
+
+#[tauri::command]
+fn game_status(app: tauri::AppHandle, state: State<'_, AppState>) -> GameStatus {
+    game_status_of(&app, &state)
+}
+
+/// Choose the game. A change swaps the engine and pool for ones booted on the
+/// other PoB; the caller polls `engine_status` until it is ready. The choice
+/// is saved for the next start.
+#[tauri::command]
+fn set_game(app: tauri::AppHandle, state: State<'_, AppState>, game: Game) -> Result<GameStatus, String> {
+    state.first_run.store(false, std::sync::atomic::Ordering::Relaxed);
+    game::save_settings(&app, &game::Settings { game: Some(game) })?;
+    if state.game() != game {
+        if find_pob_root(&app, game).is_none() {
+            return Err(format!("{} is not installed: run pob-sync --game {}", game.user_subdir(), game.id()));
+        }
+        if game == Game::Poe1 {
+            // The MCP server and the assistant are PoE2 features.
+            state.mcp.stop();
+        }
+        let fresh = boot_runtime(&app, game, &state.user_dir);
+        let old = std::mem::replace(&mut *state.rt.write().unwrap(), fresh);
+        old.pool.release();
+        old.engine.shutdown();
+    }
+    Ok(game_status_of(&app, &state))
+}
+
+/// Which game a build file belongs to, from its root element.
+#[tauri::command]
+fn build_file_game(path: String) -> Option<Game> {
+    Game::of_build_xml(&read_head(Path::new(&path), 4096))
+}
+
+#[tauri::command]
+fn build_xml_game(xml: String) -> Option<Game> {
+    Game::of_build_xml(&xml)
 }
 
 fn find_user_dir(app: &tauri::AppHandle) -> PathBuf {
@@ -845,7 +971,7 @@ fn serve_pob_asset(
     if rel.contains("..") {
         return respond(StatusCode::FORBIDDEN, Vec::new(), "text/plain");
     }
-    let path = state.pob_root.join(&rel);
+    let path = state.pob_root().join(&rel);
     let mime = match path.extension().and_then(|e| e.to_str()) {
         Some("png") => "image/png",
         Some("webp") => "image/webp",
@@ -873,24 +999,18 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let handle = app.handle();
-            let pob_root = find_pob_root(handle).unwrap_or_else(|| {
-                log::error!("no PoB program found; run `cargo run -p pob-sync` first");
-                PathBuf::from("resources/pob")
-            });
             let user_dir = find_user_dir(handle);
-            log::info!("pob root: {}", pob_root.display());
+            let (game, first_run) = startup_game(handle);
+            log::info!("game: {}", game.id());
             log::info!("user dir: {}", user_dir.display());
-            let cfg = EngineConfig {
-                pob_root: pob_root.clone(),
-                user_dir: user_dir.clone(),
-            };
-            let engine = EngineHandle::spawn(cfg.clone());
-            // Workers boot on the first scan and are released again once the
-            // pool goes idle. Warming them here cost every session ~240 MB per
-            // worker for a feature most sessions never reach.
-            let pool = Arc::new(EnginePool::new(cfg, pool_size()));
-            spawn_pool_reaper(pool.clone());
-            app.manage(AppState { engine, pool, pob_root, user_dir, mcp: mcp::McpState::new() });
+            let rt = boot_runtime(handle, game, &user_dir);
+            app.manage(AppState {
+                rt: std::sync::RwLock::new(rt),
+                user_dir,
+                mcp: mcp::McpState::new(),
+                first_run: std::sync::atomic::AtomicBool::new(first_run),
+            });
+            spawn_pool_reaper(app.handle().clone());
             app.manage(ai::AiState::new(&app.handle().clone()));
             // POB_REDUX_MCP=<port> brings the MCP server up at launch (scripts, tests)
             if let Some(port) = std::env::var("POB_REDUX_MCP").ok().and_then(|v| v.parse::<u16>().ok()) {
@@ -914,6 +1034,10 @@ pub fn run() {
             power_scan_parallel,
             gem_dps_parallel,
             app_paths,
+            game_status,
+            set_game,
+            build_file_game,
+            build_xml_game,
             read_tree_json,
             list_builds,
             list_game_builds,

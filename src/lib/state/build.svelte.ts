@@ -2,6 +2,8 @@ import {
   engine,
   poolPresync,
   poolTrim,
+  buildFileGame,
+  buildXmlGame,
   EngineError,
   type BuildInfo,
   type ClassInfo,
@@ -11,8 +13,14 @@ import {
   type TreeClickResult,
   type TreeState,
 } from "$lib/engine.svelte";
+import { game } from "$lib/state/game.svelte";
 
 const AUTOSAVE_KEY = "pob-redux:autosave";
+
+/** One snapshot per game; PoE2 keeps the key from before there were two. */
+export function autosaveKey() {
+  return game.isPoe2 ? AUTOSAVE_KEY : `${AUTOSAVE_KEY}:${game.current}`;
+}
 
 export type ViewId = "tree" | "skills" | "items" | "calcs" | "config" | "notes" | "party" | "optimise" | "import";
 
@@ -107,7 +115,7 @@ class BuildStore {
       if (xml === this.lastAutosave) return;
       this.lastAutosave = xml;
       localStorage.setItem(
-        AUTOSAVE_KEY,
+        autosaveKey(),
         JSON.stringify({ name: this.info.name, file: this.info.file ?? null, at: Date.now(), xml }),
       );
     } catch {
@@ -123,7 +131,7 @@ class BuildStore {
   async reopenLast(): Promise<boolean> {
     let saved: { name?: string; file?: string | null; xml?: string } | null = null;
     try {
-      saved = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) ?? "null");
+      saved = JSON.parse(localStorage.getItem(autosaveKey()) ?? "null");
     } catch {}
     if (!saved?.xml) return false;
     try {
@@ -167,6 +175,30 @@ class BuildStore {
     this.error = null;
   }
 
+  /** Forget the engine's state: the engine is being replaced (game switch). */
+  reset() {
+    clearTimeout(this.autosaveTimer);
+    clearTimeout(this.presyncTimer);
+    clearTimeout(this.trimTimer);
+    this.info = null;
+    this.sidebar = null;
+    this.tree = null;
+    this.skills = null;
+    this.specs = [];
+    this.classes = [];
+    this.meta = null;
+    this.error = null;
+    this.lastAutosave = "";
+    this.view = "import";
+  }
+
+  /** A build from the other game switches to it first; false if the user declined. */
+  private async ensureGameFor(sniff: () => Promise<"poe1" | "poe2" | null>): Promise<boolean> {
+    const g = await sniff().catch(() => null);
+    if (!g || g === game.current) return true;
+    return game.choose(g);
+  }
+
   newBuild(name?: string) {
     return this.run(() => engine.newBuild(name)).then((r) => {
       if (r) this.view = "tree";
@@ -174,21 +206,24 @@ class BuildStore {
     });
   }
 
-  loadCode(code: string, name?: string) {
+  async loadCode(code: string, name?: string) {
+    if (!(await this.ensureGameFor(() => engine.codeGame(code.trim()).then((r) => r.game)))) return undefined;
     return this.run(() => engine.loadBuildCode(code.trim(), name)).then((r) => {
       if (r) this.view = "tree";
       return r;
     });
   }
 
-  loadXml(xml: string, name?: string) {
+  async loadXml(xml: string, name?: string) {
+    if (!(await this.ensureGameFor(() => buildXmlGame(xml)))) return undefined;
     return this.run(() => engine.loadBuildXml(xml, name)).then((r) => {
       if (r) this.view = "tree";
       return r;
     });
   }
 
-  loadFile(path: string) {
+  async loadFile(path: string) {
+    if (!(await this.ensureGameFor(() => buildFileGame(path)))) return undefined;
     return this.run(() => engine.loadBuildFile(path)).then((r) => {
       if (r) this.view = "tree";
       return r;
@@ -240,6 +275,11 @@ class BuildStore {
 
   switchAttribute(id: number, attribute: number) {
     return this.run(() => engine.switchAttribute(id, attribute));
+  }
+
+  /** PoE1: allocate a mastery with an effect, or change an allocated one's effect. */
+  selectMastery(id: number, effect: number) {
+    return this.run(() => engine.selectMastery(id, effect));
   }
 
   selectSpec(index: number) {

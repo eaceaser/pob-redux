@@ -4,6 +4,7 @@
   import { appOptions } from "$lib/state/options.svelte";
   import { mcp } from "$lib/state/mcp.svelte";
   import { chat } from "$lib/state/chat.svelte";
+  import { game } from "$lib/state/game.svelte";
   import Icon from "$lib/components/Icon.svelte";
 
   let { status, paths }: { status: EngineStatus | null; paths: AppPaths | null } = $props();
@@ -71,15 +72,17 @@
   {#if build.info}
     <div class="seg dim"><span>rev</span><span class="num">{build.info.rev}</span></div>
   {/if}
-  <button
-    class="seg iconbtn"
-    class:on={chat.open}
-    onclick={() => chat.toggle()}
-    title="Assistant panel (Ctrl+K)"
-    aria-label="Assistant panel"
-  >
-    <Icon name="chat-text" size={15} />
-  </button>
+  {#if game.isPoe2}
+    <button
+      class="seg iconbtn"
+      class:on={chat.open}
+      onclick={() => chat.toggle()}
+      title="Assistant panel (Ctrl+K)"
+      aria-label="Assistant panel"
+    >
+      <Icon name="chat-text" size={15} />
+    </button>
+  {/if}
   <button class="seg iconbtn" onclick={() => (appOptions.open = true)} title="Options" aria-label="Options" disabled={!appOptions.values}>
     <Icon name="gear" size={15} />
   </button>

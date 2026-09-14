@@ -2,7 +2,7 @@
 //! it — the rmcp transport in `mcp.rs`, and the in-app chat panel through the
 //! `ai_tools` / `ai_call_tool` commands in `lib.rs`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -67,7 +67,7 @@ const HEADLINE: &[&str] = &[
 pub struct ToolContext {
     pub(crate) engine: EngineHandle,
     pub(crate) pool: Arc<EnginePool>,
-    pub(crate) user_dir: PathBuf,
+
     pub(crate) app: AppHandle,
     pub(crate) calls: Arc<AtomicU64>,
 }
@@ -763,7 +763,10 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
         }
         "new_build" => stats(ctx.call("new_build", json!({ "name": arg_str(args, "name") }))?),
         "list_local_builds" => {
-            let dir = crate::builds_dir(&ctx.user_dir);
+            let dir = {
+                use tauri::Manager;
+                ctx.app.state::<crate::AppState>().builds_dir()
+            };
             let builds = crate::scan_builds(&dir).map_err(ToolError::Failed)?;
             read(json!({
                 "directory": dir.to_string_lossy(),

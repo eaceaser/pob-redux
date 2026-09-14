@@ -13,75 +13,32 @@
   import OptimiseView from "$lib/views/OptimiseView.svelte";
   import ImportView from "$lib/views/ImportView.svelte";
   import OptionsModal from "$lib/components/OptionsModal.svelte";
+  import ConfirmModal from "$lib/components/ConfirmModal.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import logo from "$lib/assets/logo.png";
-  import { engine, status as engineStatus, appPaths, type EngineStatus, type AppPaths } from "$lib/engine.svelte";
+  import { app } from "$lib/state/app.svelte";
   import { build } from "$lib/state/build.svelte";
-  import { appOptions } from "$lib/state/options.svelte";
-  import { mcp } from "$lib/state/mcp.svelte";
-  import { chat, type Mode } from "$lib/state/chat.svelte";
-  import { appUpdate } from "$lib/state/update.svelte";
+  import { chat } from "$lib/state/chat.svelte";
+  import { game, GAMES, GAME_LABEL } from "$lib/state/game.svelte";
   import { ui } from "$lib/state/ui.svelte";
 
-  let status = $state<EngineStatus | null>(null);
-  let paths = $state<AppPaths | null>(null);
   let bootDots = $state(0);
+  const status = $derived(app.status);
+  const paths = $derived(app.paths);
 
   onMount(() => {
-    let timer = 0;
     const tick = window.setInterval(() => (bootDots = (bootDots + 1) % 4), 400);
     // Single-letter keys belong to the tree view.
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k" && game.isPoe2) {
         e.preventDefault();
         chat.toggle();
       }
     };
     window.addEventListener("keydown", onKey);
-    const poll = async () => {
-      try {
-        status = await engineStatus();
-      } catch (e) {
-        status = { state: "error", message: String(e), boot_ms: null, pob_root: "", user_dir: "" };
-        return;
-      }
-      if (status.state === "booting") {
-        timer = window.setTimeout(poll, 150);
-      } else if (status.state === "ready") {
-        paths = await appPaths().catch(() => null);
-        await appOptions.init().catch(() => {});
-        await mcp.init().catch(() => {});
-        await chat.init(paths?.chat_open).catch(() => {});
-        if (paths?.chat_provider) await chat.setProvider(paths.chat_provider).catch(() => {});
-        if (paths?.chat_model) chat.setModel(paths.chat_model);
-        if (paths?.chat_mode) await chat.setMode(paths.chat_mode as Mode).catch(() => {});
-        appUpdate.init();
-        // shared items added in this app are ours to restore (PoB's own
-        // settings file, which also holds shared items, is never written)
-        try {
-          const raws: string[] = JSON.parse(localStorage.getItem("pob-redux:shared-items") ?? "[]");
-          for (const raw of raws) await engine.addSharedItem({ raw }).catch(() => {});
-        } catch {}
-        if (paths?.open_on_start) {
-          await build.loadFile(paths.open_on_start);
-        } else if (!(await build.reopenLast())) {
-          await build.run(async () => {}, { sync: true });
-        }
-        build.view = (paths?.initial_view as typeof build.view) || "tree";
-        if (paths?.chat_allow) chat.allowWrites = true;
-        if (paths?.chat_log) chat.logPath = paths.chat_log;
-        if (paths?.chat_ask) {
-          chat.input = paths.chat_ask;
-          // A value starting with "/" only fills the box, so the tool menu can
-          // be inspected without spending a request.
-          if (!paths.chat_ask.startsWith("/")) void chat.send();
-        }
-      }
-    };
-    poll();
+    void app.boot();
     return () => {
-      clearTimeout(timer);
       clearInterval(tick);
       window.removeEventListener("keydown", onKey);
     };
@@ -99,7 +56,7 @@
           <div class="boot">
             <img class="bootlogo" src={logo} alt="" draggable="false" />
             <div class="label">Engine</div>
-            <div class="big">Loading Path of Building{".".repeat(bootDots)}</div>
+            <div class="big">Loading Path of Building{game.isPoe1 ? "" : " (PoE2)"}{".".repeat(bootDots)}</div>
             <div class="dim mono small">{status?.pob_root ?? ""}</div>
           </div>
         </div>
@@ -110,7 +67,7 @@
             <pre class="mono small selectable">{status.message}</pre>
             <div class="dim small">
               PoB program directory: <span class="mono">{status.pob_root || "(not found)"}</span><br />
-              Run <span class="mono">cargo run -p pob-sync</span> to vendor Path of Building, then restart.
+              Run <span class="mono">bun run sync</span> to vendor Path of Building, then restart.
             </div>
           </div>
         </div>
@@ -134,10 +91,29 @@
         <ImportView {paths} />
       {/if}
     </main>
-    {#if chat.open && status?.state === "ready"}<ChatPanel />{/if}
+    {#if chat.open && game.isPoe2 && status?.state === "ready"}<ChatPanel />{/if}
   </div>
   <StatusBar {status} {paths} />
   <OptionsModal />
+  <ConfirmModal />
+  {#if game.firstRun}
+    <div class="pick-backdrop">
+      <div class="pick">
+        <div class="label">Welcome</div>
+        <div class="big">Which game are you building for?</div>
+        <div class="dim small">Each game runs its own Path of Building. You can switch any time from the title bar.</div>
+        <div class="pick-row">
+          {#each GAMES as g (g)}
+            <button class="pick-btn" onclick={() => game.choose(g)} disabled={!game.has(g) || game.switching}>
+              <span class="pick-name">{GAME_LABEL[g]}</span>
+              <span class="dim small">{game.has(g) ? (g === "poe1" ? "Wraeclast, 3.x" : "Early access, 0.x") : "Not installed"}</span>
+            </button>
+          {/each}
+        </div>
+        {#if game.error}<div class="small" style:color="var(--bad)">{game.error}</div>{/if}
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -174,7 +150,8 @@
   :global(:root[data-theme="light"]) .bootlogo {
     filter: invert(1);
   }
-  .boot {
+  .boot,
+  .pick {
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -197,5 +174,47 @@
   }
   .small {
     font-size: var(--fs-xs);
+  }
+  .pick-backdrop {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--bg-0) 72%, transparent);
+    z-index: 40;
+  }
+  .pick {
+    min-width: 440px;
+  }
+  .pick-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .pick-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 14px 16px;
+    border: 1px solid var(--line-0);
+    border-radius: var(--r-2);
+    background: var(--bg-0);
+    color: var(--fg-0);
+    cursor: pointer;
+    text-align: left;
+  }
+  .pick-btn:hover:not(:disabled) {
+    border-color: var(--fg-2);
+    background: var(--bg-hover);
+  }
+  .pick-btn:disabled {
+    color: var(--fg-4);
+    cursor: default;
+  }
+  .pick-name {
+    font-size: var(--fs-md);
+    font-weight: 600;
   }
 </style>

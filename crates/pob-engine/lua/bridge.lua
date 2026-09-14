@@ -80,6 +80,234 @@ local function strArray(t)
 	return out
 end
 
+-- Which game this PoB is for. The two forks share their class and tab layout;
+-- the differences the bridge has to bracket are keyed on this.
+local GAME = (tostring(APP_NAME or ""):find("PoE2", 1, true) or tostring(liveTargetVersion or ""):match("^0_")) and "poe2" or "poe1"
+local IS_POE2 = GAME == "poe2"
+
+-- PoE1 keeps set copy/rename/delete inside its list controls and has no
+-- loadout API; PoE2's methods are supplied here so the rest of the bridge is
+-- the same for both games. Mirrors ItemSetListControl.lua,
+-- SkillSetListControl.lua, ConfigSetListControl.lua, TreeTab.lua and the
+-- loadout dropdown in Build.lua (a loadout is the sets that share a name).
+if not IS_POE2 then
+	local classes = common.classes
+	local function freeId(sets)
+		local id = 1
+		while sets[id] do id = id + 1 end
+		return id
+	end
+	local function orderIndex(list, id)
+		for i, v in ipairs(list) do if v == id then return i end end
+	end
+	local function copyTitle(set, title)
+		return title or ((set.title or "Default") .. " (Copy)")
+	end
+	local ItemsTab = classes.ItemsTab
+	if ItemsTab and not ItemsTab.CopyItemSet then
+		function ItemsTab:CopyItemSet(sourceId, title)
+			local src = self.itemSets[sourceId]
+			local newSet = copyTable(src)
+			newSet.id = freeId(self.itemSets)
+			newSet.title = copyTitle(src, title)
+			self.itemSets[newSet.id] = newSet
+			table.insert(self.itemSetOrderList, newSet.id)
+			self.modFlag = true
+			self.build:SyncLoadouts()
+			return newSet
+		end
+		function ItemsTab:RenameItemSet(id, title)
+			self.itemSets[id].title = title
+			self.modFlag = true
+			self.build:SyncLoadouts()
+		end
+		function ItemsTab:DeleteItemSet(id, index)
+			index = index or orderIndex(self.itemSetOrderList, id)
+			table.remove(self.itemSetOrderList, index)
+			self.itemSets[id] = nil
+			if id == self.activeItemSetId then
+				self:SetActiveItemSet(self.itemSetOrderList[math.max(1, index - 1)])
+			end
+			self:AddUndoState()
+			self.build:SyncLoadouts()
+		end
+	end
+	local SkillsTab = classes.SkillsTab
+	if SkillsTab and not SkillsTab.CopySkillSet then
+		function SkillsTab:CopySkillSet(sourceId, title)
+			local src = self.skillSets[sourceId]
+			local newSet = copyTable(src, true)
+			newSet.socketGroupList = {}
+			for _, group in ipairs(src.socketGroupList) do
+				local newGroup = copyTable(group, true)
+				newGroup.gemList = {}
+				for gi, gem in ipairs(group.gemList) do newGroup.gemList[gi] = copyTable(gem, true) end
+				table.insert(newSet.socketGroupList, newGroup)
+			end
+			newSet.id = freeId(self.skillSets)
+			newSet.title = copyTitle(src, title)
+			self.skillSets[newSet.id] = newSet
+			table.insert(self.skillSetOrderList, newSet.id)
+			self.modFlag = true
+			self.build:SyncLoadouts()
+			return newSet
+		end
+		function SkillsTab:RenameSkillSet(id, title)
+			self.skillSets[id].title = title
+			self.modFlag = true
+			self.build:SyncLoadouts()
+		end
+		function SkillsTab:DeleteSkillSet(id, index)
+			index = index or orderIndex(self.skillSetOrderList, id)
+			table.remove(self.skillSetOrderList, index)
+			self.skillSets[id] = nil
+			if id == self.activeSkillSetId then
+				self:SetActiveSkillSet(self.skillSetOrderList[math.max(1, index - 1)])
+			end
+			self:AddUndoState()
+			self.build:SyncLoadouts()
+		end
+	end
+	local ConfigTab = classes.ConfigTab
+	if ConfigTab and not ConfigTab.CopyConfigSet then
+		function ConfigTab:CopyConfigSet(sourceId, title)
+			local src = self.configSets[sourceId]
+			local newSet = copyTable(src)
+			newSet.id = freeId(self.configSets)
+			newSet.title = copyTitle(src, title)
+			self.configSets[newSet.id] = newSet
+			table.insert(self.configSetOrderList, newSet.id)
+			self.modFlag = true
+			self.build:SyncLoadouts()
+			return newSet
+		end
+		function ConfigTab:RenameConfigSet(id, title)
+			self.configSets[id].title = title
+			self.modFlag = true
+			self.build:SyncLoadouts()
+		end
+		function ConfigTab:DeleteConfigSet(id, index)
+			index = index or orderIndex(self.configSetOrderList, id)
+			table.remove(self.configSetOrderList, index)
+			self.configSets[id] = nil
+			if id == self.activeConfigSetId then
+				self:SetActiveConfigSet(self.configSetOrderList[math.max(1, index - 1)])
+			end
+			self:AddUndoState()
+			self.build:SyncLoadouts()
+		end
+	end
+	local TreeTab = classes.TreeTab
+	if TreeTab and not TreeTab.CopyTree then
+		function TreeTab:CopyTree(sourceId, title)
+			local src = self.specList[sourceId]
+			local newSpec = new("PassiveSpec"):PassiveSpec(self.build, src.treeVersion)
+			newSpec.title = copyTitle(src, title)
+			newSpec.jewels = copyTable(src.jewels)
+			newSpec:RestoreUndoState(src:CreateUndoState())
+			newSpec:BuildClusterJewelGraphs()
+			table.insert(self.specList, newSpec)
+			self.modFlag = true
+			self.build:SyncLoadouts()
+			return newSpec
+		end
+	end
+	if not build.GetLoadoutByName then
+		local function setByTitle(orderList, sets, name)
+			for _, id in ipairs(orderList) do
+				if (sets[id].title or "Default") == name then return id end
+			end
+		end
+		local function loadoutNames(self)
+			local names = {}
+			for _, entry in ipairs(self.controls.buildLoadouts.list) do
+				if type(entry) == "string" and not entry:match("^%^7%^7") and entry ~= "No Loadouts" then names[#names + 1] = entry end
+			end
+			return names
+		end
+		function build:GetLoadoutByName(name)
+			local specId
+			for i, spec in ipairs(self.treeTab.specList) do
+				if (spec.title or "Default") == name then specId = i break end
+			end
+			if not specId then return nil end
+			return {
+				name = name,
+				specId = specId,
+				itemSetId = setByTitle(self.itemsTab.itemSetOrderList, self.itemsTab.itemSets, name),
+				skillSetId = setByTitle(self.skillsTab.skillSetOrderList, self.skillsTab.skillSets, name),
+				configSetId = setByTitle(self.configTab.configSetOrderList, self.configTab.configSets, name),
+			}
+		end
+		function build:SetActiveLoadout(lo)
+			if not lo or not lo.specId then return end
+			if lo.specId ~= self.treeTab.activeSpec then self.treeTab:SetActiveSpec(lo.specId) end
+			if lo.itemSetId and lo.itemSetId ~= self.itemsTab.activeItemSetId then self.itemsTab:SetActiveItemSet(lo.itemSetId) end
+			if lo.skillSetId and lo.skillSetId ~= self.skillsTab.activeSkillSetId then self.skillsTab:SetActiveSkillSet(lo.skillSetId) end
+			if lo.configSetId and lo.configSetId ~= self.configTab.activeConfigSetId then self.configTab:SetActiveConfigSet(lo.configSetId) end
+			self:SyncLoadouts()
+			self.activeLoadout = nil
+			for i, n in ipairs(loadoutNames(self)) do
+				if n == lo.name then self.activeLoadout = i end
+			end
+		end
+		function build:NewLoadout(name)
+			local newSpec = new("PassiveSpec"):PassiveSpec(self, latestTreeVersion)
+			newSpec.title = name
+			table.insert(self.treeTab.specList, newSpec)
+			local itemSet = self.itemsTab:NewItemSet()
+			itemSet.title = name
+			table.insert(self.itemsTab.itemSetOrderList, itemSet.id)
+			local skillSet = self.skillsTab:NewSkillSet()
+			skillSet.title = name
+			table.insert(self.skillsTab.skillSetOrderList, skillSet.id)
+			local configSet = self.configTab:NewConfigSet(nil, name)
+			table.insert(self.configTab.configSetOrderList, configSet.id)
+			self:SyncLoadouts()
+			self:SetActiveLoadout(self:GetLoadoutByName(name))
+			self.modFlag = true
+		end
+		function build:CopyLoadout(sourceName, name)
+			local lo = self:GetLoadoutByName(sourceName)
+			if not lo then return end
+			self.treeTab:CopyTree(lo.specId, name)
+			self.itemsTab:CopyItemSet(lo.itemSetId or self.itemsTab.itemSetOrderList[1], name)
+			self.skillsTab:CopySkillSet(lo.skillSetId or self.skillsTab.skillSetOrderList[1], name)
+			self.configTab:CopyConfigSet(lo.configSetId or self.configTab.configSetOrderList[1], name)
+			self:SetActiveLoadout(self:GetLoadoutByName(name))
+			self.modFlag = true
+		end
+		function build:RenameLoadout(oldName, newName)
+			local lo = self:GetLoadoutByName(oldName)
+			if not lo then return end
+			self.treeTab.specList[lo.specId].title = newName
+			if lo.itemSetId then self.itemsTab:RenameItemSet(lo.itemSetId, newName) end
+			if lo.skillSetId then self.skillsTab:RenameSkillSet(lo.skillSetId, newName) end
+			if lo.configSetId then self.configTab:RenameConfigSet(lo.configSetId, newName) end
+			self.modFlag = true
+		end
+		function build:DeleteLoadout(name, nextName)
+			local lo = self:GetLoadoutByName(name)
+			if not lo then return end
+			if #self.treeTab.specList > 1 then
+				table.remove(self.treeTab.specList, lo.specId)
+				if self.treeTab.activeSpec > #self.treeTab.specList then self.treeTab:SetActiveSpec(#self.treeTab.specList) end
+			end
+			if lo.itemSetId and #self.itemsTab.itemSetOrderList > 1 then self.itemsTab:DeleteItemSet(lo.itemSetId) end
+			if lo.skillSetId and #self.skillsTab.skillSetOrderList > 1 then self.skillsTab:DeleteSkillSet(lo.skillSetId) end
+			if lo.configSetId and #self.configTab.configSetOrderList > 1 then self.configTab:DeleteConfigSet(lo.configSetId) end
+			self.modFlag = true
+			self:SetActiveLoadout(self:GetLoadoutByName(nextName))
+		end
+	end
+end
+
+-- PoE1's CountAllocNodes stops at the socket count; the weapon-set counts are PoE2's.
+local function countAllocNodes(spec)
+	local used, ascUsed, secAscUsed, sockets, ws1, ws2 = spec:CountAllocNodes()
+	return used or 0, ascUsed or 0, secAscUsed or 0, sockets or 0, ws1 or 0, ws2 or 0
+end
+
 -- PoB's gem data has no character level requirement (grantedEffect levels all
 -- report levelRequirement 0), only a `Tier`. This is the tier -> level ladder
 -- and the base support socket count that comes with it.
@@ -123,6 +351,12 @@ end
 -- What a gem asks of the character at one gem level, by PoB's own formula.
 -- gemData.reqStr/reqDex/reqInt are attribute weightings (100 = pure), not
 -- requirements; the requirement comes from the gem level's level requirement.
+-- PoE1's calcLib takes (level, isSupport, multi); PoE2's (level, multi, isSupport).
+local function gemStatRequirement(level, multi, isSupport)
+	if IS_POE2 then return calcLib.getGemStatRequirement(level, multi, isSupport) end
+	return calcLib.getGemStatRequirement(level, isSupport, multi)
+end
+
 local function gemRequirements(gemData, gemLevel)
 	local ge = gemData and gemData.grantedEffect
 	local lv = ge and ge.levels and ge.levels[gemLevel]
@@ -130,9 +364,9 @@ local function gemRequirements(gemData, gemLevel)
 	local isSupport = ge and ge.support or false
 	return {
 		level = charLevel,
-		str = calcLib.getGemStatRequirement(charLevel, gemData.reqStr or 0, isSupport),
-		dex = calcLib.getGemStatRequirement(charLevel, gemData.reqDex or 0, isSupport),
-		int = calcLib.getGemStatRequirement(charLevel, gemData.reqInt or 0, isSupport),
+		str = gemStatRequirement(charLevel, gemData.reqStr or 0, isSupport),
+		dex = gemStatRequirement(charLevel, gemData.reqDex or 0, isSupport),
+		int = gemStatRequirement(charLevel, gemData.reqInt or 0, isSupport),
 	}
 end
 
@@ -211,12 +445,24 @@ local function gemPressClass(gemData)
 end
 
 -- Quest passive points are campaign progress, not level, so this is the total
--- available once an act is finished. 0.5.5: 4 per act plus 8 across the
--- interludes. Acts 5 and 6 replace the interludes at 1.0.
+-- available once an act is finished. PoE2 0.5.5: 4 per act plus 8 across the
+-- interludes; acts 5 and 6 replace the interludes at 1.0. PoE1: PoB's own act
+-- table (Build.lua), 23 points over ten acts, the bandit reward included.
 local QUEST_POINTS_BY_ACT = { 4, 8, 12, 16 }
 local QUEST_POINTS_MAX = 24
+local POE1_ACTS = {
+	{ level = 1, questPoints = 0 }, { level = 12, questPoints = 2 }, { level = 22, questPoints = 4 },
+	{ level = 32, questPoints = 6 }, { level = 40, questPoints = 7 }, { level = 44, questPoints = 9 },
+	{ level = 50, questPoints = 12 }, { level = 54, questPoints = 15 }, { level = 60, questPoints = 18 },
+	{ level = 64, questPoints = 20 }, { level = 67, questPoints = 23 },
+}
 
 local function questPointsForLevel(level)
+	if not IS_POE2 then
+		local act = 1
+		while POE1_ACTS[act + 1] and level >= POE1_ACTS[act + 1].level do act = act + 1 end
+		return POE1_ACTS[act].questPoints, POE1_ACTS[math.min(act + 1, #POE1_ACTS)].questPoints
+	end
 	-- Act boundaries by level, used only to bracket the budget when the caller
 	-- has not said how far through the campaign they are.
 	local act = 0
@@ -270,6 +516,7 @@ end
 
 M.version = function()
 	return {
+		game = GAME,
 		pobVersion = launch.versionNumber,
 		pobBranch = opt(launch.versionBranch),
 		treeVersions = strArray(treeVersionList),
@@ -328,6 +575,19 @@ M.load_build_code = function(p)
 		error("params.code is required", 0)
 	end
 	return M.load_build_xml({ xml = decodeCode(p.code), name = p.name })
+end
+
+-- Which game a share code is for, without loading it, so the app can switch
+-- game first when a code from the other one is pasted.
+M.code_game = function(p)
+	if not p or type(p.code) ~= "string" or p.code == "" then error("params.code is required", 0) end
+	local xml = decodeCode(p.code)
+	local game = null
+	if xml then
+		if xml:find("<PathOfBuilding2[%s>]") then game = "poe2"
+		elseif xml:find("<PathOfBuilding[%s>]") then game = "poe1" end
+	end
+	return { game = game }
 end
 
 M.load_build_file = function(p)
@@ -427,12 +687,12 @@ M.get_build = function()
 	local spec = build.spec
 	local out = build.calcsTab.mainOutput
 	-- Same arithmetic as buildMode:EstimatePlayerProgress.
-	local used, ascUsed, secAscUsed, socketsUsed, ws1, ws2 = spec:CountAllocNodes()
+	local used, ascUsed, secAscUsed, socketsUsed, ws1, ws2 = countAllocNodes(spec)
 	local extra = out and out.ExtraPoints or 0
 	local extraWs = out and out.PassivePointsToWeaponSetPoints or 0
 	local points = {
-		used = used - math.min(ws1 or 0, ws2 or 0),
-		max = 99 + (build.maxWeaponSets or 0) + extra,
+		used = used - math.min(ws1, ws2),
+		max = IS_POE2 and (99 + (build.maxWeaponSets or 0) + extra) or (99 + 23 + extra),
 		ascUsed = ascUsed,
 		ascMax = 8,
 		weaponSet1Used = ws1 or 0,
@@ -600,6 +860,66 @@ M.sidebar_breakdown = function(p)
 	return { sections = sections, rev = build.outputRevision }
 end
 
+-- PoE2's CalcSectionControl exposes its cell formatter as FormatStr; PoE1
+-- keeps the same code file-local, so it is repeated here for that game.
+local function formatVal(val, p)
+	return formatNumSep(tostring(round(val, p)))
+end
+
+local function formatCalcStr(section, str, actor, colData)
+	if section.FormatStr then return section:FormatStr(str, actor, colData) end
+	str = str:gsub("{output:([%a%.:]+)}", function(c)
+		local ns, var = c:match("^(%a+)%.(%a+)$")
+		if ns then
+			return actor.output[ns] and actor.output[ns][var] or ""
+		end
+		return actor.output[c] or ""
+	end)
+	str = str:gsub("{(%d+):output:([%a%.:]+)}", function(p, c)
+		local ns, var = c:match("^(%a+)%.(%a+)$")
+		if ns then
+			return formatVal(actor.output[ns] and actor.output[ns][var] or 0, tonumber(p))
+		end
+		return formatVal(actor.output[c] or 0, tonumber(p))
+	end)
+	str = str:gsub("{(%d+):mod:([%d,]+)}", function(p, n)
+		local numList = {}
+		for num in n:gmatch("%d+") do
+			numList[#numList + 1] = tonumber(num)
+		end
+		local modType = colData[numList[1]].modType
+		local modTotal = modType == "MORE" and 1 or 0
+		for _, num in ipairs(numList) do
+			local sectionData = colData[num]
+			local modCfg = (sectionData.cfg and actor.mainSkill[sectionData.cfg .. "Cfg"]) or {}
+			if sectionData.modSource then
+				modCfg.source = sectionData.modSource
+				modCfg.ignoreSourceInCheckConditions = true
+			end
+			if sectionData.actor then
+				modCfg.actor = sectionData.actor
+			end
+			local modStore = (sectionData.enemy and actor.enemy.modDB) or (sectionData.cfg and actor.mainSkill.skillModList) or actor.modDB
+			local modVal
+			if type(sectionData.modName) == "table" then
+				modVal = modStore:Combine(sectionData.modType, modCfg, unpack(sectionData.modName))
+			else
+				modVal = modStore:Combine(sectionData.modType, modCfg, sectionData.modName)
+			end
+			if modType == "MORE" then
+				modTotal = modTotal * modVal
+			else
+				modTotal = modTotal + modVal
+			end
+		end
+		if modType == "MORE" then
+			modTotal = (modTotal - 1) * 100
+		end
+		return formatVal(modTotal, tonumber(p))
+	end)
+	return str
+end
+
 -- The Calcs tab grid: PoB's own section controls with every cell's format
 -- string resolved against the requested actor.
 M.calc_sections = function(p)
@@ -623,7 +943,7 @@ M.calc_sections = function(p)
 				for si, subSec in ipairs(section.subSection) do
 					local sub = { index = si, label = subSec.label or "", rows = array({}) }
 					local okExtra, extra = pcall(function()
-						return subSec.data.extra and section:FormatStr(subSec.data.extra, actor)
+						return subSec.data.extra and formatCalcStr(section, subSec.data.extra, actor)
 					end)
 					sub.extra = (okExtra and extra) and extra or null
 					for ri, rowData in ipairs(subSec.data) do
@@ -634,7 +954,7 @@ M.calc_sections = function(p)
 								if colData.control then
 									text = "" -- injected UI controls (skill selectors) live in our own views
 								elseif colData.format then
-									local okF, formatted = pcall(section.FormatStr, section, colData.format, actor, colData)
+									local okF, formatted = pcall(formatCalcStr, section, colData.format, actor, colData)
 									text = okF and formatted or "?"
 								end
 								row.cells[#row.cells + 1] = {
@@ -762,6 +1082,23 @@ local function nodeSummary(id, node)
 	}
 end
 
+-- PoE1 masteries: the effects a mastery can take. An effect is unique on the
+-- tree, so one held by another mastery of the same kind is marked taken.
+local function masteryOptions(node)
+	local spec = build.spec
+	local out = array({})
+	if IS_POE2 or node.type ~= "Mastery" or not node.masteryEffects then return out end
+	for _, effect in ipairs(node.masteryEffects) do
+		local taken = nil
+		for nid, eid in pairs(spec.masterySelections or {}) do
+			if eid == effect.effect and nid ~= node.id then taken = nid break end
+		end
+		local data = spec.tree.masteryEffects and spec.tree.masteryEffects[effect.effect]
+		out[#out + 1] = { effect = effect.effect, stats = strArray(data and data.sd or effect.stats), takenBy = opt(taken) }
+	end
+	return out
+end
+
 M.get_tree_state = function()
 	ensureBuild()
 	local spec = build.spec
@@ -773,7 +1110,7 @@ M.get_tree_state = function()
 	local function override(id, node)
 		overrides[tostring(id)] = {
 			name = opt(node.dn),
-			icon = opt(node.icon),
+			icon = opt(node.type == "Mastery" and node.activeIcon or node.icon),
 			stats = strArray(node.sd),
 			overlay = node.overlay and node.overlay.alloc and {
 				alloc = node.overlay.alloc,
@@ -787,6 +1124,10 @@ M.get_tree_state = function()
 		if node.alloc then
 			alloc[#alloc + 1] = id
 			if node.isAttribute and node.dn and node.dn ~= "Attribute" then
+				override(id, node)
+			end
+			-- An allocated PoE1 mastery shows its chosen effect, not the option list.
+			if not IS_POE2 and node.type == "Mastery" and spec.masterySelections and spec.masterySelections[id] then
 				override(id, node)
 			end
 		end
@@ -811,7 +1152,30 @@ M.get_tree_state = function()
 			}
 		end
 	end
-	local used, ascUsed, secondaryAscUsed, socketCount, ws1Used, ws2Used = spec:CountAllocNodes()
+	-- Cluster jewel subgraphs (PoE1): nodes PoB generates from the socketed
+	-- jewel, absent from tree.json. Their ids start at 65536.
+	local dynamic = array({})
+	if not IS_POE2 then
+		for id, node in pairs(spec.nodes) do
+			if type(id) == "number" and id >= 65536 and node.x and node.y then
+				local links = array({})
+				for _, other in ipairs(node.linked or {}) do links[#links + 1] = other.id end
+				dynamic[#dynamic + 1] = {
+					id = id,
+					name = opt(node.dn),
+					type = opt(node.type),
+					stats = strArray(node.sd),
+					x = node.x,
+					y = node.y,
+					icon = opt(node.icon),
+					links = links,
+					expansion = node.expansionJewel ~= nil,
+					allocated = node.alloc == true,
+				}
+			end
+		end
+	end
+	local used, ascUsed, secondaryAscUsed, socketCount, ws1Used, ws2Used = countAllocNodes(spec)
 	local level = build.characterLevel or 1
 	local questLow, questHigh = questPointsForLevel(level)
 	return {
@@ -832,7 +1196,7 @@ M.get_tree_state = function()
 		jewelSocketsUsed = socketCount,
 		weaponSet1PointsUsed = ws1Used,
 		weaponSet2PointsUsed = ws2Used,
-		weaponSetPointsAvailablePerSet = 24,
+		weaponSetPointsAvailablePerSet = IS_POE2 and 24 or 0,
 		-- PoB tracks points spent but not the budget. Levels give 1 point each
 		-- after the first; the rest are campaign quest rewards, which depend on
 		-- progress rather than level, hence the range.
@@ -845,6 +1209,7 @@ M.get_tree_state = function()
 		ascendancyPointsAvailable = 8,
 		overrides = overrides,
 		sockets = sockets,
+		dynamicNodes = dynamic,
 		rev = build.outputRevision,
 	}
 end
@@ -951,6 +1316,20 @@ M.tree_click = function(p)
 	local spec = build.spec
 	local attr = tonumber(p.attribute)
 
+	-- A PoE1 mastery is allocated with one of its effects; PoB opens a picker.
+	if not IS_POE2 and node.type == "Mastery" and node.masteryEffects and not node.alloc then
+		if p.effect then return M.select_mastery(p) end
+		if node.path then
+			return {
+				needsMastery = true,
+				id = node.id,
+				name = opt(node.dn),
+				effects = masteryOptions(node),
+				selected = opt(spec.masterySelections and spec.masterySelections[node.id]),
+			}
+		end
+	end
+
 	if node.alloc then
 		if node.isAttribute and attr then
 			spec.attributeIndex = attr
@@ -1025,6 +1404,29 @@ M.tree_click = function(p)
 		end
 		spec:AllocNode(target)
 	end
+	spec:AddUndoState()
+	refresh()
+	return M.get_tree_state()
+end
+
+-- Allocate a PoE1 mastery with an effect, or change an allocated one's
+-- effect. Mirrors TreeTab:SaveMasteryPopup.
+M.select_mastery = function(p)
+	ensureBuild()
+	local node = requireNode(p)
+	local spec = build.spec
+	if node.type ~= "Mastery" or not node.masteryEffects then error("params.id must be a mastery node", 0) end
+	local effect = spec.tree.masteryEffects and spec.tree.masteryEffects[tonumber(p.effect) or -1]
+	if not effect then error("unknown mastery effect " .. tostring(p.effect), 0) end
+	for nid, eid in pairs(spec.masterySelections) do
+		if eid == effect.id and nid ~= node.id then error("that effect is already taken by mastery " .. tostring(nid), 0) end
+	end
+	node.sd = effect.sd
+	node.allMasteryOptions = false
+	node.reminderText = { "Tip: Right click to select a different effect" }
+	spec.tree:ProcessStats(node)
+	spec.masterySelections[node.id] = effect.id
+	if not node.alloc then spec:AllocNode(node) end
 	spec:AddUndoState()
 	refresh()
 	return M.get_tree_state()
@@ -1362,7 +1764,8 @@ end
 -- Jewel radii for the socket hover rings (Data.lua jewelRadii, tree units).
 M.jewel_radii = function()
 	local out = array({})
-	local mult = data.gameConstants and data.gameConstants["PassiveTreeJewelDistanceMultiplier"] or 1
+	-- PoE1's Data.lua bakes the distance multiplier into the radii already.
+	local mult = IS_POE2 and data.gameConstants and data.gameConstants["PassiveTreeJewelDistanceMultiplier"] or 1
 	for i, r in ipairs(data.jewelRadius or {}) do
 		out[i] = { inner = r.inner * mult, outer = r.outer * mult, color = r.col, label = r.label }
 	end
@@ -1381,6 +1784,8 @@ M.node_info = function(p)
 	end
 	info.mods = mods
 	info.icon = opt(node.icon)
+	info.masteryEffects = masteryOptions(node)
+	info.masterySelected = opt(build.spec.masterySelections and build.spec.masterySelections[node.id])
 	return info
 end
 
@@ -3246,10 +3651,13 @@ local function makeCraftedItem(base, rarity, title, range)
 	item.classRequirementModLines = {}
 	item.implicitModLines = {}
 	item.explicitModLines = {}
+	item.scourgeModLines = {}
+	item.crucibleModLines = {}
 	item.sockets = {}
 	item.runes = {}
 	item.quality = base.base.quality and 0 or nil
-	if base.base.socketLimit and (base.base.weapon or base.base.armour or base.base.tags.wand or base.base.tags.staff or base.base.tags.sceptre) then
+	-- PoE2 sockets hold runes and have no colour; PoE1's come from the socket editor.
+	if IS_POE2 and base.base.socketLimit and (base.base.weapon or base.base.armour or base.base.tags.wand or base.base.tags.staff or base.base.tags.sceptre) then
 		for _ = 1, base.base.socketLimit do
 			table.insert(item.sockets, { group = 0 })
 		end
@@ -3766,13 +4174,18 @@ end
 -- from data.itemMods.Corruption, and roll-range corruption for uniques.
 -- ---------------------------------------------------------------------------
 
+-- PoE2 names the pool Corruption, PoE1 Corrupted.
+local function corruptionMods()
+	return data.itemMods.Corruption or data.itemMods.Corrupted or {}
+end
+
 M.item_corruptions = function(p)
 	ensureBuild()
 	local item = requireItem(p)
 	local isGlimpse = item.base and item.base.type == "Helmet" and item.title == "Glimpse of Chaos"
 	local function modList(modType)
 		local out = {}
-		for modId, mod in pairs(data.itemMods.Corruption) do
+		for modId, mod in pairs(corruptionMods()) do
 			if mod.type == modType and (modType == "SpecialCorrupted" or item:GetModSpawnWeight(mod) > 0) then
 				out[#out + 1] = { id = modId, label = table.concat(mod, "/"), group = opt(mod.group) }
 			end
@@ -3808,7 +4221,7 @@ M.corrupt_item = function(p)
 	if p and p.modIds and #p.modIds > 0 then
 		local newEnchant = {}
 		for _, id in ipairs(p.modIds) do
-			local mod = data.itemMods.Corruption[id]
+			local mod = corruptionMods()[id]
 			if not mod then error("unknown corruption mod " .. tostring(id), 0) end
 			for i, modLine in ipairs(mod) do
 				if mod.modTags[1] then
@@ -3972,7 +4385,8 @@ M.trade_search_result = function()
 end
 
 M.trade_leagues = function()
-	local body, err = native.http_get("https://www.pathofexile.com/api/trade2/data/leagues", "Path of Building/" .. (launch and launch.versionNumber or "2"))
+	local api = IS_POE2 and "trade2" or "trade"
+	local body, err = native.http_get("https://www.pathofexile.com/api/" .. api .. "/data/leagues", "Path of Building/" .. (launch and launch.versionNumber or "2"))
 	if not body then error(err or "download failed", 0) end
 	local decoded = dkjson.decode(body)
 	local leagues = array({})
@@ -4809,7 +5223,8 @@ M.party_import = function(p)
 	end
 	local dbXML, errMsg = common.xml.ParseXML(xmlText)
 	if not dbXML then error("could not parse build XML: " .. tostring(errMsg), 0) end
-	if dbXML[1].elem ~= "PathOfBuilding2" then error("'PathOfBuilding2' root element missing", 0) end
+	local rootElem = IS_POE2 and "PathOfBuilding2" or "PathOfBuilding"
+	if dbXML[1].elem ~= rootElem then error("'" .. rootElem .. "' root element missing", 0) end
 	local pt = build.partyTab
 	local append = p and p.append and true or false
 	if not append then
@@ -5199,12 +5614,19 @@ end
 -- shield when a skill needs one or Giant's Blood allows one, and within a
 -- family the best base the character's level can wear.
 
-local JEWELLERY_PREFERENCE = {
+local JEWELLERY_PREFERENCE = IS_POE2 and {
 	Amulet = { "Stellar Amulet", "Solar Amulet", "Lunar Amulet", "Bloodstone Amulet", "Amber Amulet" },
 	["Ring 1"] = { "Ruby Ring", "Iron Ring" },
 	["Ring 2"] = { "Sapphire Ring", "Topaz Ring", "Iron Ring" },
 	Belt = { "Heavy Belt", "Plate Belt", "Wide Belt", "Linen Belt" },
+} or {
+	Amulet = { "Onyx Amulet", "Citrine Amulet", "Amber Amulet", "Jade Amulet", "Lapis Amulet" },
+	["Ring 1"] = { "Diamond Ring", "Ruby Ring", "Iron Ring" },
+	["Ring 2"] = { "Sapphire Ring", "Topaz Ring", "Iron Ring" },
+	Belt = { "Stygian Vise", "Leather Belt", "Heavy Belt" },
 }
+-- The weapon family to try when the main skill does not say.
+local DEFAULT_WEAPON_TYPES = IS_POE2 and { "Two Hand Mace", "One Hand Mace" } or { "Two Handed Mace", "One Handed Mace" }
 
 local function defenceProfile(o)
 	local str, dex, int = o.Str or 0, o.Dex or 0, o.Int or 0
@@ -5264,6 +5686,15 @@ local function mainSkillWeaponTypes()
 				for t in gd.weaponRequirements:gmatch("[^,]+") do types[#types + 1] = t:gsub("^%s+", ""):gsub("%s+$", "") end
 				return types
 			end
+			-- PoE1 skills carry a weaponTypes set instead.
+			if type(gd.grantedEffect.weaponTypes) == "table" then
+				local types = {}
+				for t, on in pairs(gd.grantedEffect.weaponTypes) do
+					if on and data.weaponTypeInfo[t] then types[#types + 1] = t end
+				end
+				table.sort(types)
+				if #types > 0 then return types end
+			end
 			return nil
 		end
 	end
@@ -5301,7 +5732,7 @@ local function pickBaseForSlot(slotName, level, o)
 		local allowed = mainSkillWeaponTypes()
 		local twoHanded = {}
 		local oneHanded = {}
-		for _, t in ipairs(allowed or { "Two Hand Mace", "One Hand Mace" }) do
+		for _, t in ipairs(allowed or DEFAULT_WEAPON_TYPES) do
 			local info = data.weaponTypeInfo[t]
 			if info then
 				if info.oneHand then oneHanded[#oneHanded + 1] = t else twoHanded[#twoHanded + 1] = t end
@@ -6365,7 +6796,7 @@ M.build_summary = function()
 	ensureBuild()
 	local o = build.calcsTab.mainOutput or {}
 	local spec = build.spec
-	local used, ascUsed, _, socketCount, ws1, ws2 = spec:CountAllocNodes()
+	local used, ascUsed, _, socketCount, ws1, ws2 = countAllocNodes(spec)
 	local level = build.characterLevel or 1
 	local questLow, questHigh = questPointsForLevel(level)
 
@@ -6540,7 +6971,27 @@ M.sanity_check = function()
 	end
 	if s.activeSkills > 6 then
 		add("low", "buttons", string.format("%d skills need a keypress", s.activeSkills),
-			"Most builds settle at 4-5. Extra power is usually better spent on a persistent buff, trigger or meta gem.")
+			IS_POE2 and "Most builds settle at 4-5. Extra power is usually better spent on a persistent buff, trigger or meta gem."
+				or "Most builds settle at 4-5. Extra power is usually better spent on an aura, a trigger setup or a guard skill.")
+	end
+
+	if not IS_POE2 then
+		-- Flasks are a PoE1 build's cheapest defence and utility.
+		local emptyFlasks = 0
+		for i = 1, 5 do
+			local slot = build.itemsTab.slots["Flask " .. i]
+			if slot and (not slot.selItemId or slot.selItemId == 0) then emptyFlasks = emptyFlasks + 1 end
+		end
+		if emptyFlasks > 0 then
+			add(emptyFlasks >= 3 and "medium" or "low", "flasks", string.format("%d of 5 flask slots empty", emptyFlasks),
+				"A life flask, a resistance or armour utility flask and a quicksilver flask cover most gaps. Flasks with 'used when' enchants need no keypress.")
+		end
+		local input = build.configTab and build.configTab.input or {}
+		local major, minor = input.pantheonMajorGod, input.pantheonMinorGod
+		if s.characterLevel >= 60 and (major == nil or major == "None") and (minor == nil or minor == "None") then
+			add("low", "pantheon", "no pantheon gods chosen",
+				"Pantheon powers are free defences unlocked in the campaign; set them on the Config tab so the calculation includes them.")
+		end
 	end
 
 	-- 30 spirit is the cheapest herald, so below that there is nothing to spend on.
@@ -6569,7 +7020,7 @@ M.sanity_check = function()
 			"57 of 63 published builds carry movement speed on boots, usually 20-35%. It shortens the campaign and is a primary avoidance layer.")
 	end
 
-	if s.characterLevel >= 60 and s.weaponSetPointsUsed == 0 then
+	if IS_POE2 and s.characterLevel >= 60 and s.weaponSetPointsUsed == 0 then
 		add("low", "weapon sets", "no weapon set passive points allocated",
 			"24 points per set, and weapon swap is instant. Half of published endgame builds leave these unused.")
 	end

@@ -3,6 +3,9 @@
   import { onMount } from "svelte";
   import { build, type ViewId } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
+  import { game, GAME_SHORT, GAME_LABEL } from "$lib/state/game.svelte";
+
+  const otherGame = $derived(game.isPoe2 ? "poe1" : "poe2");
   import logo from "$lib/assets/logo.png";
 
   const win = getCurrentWindow();
@@ -76,6 +79,22 @@
     </button>
   </div>
 
+  <div class="game">
+    <button
+      class="gswitch"
+      role="switch"
+      aria-checked={game.isPoe2}
+      aria-label="Game"
+      disabled={game.switching || build.busy > 0 || !game.has(otherGame)}
+      title={game.has(otherGame) ? `Switch to ${GAME_LABEL[otherGame]}` : `${GAME_LABEL[otherGame]} is not installed`}
+      onclick={() => game.choose(otherGame)}
+    >
+      <span class="glabel" class:on={game.isPoe1}>{GAME_SHORT.poe1}</span>
+      <span class="track" class:right={game.isPoe2}><span class="thumb"></span></span>
+      <span class="glabel" class:on={game.isPoe2}>{GAME_SHORT.poe2}</span>
+    </button>
+  </div>
+
   <div class="tabs" role="tablist">
     {#each tabs as t (t.id)}
       <button
@@ -117,7 +136,7 @@
   .titlebar {
     height: var(--titlebar-h);
     display: grid;
-    grid-template-columns: auto auto 1fr auto;
+    grid-template-columns: auto auto auto 1fr auto;
     align-items: stretch;
     background: var(--bg-1);
     border-bottom: 1px solid var(--line-0);
@@ -172,6 +191,61 @@
   .thin {
     font-weight: 400;
     color: var(--fg-2);
+  }
+  .game {
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    border-right: 1px solid var(--line-0);
+    -webkit-app-region: no-drag;
+  }
+  .gswitch {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 0;
+    background: transparent;
+    padding: 3px 2px;
+    border-radius: var(--r-1);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);
+    letter-spacing: 0.06em;
+  }
+  .gswitch:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+  .gswitch:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  .glabel {
+    color: var(--fg-4);
+  }
+  .glabel.on {
+    color: var(--ok);
+  }
+  .track {
+    position: relative;
+    width: 26px;
+    height: 14px;
+    border: 1px solid var(--line-1);
+    border-radius: 999px;
+    background: var(--bg-0);
+  }
+  .thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ok);
+    transition: transform 120ms ease;
+  }
+  .track.right .thumb {
+    transform: translateX(12px);
   }
   .tabs {
     display: flex;

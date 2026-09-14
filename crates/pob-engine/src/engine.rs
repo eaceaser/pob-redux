@@ -57,8 +57,12 @@ impl Engine {
         let lua = unsafe { Lua::unsafe_new_with(StdLib::ALL, LuaOptions::default()) };
 
         let globals = lua.globals();
-        globals.set("__pob_root", slash(&cfg.pob_root))?;
-        globals.set("__user_dir", slash(&cfg.user_dir))?;
+        // PoB joins GetScriptPath() onto its own paths, so the root must be
+        // absolute whatever the caller passed.
+        let pob_root = cfg.pob_root.canonicalize().unwrap_or_else(|_| cfg.pob_root.clone());
+        let user_dir = cfg.user_dir.canonicalize().unwrap_or_else(|_| cfg.user_dir.clone());
+        globals.set("__pob_root", slash(&pob_root))?;
+        globals.set("__user_dir", slash(&user_dir))?;
         globals.set("__native", native::build_table(&lua, t0)?)?;
 
         lua.load(HOST_LUA).set_name("host.lua").exec()?;

@@ -26,7 +26,8 @@
     type MobalyticsBuild,
     type MobalyticsVariant,
   } from "$lib/engine.svelte";
-  import { build } from "$lib/state/build.svelte";
+  import { build, autosaveKey } from "$lib/state/build.svelte";
+  import { game } from "$lib/state/game.svelte";
 
   let { paths }: { paths: AppPaths | null } = $props();
 
@@ -100,7 +101,7 @@
 
   let autosave = $state<{ name: string; file: string | null; at: number; xml: string } | null>(null);
   try {
-    autosave = JSON.parse(localStorage.getItem("pob-redux:autosave") ?? "null");
+    autosave = JSON.parse(localStorage.getItem(autosaveKey()) ?? "null");
   } catch {
     autosave = null;
   }
@@ -163,7 +164,8 @@
   async function refresh() {
     builds = await listBuilds().catch(() => []);
     folders = await listBuildFolders().catch(() => []);
-    gameBuilds = await listGameBuilds(plannerDir || undefined).catch(() => null);
+    // The game's Build Planner is a PoE2 feature.
+    gameBuilds = game.isPoe2 ? await listGameBuilds(plannerDir || undefined).catch(() => null) : null;
   }
   onMount(refresh);
 
@@ -581,7 +583,7 @@
           <span>Unsaved session <b>{autosave.name}</b> · {fmtTime(autosave.at)}</span>
           <span class="acts2">
             <button class="btn sm" onclick={restoreAutosave} disabled={build.busy > 0}>Restore</button>
-            <button class="btn sm ghost" onclick={() => { localStorage.removeItem("pob-redux:autosave"); autosave = null; }}>Dismiss</button>
+            <button class="btn sm ghost" onclick={() => { localStorage.removeItem(autosaveKey()); autosave = null; }}>Dismiss</button>
           </span>
         </div>
       {/if}
@@ -603,6 +605,7 @@
           <div class="dim small pad">empty folder</div>
         {/if}
       {/each}
+      {#if game.isPoe2}
       <div class="ghead gb" title={gameBuilds?.dir ?? ""}>
         <span>Game Build Planner</span>
         <span class="dim num">{gameBuilds?.builds.length ?? 0}</span>
@@ -625,6 +628,7 @@
         </div>
       {:else if gameBuilds && !gameBuilds.exists}
         <div class="dim small pad">Folder not found.</div>
+      {/if}
       {/if}
       {#each gameBuildGroups as [group, items] (group)}
         {#if editAuthor === group}
@@ -801,7 +805,9 @@
         <div class="arow">
           <span class="label">Export</span>
           <button class="btn sm" onclick={exportXml}>XML…</button>
-          <button class="btn sm" onclick={saveGameBuild} title="A file the game's Build Planner can import">Game Build Planner…</button>
+          {#if game.isPoe2}
+            <button class="btn sm" onclick={saveGameBuild} title="A file the game's Build Planner can import">Game Build Planner…</button>
+          {/if}
         </div>
         {#if shareUrl}
           <div class="arow">

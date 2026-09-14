@@ -212,3 +212,84 @@ fn decode_sheet(
 
     Ok((rects, disabled, decoded, files, bytes))
 }
+
+/// PoE1's sheets are plain PNG/JPG/WebP atlases whose rects are listed in
+/// `sprites.lua`, so the manifest is a transcription: copy each sheet as it is
+/// and key every rect by the icon path or asset name PoB uses. The `*Inactive`
+/// sections are the greyscale icon variants.
+pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result<AssetStats> {
+    let sprites = crate::lua_json::eval_file(&src_tree.join("sprites.lua"))?;
+    let web = dest_tree.join("web");
+    if web.exists() {
+        fs::remove_dir_all(&web)?;
+    }
+    fs::create_dir_all(&web)?;
+
+    let mut manifest = Manifest { version: version.to_string(), ..Default::default() };
+    let mut stats = AssetStats::default();
+    let Some(sections) = sprites.get("sprites").and_then(|v| v.as_object()) else {
+        anyhow::bail!("sprites.lua has no sprites table");
+    };
+    let mut copied: BTreeMap<String, u64> = BTreeMap::new();
+    // A bloodline sheet repeats the ascendancy frame names with its own art.
+    // PoB registers them as "<Ascendancy><Asset>" (PassiveTree.lua
+    // bloodlineSpriteTypes); one sheet can serve several ascendancies.
+    let bloodline_prefixes = |section: &str| -> Vec<&'static str> {
+        match section {
+            "trialmasterBloodline" => vec!["Trialmaster"],
+            "oshabiBloodline" => vec!["Oshabi"],
+            "olrothBloodline" => vec!["Olroth"],
+            "lyciaBloodline" => vec!["Lycia"],
+            "kingInTheMistsBloodline" => vec!["KingInTheMists"],
+            "farrulBloodline" => vec!["Farrul"],
+            "deliriousBloodline" => vec!["Delirious"],
+            "catarinaBloodline" => vec!["Catarina"],
+            "breachlordBloodline" => vec!["Breachlord"],
+            "aulBloodline" => vec!["Aul"],
+            "azmeriBloodline" => vec!["Azmeri", "Warden", "Warlock", "Primalist"],
+            "abyssalBloodline" => vec!["Abyssal"],
+            "brinerotBloodline" => vec!["Brinerot"],
+            "necromanticBloodline" => vec!["Necromantic"],
+            _ => Vec::new(),
+        }
+    };
+    for (section, sheet) in sections {
+        let Some(filename) = sheet.get("filename").and_then(|v| v.as_str()) else { continue };
+        // "https://web.poecdn.com/image/passive-skill/skills-3.jpg?1540b3b6" -> "skills-3.jpg"
+        let basename = filename.rsplit('/').next().unwrap_or(filename).split('?').next().unwrap_or(filename);
+        let src = src_tree.join(basename);
+        if !src.is_file() {
+            stats.skipped.push(format!("{section}: {basename} missing"));
+            continue;
+        }
+        if !copied.contains_key(basename) {
+            let out = web.join(basename);
+            fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
+            let len = fs::metadata(&out)?.len();
+            copied.insert(basename.to_string(), len);
+            stats.files += 1;
+            stats.bytes += len;
+        }
+        stats.sheets += 1;
+        let file = format!("TreeData/{version}/web/{basename}");
+        let target = if section.ends_with("Inactive") { &mut manifest.disabled } else { &mut manifest.assets };
+        let num = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0).round() as u32;
+        let prefixes = bloodline_prefixes(section);
+        for (name, rect) in sheet.get("coords").and_then(|v| v.as_object()).into_iter().flatten() {
+            let (w, h) = (num(rect, "w"), num(rect, "h"));
+            let r = AssetRect { file: file.clone(), x: num(rect, "x"), y: num(rect, "y"), w, h, ow: w, oh: h };
+            // Plates ("ClassesAul") keep their own names; frames are prefixed
+            // so they do not replace the regular ones from frame-3.png.
+            if prefixes.is_empty() || name.starts_with("Classes") {
+                target.insert(name.clone(), r);
+            } else {
+                for p in &prefixes {
+                    target.insert(format!("{p}{name}"), r.clone());
+                }
+            }
+            stats.layers += 1;
+        }
+    }
+    fs::write(web.join("manifest.json"), serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(stats)
+}

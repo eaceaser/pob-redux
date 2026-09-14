@@ -159,7 +159,6 @@ impl EnginePool {
     /// `trim` collects each worker's garbage; only this returns the ~240 MB a
     /// live worker holds regardless.
     pub fn shrink_if_idle(&self, min_idle: Duration) -> usize {
-        // Same lock order as `sync`: synced_xml, then workers.
         let mut held = self.synced_xml.lock().unwrap();
         if self.last_used.lock().unwrap().elapsed() < min_idle {
             return 0;
@@ -172,6 +171,16 @@ impl EnginePool {
         ws.clear();
         *held = None;
         log::info!("pool: released {n} idle workers");
+        n
+    }
+
+    /// Drop every worker now: the pool is being replaced.
+    pub fn release(&self) -> usize {
+        let mut held = self.synced_xml.lock().unwrap();
+        let mut ws = self.workers.lock().unwrap();
+        let n = ws.len();
+        ws.clear();
+        *held = None;
         n
     }
 

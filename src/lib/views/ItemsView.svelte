@@ -18,6 +18,7 @@
     type TooltipLine,
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { game } from "$lib/state/game.svelte";
   import PobText from "$lib/components/PobText.svelte";
   import ItemFrame from "$lib/components/ItemFrame.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
@@ -220,7 +221,8 @@
         if (r.done) break;
       }
       const { query } = await engine.tradeSearchResult();
-      const url = `https://www.pathofexile.com/trade2/search/poe2/${encodeURIComponent(tradeLeague)}?q=${encodeURIComponent(query)}`;
+      const base = game.isPoe2 ? "https://www.pathofexile.com/trade2/search/poe2" : "https://www.pathofexile.com/trade/search";
+      const url = `${base}/${encodeURIComponent(tradeLeague)}?q=${encodeURIComponent(query)}`;
       await openUrl(url);
       tradeOpen = null;
     } catch (e) {

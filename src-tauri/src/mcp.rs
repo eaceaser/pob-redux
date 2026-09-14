@@ -48,9 +48,9 @@ fn versions() -> Cow<'static, [ProtocolVersion]> {
 pub(crate) fn tool_context(app: &AppHandle) -> Arc<ToolContext> {
     let state = app.state::<AppState>();
     Arc::new(ToolContext {
-        engine: state.engine.clone(),
-        pool: state.pool.clone(),
-        user_dir: state.user_dir.clone(),
+        engine: state.engine(),
+        pool: state.pool(),
+
         app: app.clone(),
         calls: state.mcp.calls.clone(),
     })
@@ -130,7 +130,7 @@ impl McpState {
         }
     }
 
-    fn stop(&self) {
+    pub(crate) fn stop(&self) {
         if let Some(r) = self.running.lock().unwrap().take() {
             r.task.abort();
             log::info!("mcp server stopped");
@@ -223,6 +223,9 @@ pub async fn mcp_start(app: AppHandle, port: u16) -> Result<McpStatus, String> {
 pub async fn start_with_handle(app: &AppHandle, port: u16) -> Result<McpStatus, String> {
     if port < 1024 {
         return Err("port must be 1024 or higher".into());
+    }
+    if app.state::<AppState>().game() != crate::game::Game::Poe2 {
+        return Err("the MCP server is a PoE2 feature; switch game to start it".into());
     }
     let ctx = tool_context(app);
     let token = load_or_create_token(app)?;

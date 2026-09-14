@@ -3,7 +3,7 @@ name = "pob-redux"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Path of Building for Path of Exile 2, rebuilt: Rust + Tauri shell around PoB's real calculation engine."
+description = "Path of Building for Path of Exile 1 and 2, rebuilt: Rust + Tauri shell around PoB's real calculation engines."
 authors = ["Judd <ipajudd@gmail.com>"]
 
 [lib]

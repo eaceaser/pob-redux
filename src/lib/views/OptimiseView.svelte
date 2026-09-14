@@ -12,6 +12,7 @@
     type SlotInfo,
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { game } from "$lib/state/game.svelte";
   import { stripPobText } from "$lib/pobtext";
 
   // Review: PoB's numbers plus the rule-based findings, refreshed with the build.
@@ -226,8 +227,10 @@
         <div class="fact" title="Skills that need a keypress"><span class="k">Active</span><span class="v mono">{summary.activeSkills}</span></div>
         <div class="fact" title="Persistent, trigger and meta gems"><span class="k">Automatic</span><span class="v mono">{summary.persistentSkills + summary.triggerSkills + summary.metaSkills}</span></div>
         <div class="fact" title="Main tree points, budget at level {summary.characterLevel}"><span class="k">Points</span><span class="v mono">{summary.mainTreePointsUsed}<span class="dim"> / {summary.pointsAvailableMin === summary.pointsAvailableMax ? summary.pointsAvailableMax : `${summary.pointsAvailableMin}–${summary.pointsAvailableMax}`}</span></span></div>
-        <div class="fact" title="Spirit reserved"><span class="k">Spirit</span><span class="v mono">{summary.spiritReserved}<span class="dim"> / {summary.spirit}</span></span></div>
-        <div class="fact" title="Charms equipped; slots come from the belt"><span class="k">Charms</span><span class="v mono">{summary.charmsEquipped}<span class="dim"> / {summary.charmLimit}</span></span></div>
+        {#if game.isPoe2}
+          <div class="fact" title="Spirit reserved"><span class="k">Spirit</span><span class="v mono">{summary.spiritReserved}<span class="dim"> / {summary.spirit}</span></span></div>
+          <div class="fact" title="Charms equipped; slots come from the belt"><span class="k">Charms</span><span class="v mono">{summary.charmsEquipped}<span class="dim"> / {summary.charmLimit}</span></span></div>
+        {/if}
         <div class="fact" title="Fire, cold, lightning, chaos"><span class="k">Resists</span><span class="v mono"><span class="fire" class:bad={summary.fireResist < 75}>{Math.round(summary.fireResist)}</span> / <span class="cold" class:bad={summary.coldResist < 75}>{Math.round(summary.coldResist)}</span> / <span class="lightning" class:bad={summary.lightningResist < 75}>{Math.round(summary.lightningResist)}</span> / <span class="chaos">{Math.round(summary.chaosResist)}</span></span></div>
       </div>
       <div class="findings">

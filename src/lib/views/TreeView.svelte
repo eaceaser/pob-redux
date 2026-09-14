@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type PowerStat, type TreePower } from "$lib/engine.svelte";
+  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type PowerStat, type TreePower } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
-  import { parseTree, NodeIndex, type TreeModel, type TNode } from "$lib/tree/model";
+  import { parseTree, withDynamicNodes, NodeIndex, type TreeModel, type TNode } from "$lib/tree/model";
   import { AssetStore } from "$lib/tree/assets";
   import PobText from "$lib/components/PobText.svelte";
 
@@ -12,6 +12,9 @@
   let wrap = $state<HTMLDivElement | null>(null);
   let searchEl = $state<HTMLInputElement | null>(null);
   let model = $state<TreeModel | null>(null);
+  /** The static tree; `model` adds PoE1 cluster jewel subgraphs on top. */
+  let baseModel: TreeModel | null = null;
+  let dynKey = "";
   let assets: AssetStore | null = null;
   let assetsMissing = $state(false);
   let index: NodeIndex | null = null;
@@ -36,6 +39,7 @@
 
   // follow-ups requested by the engine's click handler
   let attrMenu = $state<{ id: number; x: number; y: number } | null>(null);
+  let masteryMenu = $state<{ id: number; name: string; x: number; y: number; effects: MasteryEffect[]; selected: number | null } | null>(null);
   let classConfirm = $state<{ id: number; className: string; ascendClassName: string | null } | null>(null);
   let urlPanel = $state<"import" | "export" | null>(null);
   let urlDraft = $state("");
@@ -229,6 +233,19 @@
     invalidate();
   }
 
+  /** Enter in the search box: centre on the next match, nearest first. */
+  let matchCursor = -1;
+  function jumpToMatch() {
+    if (!model || !matches.size) return;
+    const ids = [...matches].sort((a, b) => {
+      const na = model!.nodes.get(a)!;
+      const nb = model!.nodes.get(b)!;
+      return Math.hypot(na.x - cx, na.y - cy) - Math.hypot(nb.x - cx, nb.y - cy);
+    });
+    matchCursor = (matchCursor + 1) % ids.length;
+    jumpTo(ids[matchCursor]);
+  }
+
   function edgeState(a: TNode, b: TNode): LineState {
     const aa = allocated.has(a.id);
     const ab = allocated.has(b.id);
@@ -247,8 +264,8 @@
     return "Normal";
   }
 
-  function iconFor(n: TNode): string {
-    return overrides[String(n.id)]?.icon ?? n.icon;
+  function iconFor(n: TNode, isAlloc = false): string {
+    return overrides[String(n.id)]?.icon ?? ((isAlloc && n.activeIcon) || n.icon);
   }
 
   function frameFor(n: TNode, st: "alloc" | "path" | "unalloc"): string | null {
@@ -283,7 +300,7 @@
       const cls = model.classes.find((c) => c.name === currentClass);
       if (cls && cls.bg) {
         const [bx, by] = toScreen(cls.bgX, cls.bgY);
-        const ascBg = currentAsc ? cls.ascendancies.find((a) => a.name === currentAsc)?.bg : null;
+        const ascBg = currentAsc && cls.hubAsc ? cls.ascendancies.find((a) => a.name === currentAsc)?.bg : null;
         A.draw(ctx, ascBg ?? cls.bg, bx, by, cls.bgHalf * scale, cls.bgHalf * scale);
         const start = cls.startNode != null ? model.nodes.get(cls.startNode) : null;
         if (start) {
@@ -388,7 +405,7 @@
 
       if (n.kind === "ascStart") {
         ctx.globalAlpha = n.asc === currentAsc ? 1 : 0.5;
-        A.draw(ctx, "AscendancyMiddle", sx, sy, n.size.overlay * scale, n.size.overlay * scale);
+        A.draw(ctx, n.overlay?.unalloc ?? "AscendancyMiddle", sx, sy, n.size.overlay * scale, n.size.overlay * scale);
         ctx.globalAlpha = 1;
         continue;
       }
@@ -421,7 +438,7 @@
         }
       } else {
         if (drawIcons && n.size.base > 0) {
-          const icon = iconFor(n);
+          const icon = iconFor(n, isAlloc);
           if (!isAlloc && !heat) ctx.globalAlpha *= 0.7;
           A.draw(ctx, icon, sx, sy, n.size.base * scale, n.size.base * scale, !isAlloc && !heat);
           ctx.globalAlpha = dimAsc ? 0.6 : 1;
@@ -605,6 +622,7 @@
 
   function onPointerDown(e: PointerEvent) {
     attrMenu = null;
+    masteryMenu = null;
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     canvas!.setPointerCapture(e.pointerId);
     drag = { sx: e.clientX, sy: e.clientY, cx0: cx, cy0: cy, moved: false, button: e.button };
@@ -726,6 +744,11 @@
     }
     if (button === 2) {
       if (n.isAttribute) attrMenu = { id: n.id, x: mouse.x, y: mouse.y };
+      else if (n.kind === "mastery" && allocated.has(n.id)) {
+        // PoB: right-click an allocated mastery to change its effect
+        const info = await engine.nodeInfo(n.id).catch(() => null);
+        if (info) masteryMenu = { id: n.id, name: n.name, x: mouse.x, y: mouse.y, effects: info.masteryEffects, selected: info.masterySelected };
+      }
       return;
     }
     if (button !== 0) return;
@@ -733,7 +756,15 @@
     hoverDep = new Set();
     const r = await build.clickNode(n.id);
     if (r?.needsAttribute) attrMenu = { id: n.id, x: mouse.x, y: mouse.y };
+    else if (r?.needsMastery) masteryMenu = { id: n.id, name: r.name ?? n.name, x: mouse.x, y: mouse.y, effects: r.effects ?? [], selected: r.selected ?? null };
     else if (r?.needsConfirm === "class_change") classConfirm = { id: n.id, className: r.className ?? "?", ascendClassName: r.ascendClassName ?? null };
+  }
+
+  async function pickMastery(effect: number) {
+    if (!masteryMenu) return;
+    const id = masteryMenu.id;
+    masteryMenu = null;
+    await build.selectMastery(id, effect);
   }
 
   async function pickAttribute(attr: number) {
@@ -867,6 +898,22 @@
     invalidate();
   });
 
+  /** Overlay PoE1 cluster jewel subgraphs on the static tree whenever PoB regenerates them. */
+  function applyDynamic() {
+    if (!baseModel) return;
+    const dyn = build.tree?.dynamicNodes ?? [];
+    const key = dyn.map((d) => `${d.id}:${d.x.toFixed(1)}:${d.y.toFixed(1)}:${d.links.join(",")}`).join("|");
+    if (key === dynKey && model) return;
+    dynKey = key;
+    model = withDynamicNodes(baseModel, dyn);
+    index = new NodeIndex(model.nodes.values());
+    invalidate();
+  }
+  $effect(() => {
+    void build.tree?.dynamicNodes;
+    applyDynamic();
+  });
+
   let loadedVersion = "";
   $effect(() => {
     const v = build.tree?.treeVersion;
@@ -880,8 +927,9 @@
           engine.jewelRadii().catch(() => ({ radii: [] as JewelRadius[] })),
           engine.powerStats().catch(() => ({ stats: [] as PowerStat[] })),
         ]);
-        model = parseTree(v, json);
-        index = new NodeIndex(model.nodes.values());
+        baseModel = parseTree(v, json);
+        dynKey = "";
+        applyDynamic();
         assets = store;
         assetsMissing = !store;
         jewelRadii = radii.radii;
@@ -975,7 +1023,7 @@
       </select>
     </div>
     <div class="group">
-      <input class="input search" placeholder="Search nodes…" bind:value={search} bind:this={searchEl} />
+      <input class="input search" placeholder="Search nodes… (Enter jumps)" bind:value={search} bind:this={searchEl} onkeydown={(e) => e.key === "Enter" && jumpToMatch()} />
       {#if matches.size}<span class="dim num">{matches.size}</span>{/if}
       <button class="btn sm ghost" onclick={focusClass} title="Center on class start (h)">Class</button>
       <button class="btn sm ghost" onclick={focusAscendancy} disabled={!currentAsc} title={currentAsc ? "Center on the ascendancy ring, where its 8 points are spent (a)" : "Pick an ascendancy in the sidebar first"}>Ascendancy</button>
@@ -1094,6 +1142,24 @@
       </div>
     {/if}
   
+    {#if masteryMenu}
+      <div class="menu mastery" style:left={`${Math.min(masteryMenu.x, w - 360)}px`} style:top={`${Math.min(masteryMenu.y, h - 40 * (masteryMenu.effects.length + 2))}px`}>
+        <div class="label">{masteryMenu.name}</div>
+        {#each masteryMenu.effects as e (e.effect)}
+          <button
+            class="mi effect"
+            class:on={e.effect === masteryMenu.selected}
+            disabled={e.takenBy != null && e.takenBy !== masteryMenu.id}
+            title={e.takenBy != null && e.takenBy !== masteryMenu.id ? "Taken by another mastery of this kind" : ""}
+            onclick={() => pickMastery(e.effect)}
+          >
+            {#each e.stats as s}<span>{s}</span>{/each}
+          </button>
+        {/each}
+        <button class="mi dim" onclick={() => (masteryMenu = null)}>Cancel</button>
+      </div>
+    {/if}
+
     {#if classConfirm}
       <div class="modal">
         <div class="panel dialog">
@@ -1111,7 +1177,7 @@
       </div>
     {/if}
   
-    {#if hover && !attrMenu}
+    {#if hover && !attrMenu && !masteryMenu}
       {@const ov = overrides[String(hover.id)]}
       <div class="tip" style:left={`${Math.min(mouse.x + 18, w - 340)}px`} style:top={`${Math.min(mouse.y + 18, h - 60)}px`}>
         <div class="tip-head">
@@ -1121,16 +1187,21 @@
         {#each ov?.stats?.length ? ov.stats : hover.stats as s}
           <div class="tip-stat">{s}</div>
         {/each}
+        {#if hover.masteryEffects && !allocated.has(hover.id)}
+          {#each hover.masteryEffects as e (e.effect)}
+            <div class="tip-stat dim">{e.stats.join(" / ")}</div>
+          {/each}
+        {/if}
         {#if hover.flavour}
           <div class="tip-flav">{hover.flavour}</div>
         {/if}
         <div class="tip-foot num">
           {#if allocated.has(hover.id)}
             <span style:color="var(--ok)">allocated</span>
-            <span class="dim">{hoverDep.size > 1 ? `click removes ${hoverDep.size}` : "click to remove"}{hover.isAttribute ? " · right-click to switch" : ""}</span>
+            <span class="dim">{hoverDep.size > 1 ? `click removes ${hoverDep.size}` : "click to remove"}{hover.isAttribute ? " · right-click to switch" : hover.kind === "mastery" ? " · right-click to change effect" : ""}</span>
           {:else if hoverCost != null}
             <span>{hoverCost} point{hoverCost === 1 ? "" : "s"}</span>
-            <span class="dim">{shiftDown && trace.length ? "tracing · click to allocate path" : "click to allocate · hold Shift to trace"}</span>
+            <span class="dim">{shiftDown && trace.length ? "tracing · click to allocate path" : hover.kind === "mastery" ? "click to choose an effect" : "click to allocate · hold Shift to trace"}</span>
           {:else}
             <span class="dim">…</span>
           {/if}
@@ -1374,6 +1445,28 @@
   }
   .mi:hover {
     background: var(--bg-hover);
+  }
+  .menu.mastery {
+    min-width: 280px;
+    max-width: 380px;
+  }
+  .mi.effect {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    font-size: var(--fs-xs);
+    white-space: normal;
+  }
+  .mi.effect.on {
+    color: var(--ok);
+  }
+  .mi:disabled {
+    color: var(--fg-4);
+    cursor: default;
+  }
+  .mi.dim {
+    color: var(--fg-3);
+    font-size: var(--fs-xs);
   }
   .modal {
     position: absolute;

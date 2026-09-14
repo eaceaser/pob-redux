@@ -3,7 +3,7 @@ name = "pob-sync"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Vendors the Path of Building (PoE2) Lua program and game data into the app's resources."
+description = "Vendors the Path of Building Lua program and game data (PoE1 and PoE2 forks) into the app's resources."
 
 [dependencies]
 anyhow.workspace = true
@@ -16,6 +16,8 @@ zstd = "0.13"
 image_dds = { version = "0.7", default-features = false, features = ["ddsfile", "image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 webp = { version = "0.3", default-features = false }
+# Same feature set as pob-engine so the workspace builds LuaJIT once.
+mlua = { version = "0.12", features = ["luajit", "vendored", "serde", "error-send"] }
 
 [lints]
 workspace = true

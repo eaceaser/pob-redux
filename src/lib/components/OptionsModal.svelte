@@ -1,6 +1,7 @@
 <script lang="ts">
   import { appOptions } from "$lib/state/options.svelte";
   import { mcp, mcpConfigJson } from "$lib/state/mcp.svelte";
+  import { game } from "$lib/state/game.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { getVersion } from "@tauri-apps/api/app";
   import { appUpdate } from "$lib/state/update.svelte";
@@ -113,6 +114,7 @@
           </select>
         </label>
       </div>
+      {#if game.isPoe2}
       <div class="shead">
         <span class="label">MCP server</span>
         <span class="dim" style:color={mcp.status?.running ? "var(--ok)" : undefined}>{mcp.status?.running ? "running" : "off"}</span>
@@ -165,6 +167,7 @@
           </div>
         {/if}
       </div>
+      {/if}
       <div class="shead">
         <span class="label">Updates</span>
         <span class="dim mono">{version}</span>
