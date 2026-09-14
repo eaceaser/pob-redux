@@ -1,5 +1,15 @@
 # PoB Redux
 
+[![Latest release](https://img.shields.io/github/v/release/juddisjudd/pob-redux?style=flat-square&label=release)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/juddisjudd/pob-redux/total?style=flat-square&label=downloads)](../../releases)
+[![Latest release downloads](https://img.shields.io/github/downloads/juddisjudd/pob-redux/latest/total?style=flat-square&label=latest%20downloads)](../../releases/latest)
+[![Check](https://img.shields.io/github/actions/workflow/status/juddisjudd/pob-redux/check.yml?branch=main&style=flat-square&label=check)](../../actions/workflows/check.yml)
+[![Release build](https://img.shields.io/github/actions/workflow/status/juddisjudd/pob-redux/release.yml?style=flat-square&label=release%20build)](../../actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2a2a30?style=flat-square)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/juddisjudd/pob-redux?style=flat-square)](../../commits/main)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-2a2a30?style=flat-square)
+![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Svelte%205-2a2a30?style=flat-square)
+
 A modern Path of Building UI for Path of Exile 1 and 2, powered by the community projects. Pick a game
 on first start and switch any time from the title bar; each game runs its own Path of Building.
 
