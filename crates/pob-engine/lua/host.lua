@@ -37,6 +37,15 @@ do
 	local function cachePath(abs)
 		return cacheDir .. abs:sub(#root + 1)
 	end
+	-- The C runtime words an open failure in the process locale (GTK sets it
+	-- from the desktop), and PoB matches the English text to tell a missing
+	-- Settings.xml from a broken one.
+	local function openError(abs, err)
+		if not native.file_exists(abs) then
+			return abs .. ": No such file or directory"
+		end
+		return err
+	end
 	io.open = function(p, mode, ...)
 		local abs = resolve(p)
 		mode = mode or "r"
@@ -50,9 +59,11 @@ do
 			if f then return f end
 			local cf = io_open(cachePath(abs), mode, ...)
 			if cf then return cf end
-			return nil, err
+			return nil, openError(abs, err)
 		end
-		return io_open(abs, mode, ...)
+		local f, err = io_open(abs, mode, ...)
+		if f then return f end
+		return nil, openError(abs, err)
 	end
 	io.lines = function(p, ...)
 		local abs = resolve(p)
