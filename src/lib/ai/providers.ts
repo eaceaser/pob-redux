@@ -1,11 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type ApiKind = "anthropic" | "open-ai-compatible";
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export type Effort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 
-/** Anthropic accepts two levels above `high`; everyone else stops there. */
-export const effortsFor = (kind: ApiKind): Effort[] =>
-  kind === "anthropic" ? ["low", "medium", "high", "xhigh", "max"] : ["low", "medium", "high"];
+/**
+ * Anthropic accepts two levels above `high`. OpenAI's Responses API takes
+ * `none` through `xhigh`; the other OpenAI-compatible APIs stop at `high`.
+ */
+export const effortsFor = (kind: ApiKind, provider?: string): Effort[] =>
+  kind === "anthropic"
+    ? ["low", "medium", "high", "xhigh", "max"]
+    : provider === "openai"
+      ? ["none", "low", "medium", "high", "xhigh"]
+      : ["none", "low", "medium", "high"];
 
 export interface ProviderStatus {
   id: string;
@@ -40,15 +47,21 @@ export const setBase = (provider: string, baseUrl: string) =>
 /**
  * Effort is expressed differently by each API. Claude 5 models take a top-level
  * `effort` alongside adaptive thinking — the older `thinking.type: "enabled"`
- * with a token budget is rejected by them. OpenAI-compatible providers take
- * `reasoning_effort`, which only understands the first three levels.
+ * with a token budget is rejected by them. OpenAI's Responses API and the
+ * OpenAI-compatible chat API both take `reasoning_effort`. A level the
+ * provider does not offer is clamped: above the top to the top, `none` to
+ * `medium`.
  */
 type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
 
-export function effortOptions(kind: ApiKind, effort: Effort): Record<string, Record<string, JsonValue>> {
+export function effortOptions(kind: ApiKind, effort: Effort, provider?: string): Record<string, Record<string, JsonValue>> {
+  const allowed = effortsFor(kind, provider);
+  const level: Effort = allowed.includes(effort) ? effort : effort === "none" ? "medium" : allowed[allowed.length - 1];
   if (kind === "anthropic") {
-    return { anthropic: { thinking: { type: "adaptive" }, effort } };
+    return { anthropic: { thinking: { type: "adaptive" }, effort: level } };
   }
-  const capped: Effort = effort === "xhigh" || effort === "max" ? "high" : effort;
-  return { openaiCompatible: { reasoningEffort: capped } };
+  if (provider === "openai") {
+    return { openai: { reasoningEffort: level } };
+  }
+  return { openaiCompatible: { reasoningEffort: level } };
 }

@@ -1,5 +1,6 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createOpenAI } from "@ai-sdk/openai";
 import { invoke } from "@tauri-apps/api/core";
 import { isStepCount, streamText, type LanguageModel, type ModelMessage, type ToolResultPart } from "ai";
 
@@ -647,6 +648,9 @@ class ChatStore {
     if (kind === "anthropic") {
       return createAnthropic({ apiKey: "managed-by-host", fetch })(this.model);
     }
+    if (this.provider === "openai") {
+      return createOpenAI({ baseURL: "https://managed-by-host", apiKey: "managed-by-host", fetch }).responses(this.model);
+    }
     return createOpenAICompatible({
       name: this.provider,
       baseURL: "https://managed-by-host",
@@ -725,7 +729,7 @@ class ChatStore {
       const readOnly = new Map(this.defs.map((d) => [d.name, d.read_only]));
       const kind = this.current?.kind ?? "anthropic";
       const model = this.buildModel(kind);
-      const providerOptions = this.supportsEffort ? effortOptions(kind, this.effort) : undefined;
+      const providerOptions = this.supportsEffort ? effortOptions(kind, this.effort, this.provider) : undefined;
       const instructions = (await invoke<string>("ai_instructions").catch(() => "")) + STYLE + MODE_PROMPT[this.mode];
       // Set when the model itself ends the turn, so exhausting the step budget
       // can be told apart from finishing.

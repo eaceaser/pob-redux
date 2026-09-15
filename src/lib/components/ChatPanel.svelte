@@ -408,7 +408,7 @@
             onchange={(e) => chat.setEffort((e.target as HTMLSelectElement).value as Effort)}
             title="Reasoning effort"
           >
-            {#each effortsFor(chat.current?.kind ?? "anthropic") as e}<option value={e}>{e[0].toUpperCase() + e.slice(1)}</option>{/each}
+            {#each effortsFor(chat.current?.kind ?? "anthropic", chat.provider) as e}<option value={e}>{e[0].toUpperCase() + e.slice(1)}</option>{/each}
           </select>
         {/if}
 
