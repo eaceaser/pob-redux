@@ -187,7 +187,17 @@ pub fn ai_key_set(provider: String, key: String) -> Result<(), String> {
     if key.is_empty() {
         return Err("key is empty".into());
     }
-    entry(&provider)?.set_password(key).map_err(|e| e.to_string())
+    entry(&provider)?.set_password(key).map_err(keyring_error)
+}
+
+/// On Linux the store is the D-Bus Secret Service, and keyring's own error
+/// does not say that one has to be running.
+fn keyring_error(e: keyring::Error) -> String {
+    if cfg!(target_os = "linux") {
+        format!("{e}. Storing a key needs a Secret Service (gnome-keyring or KWallet) on the session bus.")
+    } else {
+        e.to_string()
+    }
 }
 
 #[tauri::command]
