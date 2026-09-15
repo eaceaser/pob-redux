@@ -29,7 +29,8 @@ bun run tauri build   # installers land in target/release/bundle/
 bun run check         # type-check the frontend
 ```
 
-CI runs the same steps on every push and uploads the installer and the Linux packages as artifacts.
+CI type-checks and compiles on every push. Installers are built only when a `v*` tag is pushed; see
+`.github/workflows/release.yml`.
 
 If `NoDefaultCurrentDirectoryInExePath` is set in your shell, unset it before the first build. LuaJIT's
 `msvcbuild.bat` needs cmd.exe to find `minilua` in the current directory.

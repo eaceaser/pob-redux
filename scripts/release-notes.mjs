@@ -89,7 +89,7 @@ if (pinned) {
 }
 
 out.push(
-  "Windows: run the `.exe` installer. Linux: `.deb` or `.AppImage`.",
+  "Windows: run the `.exe` installer. Linux: `.rpm` on Fedora and openSUSE, `.deb` on Debian and Ubuntu, or the `.AppImage`. macOS: open the `.dmg`.",
   "Installed copies update themselves once a newer release is published.",
   "",
 );

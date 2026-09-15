@@ -25,7 +25,7 @@ jobs:
           - os: windows-latest
             bundles: nsis
           - os: ubuntu-22.04
-            bundles: deb,appimage
+            bundles: deb,rpm,appimage
           # macos-15 is an Apple Silicon runner, so this builds arm64 only --
           # the Intel half of a universal binary would need a second LuaJIT
           # build and nobody has asked for it.
@@ -133,3 +133,29 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           args: --bundles ${{ matrix.bundles }}
+
+      # Launch the AppImage on a virtual display and refuse a black window, the
+      # failure WebKitGTK produces when its GPU path breaks. Advisory for now:
+      # the screenshot is uploaded either way.
+      - name: Smoke-test the AppImage
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        env:
+          POB_REDUX_GAME: poe2
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          sudo apt-get install -y xvfb imagemagick
+          app=$(ls target/release/bundle/appimage/*.AppImage | head -1)
+          chmod +x "$app"
+          xvfb-run -a -s "-screen 0 1600x1000x24" bash -c "\"$app\" & pid=\$!; sleep 30; import -window root smoke.png; kill \$pid"
+          mean=$(convert smoke.png -colorspace Gray -format "%[fx:mean]" info:)
+          echo "mean brightness: $mean"
+          awk -v m="$mean" 'BEGIN { exit (m > 0.01) ? 0 : 1 }'
+
+      - name: Upload the smoke screenshot
+        if: runner.os == 'Linux' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-smoke
+          path: smoke.png
+          if-no-files-found: ignore

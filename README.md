@@ -25,7 +25,12 @@ for the current user only, and fetches the WebView2 runtime if Windows does not 
 Your builds stay where Path of Building keeps them, in `Documents/Path of Building (PoE2)/Builds` and
 `Documents/Path of Building/Builds`, so both apps can open the same files.
 
-Windows is the current target. CI also builds Linux packages, but nobody has tested them yet.
+Windows is the main target. Linux builds come out of CI as an `.rpm`, a `.deb` and an AppImage. Prefer the
+`.rpm` on Fedora and openSUSE and the `.deb` on Debian and Ubuntu: both use the system WebKitGTK. The
+AppImage bundles its own WebKit, which on some Mesa drivers opened to a black window; the app now starts
+with `WEBKIT_DISABLE_DMABUF_RENDERER=1` to avoid that (`POB_REDUX_GPU=1` turns the GPU path back on).
+Make the AppImage executable before running it (`chmod +x`). Saving an assistant API key needs a Secret
+Service (gnome-keyring or KWallet) on the session bus.
 
 macOS builds run on Apple Silicon: take the `.dmg` and see [MACOS.md](MACOS.md). It is not
 signed or notarized yet, so Gatekeeper needs a right-click → Open on first launch.
