@@ -7,7 +7,7 @@
  * carries the older schema, which `normalisePoe1` folds into the same shape.
  */
 
-import type { DynamicNode } from "$lib/engine.svelte";
+import type { DynamicGroup, DynamicNode } from "$lib/engine.svelte";
 
 export type NodeKind = "normal" | "notable" | "keystone" | "socket" | "mastery" | "classStart" | "ascStart" | "onlyImage";
 
@@ -76,6 +76,9 @@ export interface TAscendancy {
   x: number;
   y: number;
   half: number;
+  /** PoE2 variants: this plate stands in for `replace` while chosen, and hides when `replaceBy` is. */
+  replace: string | null;
+  replaceBy: string | null;
 }
 
 export interface TClass {
@@ -181,7 +184,7 @@ interface RawTree {
     name: string;
     integerId: number;
     background?: RawBackground;
-    ascendancies: { id: string; name: string; internalId: string; background?: RawBackground }[];
+    ascendancies: { id: string; name: string; internalId: string; background?: RawBackground; replace?: string; replaceBy?: string }[];
   }[];
   nodeOverlay: Record<string, NodeOverlay>;
   min_x: number;
@@ -531,6 +534,8 @@ export function parseTree(version: string, json: string): TreeModel {
         x: a.background!.x,
         y: a.background!.y,
         half: a.background!.width,
+        replace: a.replace ?? null,
+        replaceBy: a.replaceBy ?? null,
       })),
     startNode: classStart.get(c.name) ?? null,
   }));
@@ -552,8 +557,16 @@ export function parseTree(version: string, json: string): TreeModel {
  * socketed jewels and positions itself. Straight connectors stand in for
  * PoB's arcs around the jewel.
  */
-export function withDynamicNodes(base: TreeModel, dyn: DynamicNode[]): TreeModel {
+export function withDynamicNodes(base: TreeModel, dyn: DynamicNode[], dynGroups: DynamicGroup[] = []): TreeModel {
   if (!dyn.length) return base;
+  // Cluster rings use the Alt art, chosen like the tree's own groups.
+  const groups = base.groups.slice();
+  for (const g of dynGroups) {
+    const s = new Set(g.orbits);
+    if (s.has(3)) groups.push({ x: g.x, y: g.y, bg: "GroupBackgroundLargeHalfAlt", mirrored: true });
+    else if (s.has(2)) groups.push({ x: g.x, y: g.y, bg: "GroupBackgroundMediumAlt", mirrored: false });
+    else if (s.has(1)) groups.push({ x: g.x, y: g.y, bg: "GroupBackgroundSmallAlt", mirrored: false });
+  }
   const nodes = new Map(base.nodes);
   const edges = base.edges.slice();
   const seen = new Set<string>();
@@ -609,7 +622,7 @@ export function withDynamicNodes(base: TreeModel, dyn: DynamicNode[]): TreeModel
       edges.push({ a: a.id, b: b.id, asc: null, arc: null });
     }
   }
-  return { ...base, nodes, edges };
+  return { ...base, nodes, edges, groups };
 }
 
 /** Coarse spatial hash for hit testing. */

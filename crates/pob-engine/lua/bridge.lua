@@ -1111,6 +1111,7 @@ M.get_tree_state = function()
 		overrides[tostring(id)] = {
 			name = opt(node.dn),
 			icon = opt(node.type == "Mastery" and node.activeIcon or node.icon),
+			effect = opt(node.activeEffectImage),
 			stats = strArray(node.sd),
 			overlay = node.overlay and node.overlay.alloc and {
 				alloc = node.overlay.alloc,
@@ -1134,10 +1135,22 @@ M.get_tree_state = function()
 		if tnode and tnode.isSwitchable then
 			override(id, node)
 		end
+		-- Timeless jewels and tattoos rewrite a node in place (PassiveSpec:ReplaceNode);
+		-- the renderer's static model still holds the original.
+		if tnode and not overrides[tostring(id)] and (node.conqueredBy or (spec.hashOverrides and spec.hashOverrides[id]) or node.dn ~= tnode.dn) then
+			override(id, node)
+		end
 	end
 	table.sort(alloc)
 	local sockets = array({})
-	for nodeId in pairs(spec.tree.sockets) do
+	-- Every socket in the spec, cluster jewel sub-sockets included; tree.sockets
+	-- has only the base tree's.
+	local socketIds = {}
+	for nodeId, snode in pairs(spec.nodes) do
+		if snode.type == "Socket" then socketIds[#socketIds + 1] = nodeId end
+	end
+	table.sort(socketIds)
+	for _, nodeId in ipairs(socketIds) do
 		local ok, _, jewel = pcall(build.itemsTab.GetSocketAndJewelForNodeID, build.itemsTab, nodeId)
 		if ok and jewel then
 			sockets[#sockets + 1] = {
@@ -1149,6 +1162,8 @@ M.get_tree_state = function()
 				rarity = opt(jewel.rarity),
 				radiusIndex = opt(jewel.jewelRadiusIndex),
 				radiusLabel = opt(jewel.jewelRadiusLabel),
+				-- Timeless-style jewels: which legion's ring pair to draw.
+				conqueror = opt(jewel.jewelData and jewel.jewelData.conqueredBy and jewel.jewelData.conqueredBy.conqueror and jewel.jewelData.conqueredBy.conqueror.type),
 			}
 		end
 	end
@@ -1156,22 +1171,43 @@ M.get_tree_state = function()
 	-- jewel, absent from tree.json. Their ids start at 65536.
 	local dynamic = array({})
 	if not IS_POE2 then
-		for id, node in pairs(spec.nodes) do
-			if type(id) == "number" and id >= 65536 and node.x and node.y then
-				local links = array({})
-				for _, other in ipairs(node.linked or {}) do links[#links + 1] = other.id end
-				dynamic[#dynamic + 1] = {
-					id = id,
-					name = opt(node.dn),
-					type = opt(node.type),
-					stats = strArray(node.sd),
-					x = node.x,
-					y = node.y,
-					icon = opt(node.icon),
-					links = links,
-					expansion = node.expansionJewel ~= nil,
-					allocated = node.alloc == true,
-				}
+		-- Everything a subgraph places: the jewel's own passives (ids from
+		-- 65536) and the tree's sub-socket nodes PoB moves into the cluster.
+		local seen = {}
+		for _, sg in pairs(spec.subGraphs or {}) do
+			for _, node in pairs(sg.nodes or {}) do
+				local id = node.id
+				if type(id) == "number" and node.x and node.y and not seen[id] then
+					seen[id] = true
+					local links = array({})
+					for _, other in ipairs(node.linked or {}) do links[#links + 1] = other.id end
+					dynamic[#dynamic + 1] = {
+						id = id,
+						name = opt(node.dn),
+						type = opt(node.type),
+						stats = strArray(node.sd),
+						x = node.x,
+						y = node.y,
+						icon = opt(node.icon),
+						links = links,
+						expansion = node.expansionJewel ~= nil,
+						allocated = node.alloc == true,
+					}
+				end
+			end
+		end
+	end
+	-- One entry per cluster subgraph: its centre and the orbits it uses, which
+	-- pick the ring art (PassiveTreeView.lua renderGroup with isExpansion).
+	local dynamicGroups = array({})
+	if not IS_POE2 then
+		for _, sg in pairs(spec.subGraphs or {}) do
+			local g = sg.group
+			if g and g.x and g.y then
+				local orbits = array({})
+				for orbit in pairs(g.oo or {}) do orbits[#orbits + 1] = orbit end
+				table.sort(orbits)
+				dynamicGroups[#dynamicGroups + 1] = { x = g.x, y = g.y, orbits = orbits }
 			end
 		end
 	end
@@ -1210,6 +1246,7 @@ M.get_tree_state = function()
 		overrides = overrides,
 		sockets = sockets,
 		dynamicNodes = dynamic,
+		dynamicGroups = dynamicGroups,
 		rev = build.outputRevision,
 	}
 end

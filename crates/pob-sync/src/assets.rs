@@ -80,6 +80,8 @@ pub fn build(src_tree: &Path, dest_tree: &Path, version: &str) -> Result<AssetSt
     // tree.json "assets" (connector line/arc PNGs) are intentionally not
     // shipped; the renderer strokes connectors itself.
 
+    let src_root = src_tree.parent().and_then(Path::parent).unwrap_or(src_tree);
+    copy_standalone(src_root, &web, version, &ring_entries(), &mut manifest, &mut stats)?;
     fs::write(web.join("manifest.json"), serde_json::to_vec_pretty(&manifest)?)?;
     Ok(stats)
 }
@@ -303,12 +305,71 @@ pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result
             standalone.push((format!("{name}JewelCircle{i}"), format!("TreeData/PassiveSkillScreen{name}JewelCircle{i}.png")));
         }
     }
-    for name in ["ShadedOuterRing", "ShadedOuterRingFlipped", "ShadedInnerRing", "ShadedInnerRingFlipped"] {
-        standalone.push((name.to_string(), format!("Assets/{name}.png")));
+    standalone.extend(ring_entries());
+    // Timeless jewel node art lives in its own sheets (PassiveTree.lua loads
+    // TreeData/legion/tree-legion.lua): icon types as zoom-level arrays, plus
+    // treeAssets for the Abyss frames.
+    let legion_dir = src_root.join("TreeData").join("legion");
+    let legion_table = legion_dir.join("tree-legion.lua");
+    if legion_table.is_file() {
+        let legion = crate::lua_json::eval_file(&legion_table)?;
+        let mut sheets: Vec<(&str, &serde_json::Value)> = Vec::new();
+        for (kind, entries) in legion.as_object().into_iter().flatten() {
+            if kind == "treeAssets" {
+                for e in entries.as_array().into_iter().flatten() {
+                    sheets.push((kind, e));
+                }
+            } else if let Some(last) = entries.as_array().and_then(|a| a.last()) {
+                sheets.push((kind, last));
+            }
+        }
+        for (kind, sheet) in sheets {
+            let Some(filename) = sheet.get("filename").and_then(|v| v.as_str()) else { continue };
+            let src = legion_dir.join(filename);
+            if !src.is_file() {
+                stats.skipped.push(format!("legion: {filename} missing"));
+                continue;
+            }
+            let basename = format!("legion-{filename}");
+            if !copied.contains_key(&basename) {
+                let out = web.join(&basename);
+                fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
+                let len = fs::metadata(&out)?.len();
+                copied.insert(basename.clone(), len);
+                stats.files += 1;
+                stats.bytes += len;
+            }
+            stats.sheets += 1;
+            let file = format!("TreeData/{version}/web/{basename}");
+            let target = if kind.ends_with("Inactive") { &mut manifest.disabled } else { &mut manifest.assets };
+            let num = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0).round() as u32;
+            for (name, rect) in sheet.get("coords").and_then(|v| v.as_object()).into_iter().flatten() {
+                let (w, h) = (num(rect, "w"), num(rect, "h"));
+                target.insert(name.clone(), AssetRect { file: file.clone(), x: num(rect, "x"), y: num(rect, "y"), w, h, ow: w, oh: h });
+                stats.layers += 1;
+            }
+        }
     }
-    standalone.push(("JewelRing".to_string(), "Assets/ring.png".to_string()));
-    for (name, rel) in standalone {
-        let src = src_root.join(&rel);
+    copy_standalone(src_root, &web, version, &standalone, &mut manifest, &mut stats)?;
+    fs::write(web.join("manifest.json"), serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(stats)
+}
+
+/// The jewel radius rings PassiveTreeView.lua opens from Assets/ in both games.
+fn ring_entries() -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = ["ShadedOuterRing", "ShadedOuterRingFlipped", "ShadedInnerRing", "ShadedInnerRingFlipped"]
+        .iter()
+        .map(|name| (name.to_string(), format!("Assets/{name}.png")))
+        .collect();
+    v.push(("JewelRing".to_string(), "Assets/ring.png".to_string()));
+    v
+}
+
+/// Copies images PoB opens by path (not sheet rects) into `web/` and keys them
+/// by name; `entries` are (asset name, path relative to the PoB source root).
+fn copy_standalone(src_root: &Path, web: &Path, version: &str, entries: &[(String, String)], manifest: &mut Manifest, stats: &mut AssetStats) -> Result<()> {
+    for (name, rel) in entries {
+        let src = src_root.join(rel);
         if !src.is_file() {
             stats.skipped.push(format!("{rel} missing"));
             continue;
@@ -316,12 +377,13 @@ pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result
         let (w, h) = image::image_dimensions(&src).with_context(|| format!("read {}", src.display()))?;
         let basename = format!("{name}.png");
         let out = web.join(&basename);
-        fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
-        stats.files += 1;
-        stats.bytes += fs::metadata(&out)?.len();
+        if !out.is_file() {
+            fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
+            stats.files += 1;
+            stats.bytes += fs::metadata(&out)?.len();
+        }
         let file = format!("TreeData/{version}/web/{basename}");
-        manifest.assets.insert(name, AssetRect { file, x: 0, y: 0, w, h, ow: w, oh: h });
+        manifest.assets.insert(name.clone(), AssetRect { file, x: 0, y: 0, w, h, ow: w, oh: h });
     }
-    fs::write(web.join("manifest.json"), serde_json::to_vec_pretty(&manifest)?)?;
-    Ok(stats)
+    Ok(())
 }

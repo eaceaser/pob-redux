@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type PowerStat, type TreePower } from "$lib/engine.svelte";
+  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type PowerStat, type SocketedJewel, type Tooltip, type TreePower } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { parseTree, withDynamicNodes, NodeIndex, type TreeModel, type TNode } from "$lib/tree/model";
   import { AssetStore } from "$lib/tree/assets";
   import PobText from "$lib/components/PobText.svelte";
+  import PobTooltip from "$lib/components/PobTooltip.svelte";
 
   let canvas = $state<HTMLCanvasElement | null>(null);
   let wrap = $state<HTMLDivElement | null>(null);
@@ -30,6 +31,37 @@
   let dpr = 1;
 
   let hover = $state<TNode | null>(null);
+  // The socketed jewel's item tooltip, shown under the node tip while its socket is hovered.
+  let jewelTip = $state<Tooltip | null>(null);
+  let tipEl = $state<HTMLDivElement | null>(null);
+  const jewelTipCache = new Map<string, Tooltip>();
+  $effect(() => {
+    const h = hover;
+    const j = h?.kind === "socket" ? sockets.get(h.id) : undefined;
+    if (!j) {
+      jewelTip = null;
+      return;
+    }
+    const key = `${build.rev}:${j.itemId}`;
+    const cached = jewelTipCache.get(key);
+    if (cached) {
+      jewelTip = cached;
+      return;
+    }
+    let live = true;
+    engine
+      .itemTooltip({ itemId: j.itemId })
+      .then((r) => {
+        jewelTipCache.set(key, r);
+        if (live) jewelTip = r;
+      })
+      .catch(() => {
+        if (live) jewelTip = null;
+      });
+    return () => {
+      live = false;
+    };
+  });
   let hoverPath = $state<Set<number>>(new Set());
   let hoverDep = $state<Set<number>>(new Set());
   let hoverCost = $state<number | null>(null);
@@ -358,13 +390,39 @@
         }
         A.draw(ctx, "BGTree", bx, by, cls.ringHalf * scale, cls.ringHalf * scale);
       }
+      // A variant plate (Abyssal Lich) covers its base (Lich) only while chosen.
+      const curAscId = model.classes.flatMap((c) => c.ascendancies).find((a) => a.name === currentAsc)?.id ?? currentAsc;
       for (const c of model.classes) {
         for (const a of c.ascendancies) {
           if (!inView(a.x, a.y)) continue;
+          if (a.replaceBy && (a.replaceBy === curAscId || a.replaceBy === currentAsc)) continue;
+          if (a.replace && a.name !== currentAsc && a.id !== curAscId) continue;
           const [ax, ay] = toScreen(a.x, a.y);
           ctx.globalAlpha = a.name === currentAsc ? 1 : 0.45;
           A.draw(ctx, a.bg, ax, ay, a.half * scale, a.half * scale);
         }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // --- node glows: mastery and tattoo effects sit under the connectors (PoB layer 15) ---
+    if (A && scale > 0.045 && !(powerOn && power !== null)) {
+      for (const n of model.nodes.values()) {
+        if (n.hidden || n.kind === "classStart" || n.kind === "onlyImage" || !inView(n.x, n.y)) continue;
+        const ov = overrides[String(n.id)];
+        const effect = ov?.effect ?? n.effect;
+        if (!effect) continue;
+        let half = n.size.effect * scale;
+        if (ov?.effect) {
+          const r = A.rect(ov.effect);
+          if (!r) continue;
+          half = r.w * 1.33 * scale;
+        } else if (n.size.effect <= 0) continue;
+        const lit = !!ov?.effect || allocated.has(n.id) || hoverPath.has(n.id);
+        const dimAsc = n.asc !== null && n.asc !== currentAsc;
+        const [sx, sy] = toScreen(n.x, n.y);
+        ctx.globalAlpha = (lit ? 1 : 0.15) * (dimAsc ? 0.6 : 1);
+        A.draw(ctx, effect, sx, sy, half, half);
       }
       ctx.globalAlpha = 1;
     }
@@ -457,12 +515,6 @@
 
       ctx.globalAlpha = dimAsc ? 0.6 : 1;
 
-      if (drawEffects && n.effect && n.size.effect > 0 && !heat) {
-        ctx.globalAlpha = (isAlloc || onPath ? 1 : 0.15) * (dimAsc ? 0.6 : 1);
-        A.draw(ctx, n.effect, sx, sy, n.size.effect * scale, n.size.effect * scale);
-        ctx.globalAlpha = dimAsc ? 0.6 : 1;
-      }
-
       if (heat && !isAlloc) {
         const col = powerColor(n.id);
         if (col) {
@@ -478,7 +530,7 @@
         if (frameName) A.draw(ctx, frameName, sx, sy, n.size.base * scale, n.size.base * scale);
         const jewel = sockets.get(n.id);
         if (jewel && isAlloc) {
-          const art = jewel.title && A.has(jewel.title) ? jewel.title : jewel.baseName;
+          const art = socketArt(jewel.baseName, n.overlay?.alloc === "JewelSocketAltActive") ?? (jewel.title && A.has(jewel.title) ? jewel.title : jewel.baseName);
           if (art) A.draw(ctx, art, sx, sy, n.size.overlay * scale, n.size.overlay * scale);
         }
       } else {
@@ -564,11 +616,11 @@
         const [sx, sy] = toScreen(n.x, n.y);
         const outer = rad.outer * scale;
         const inner = rad.inner * scale * 1.06;
-        const timeless = timelessArt(j.title);
+        const rings = timelessRings(j);
         let drew: boolean;
-        if (timeless && A?.has(`${timeless}JewelCircle1`)) {
-          drew = spin(`${timeless}JewelCircle1`, sx, sy, outer, -0.7);
-          spin(`${timeless}JewelCircle2`, sx, sy, outer, 0.7);
+        if (rings) {
+          drew = spin(rings[0], sx, sy, outer, -0.7);
+          spin(rings[1], sx, sy, outer, 0.7);
         } else if (A?.has("ShadedOuterRing")) {
           drew = spin("ShadedOuterRing", sx, sy, outer, -0.7);
           spin("ShadedOuterRingFlipped", sx, sy, outer, 0.7);
@@ -598,15 +650,67 @@
     }
   }
 
-  /** The ring pair a timeless jewel draws instead of the shaded rings, by item title. */
-  function timelessArt(title: string | null): string | null {
+  /** PoB's GetJewelSocketOverlay: the art a socketed jewel puts in its socket, by base. */
+  function socketArt(base: string | null, expansion: boolean): string | null {
+    if (!base) return null;
+    const alt = expansion ? "Alt" : "";
+    switch (base) {
+      case "Crimson Jewel":
+        return `JewelSocketActiveRed${alt}`;
+      case "Viridian Jewel":
+        return `JewelSocketActiveGreen${alt}`;
+      case "Cobalt Jewel":
+        return `JewelSocketActiveBlue${alt}`;
+      case "Prismatic Jewel":
+        return `JewelSocketActivePrismatic${alt}`;
+      case "Timeless Jewel":
+        return `JewelSocketActiveLegion${alt}`;
+      case "Large Cluster Jewel":
+        return "JewelSocketActiveAltPurple";
+      case "Medium Cluster Jewel":
+        return "JewelSocketActiveAltBlue";
+      case "Small Cluster Jewel":
+        return "JewelSocketActiveAltRed";
+      case "Ursine Charm":
+        return "CharmSocketActiveStr";
+      case "Corvine Charm":
+        return "CharmSocketActiveInt";
+      case "Lupine Charm":
+        return "CharmSocketActiveDex";
+    }
+    if (base.endsWith("Eye Jewel")) return `JewelSocketActiveAbyss${alt}`;
+    return null;
+  }
+
+  /** A timeless jewel's legion when PoB did not say: PoE1's titles are fixed per legion. */
+  function conquerorOf(title: string | null): string | null {
     if (!title) return null;
-    if (title.startsWith("Glorious Vanity")) return "Vaal";
-    if (title.startsWith("Lethal Pride")) return "Karui";
-    if (title.startsWith("Brutal Restraint")) return "Maraketh";
-    if (title.startsWith("Militant Faith")) return "Templar";
-    if (title.startsWith("Elegant Hubris")) return "EternalEmpire";
-    if (title.startsWith("Heroic Tragedy")) return "Kalguuran";
+    if (title.startsWith("Glorious Vanity")) return "vaal";
+    if (title.startsWith("Lethal Pride")) return "karui";
+    if (title.startsWith("Brutal Restraint")) return "maraketh";
+    if (title.startsWith("Militant Faith")) return "templar";
+    if (title.startsWith("Elegant Hubris")) return "eternal";
+    if (title.startsWith("Heroic Tragedy")) return "kalguur";
+    return null;
+  }
+
+  /** The ring pair a timeless-style jewel draws instead of the shaded rings, in either game's asset naming. */
+  function timelessRings(j: SocketedJewel): [string, string] | null {
+    const c = j.conqueror ?? conquerorOf(j.title);
+    if (!c || !assets) return null;
+    const A = assets;
+    const poe1: Record<string, string> = { vaal: "Vaal", karui: "Karui", maraketh: "Maraketh", templar: "Templar", eternal: "EternalEmpire", kalguur: "Kalguuran" };
+    const p1 = poe1[c];
+    if (p1 && A.has(`${p1}JewelCircle1`)) return [`${p1}JewelCircle1`, `${p1}JewelCircle2`];
+    const dir = "art/textures/interface/2d/2dart/uiimages/ingame/";
+    if (c.startsWith("abyss")) {
+      const one = `${dir}abyss/abysspassiveskillscreenjewelcircle1.dds`;
+      return A.has(one) ? [one, one] : null;
+    }
+    for (const p2 of [c, c === "kalguur" ? "kalguuran" : c === "eternal" ? "eternalempire" : c]) {
+      const one = `${dir}passiveskillscreen${p2}jewelcircle1.dds`;
+      if (A.has(one)) return [one, `${dir}passiveskillscreen${p2}jewelcircle2.dds`];
+    }
     return null;
   }
 
@@ -987,10 +1091,11 @@
   function applyDynamic() {
     if (!baseModel) return;
     const dyn = build.tree?.dynamicNodes ?? [];
+    const dynGroups = build.tree?.dynamicGroups ?? [];
     const key = dyn.map((d) => `${d.id}:${d.x.toFixed(1)}:${d.y.toFixed(1)}:${d.links.join(",")}`).join("|");
     if (key === dynKey && model) return;
     dynKey = key;
-    model = withDynamicNodes(baseModel, dyn);
+    model = withDynamicNodes(baseModel, dyn, dynGroups);
     index = new NodeIndex(model.nodes.values());
     invalidate();
   }
@@ -1265,11 +1370,18 @@
   
     {#if hover && !attrMenu && !masteryMenu}
       {@const ov = overrides[String(hover.id)]}
-      <div class="tip" style:left={`${Math.min(mouse.x + 18, w - 340)}px`} style:top={`${Math.min(mouse.y + 18, h - 60)}px`}>
+      {@const socketed = hover.kind === "socket" ? sockets.get(hover.id) : undefined}
+      <div class="tip" bind:this={tipEl} style:left={`${Math.min(mouse.x + 18, w - 340)}px`} style:top={`${Math.min(mouse.y + 18, h - 60)}px`}>
         <div class="tip-head">
           <span class="tip-name" class:key={hover.kind === "keystone"} class:notable={hover.kind === "notable"}>{ov?.name ?? hover.name}</span>
           <span class="label">{hover.asc ?? hover.kind}</span>
         </div>
+        {#if socketed}
+          <div class="tip-stat">
+            <span class="dim">Socketed:</span>
+            <span class="rarity" data-rarity={socketed.rarity ?? ""}>{socketed.title ?? socketed.name}</span>
+          </div>
+        {/if}
         {#each ov?.stats?.length ? ov.stats : hover.stats as s}
           <div class="tip-stat">{s}</div>
         {/each}
@@ -1294,6 +1406,12 @@
           <span class="dim">#{hover.id}</span>
         </div>
       </div>
+      {#if socketed && jewelTip}
+        {@const r = wrap?.getBoundingClientRect()}
+        {@const tipLeft = Math.min(mouse.x + 18, w - 340)}
+        {@const beside = tipLeft + 332 + 460 <= w ? tipLeft + 332 : Math.max(8, tipLeft - 8 - 460)}
+        <PobTooltip lines={jewelTip.lines} header={jewelTip.header} x={(r?.left ?? 0) + beside} y={(r?.top ?? 0) + Math.min(mouse.y + 18, h - 60)} />
+      {/if}
     {/if}
   </div>
 </div>
@@ -1612,6 +1730,18 @@
   .tip-stat {
     color: var(--c-magic);
     line-height: 1.35;
+  }
+  .tip-stat .rarity {
+    color: var(--fg-0);
+  }
+  .tip-stat .rarity[data-rarity="UNIQUE"] {
+    color: var(--c-unique);
+  }
+  .tip-stat .rarity[data-rarity="RARE"] {
+    color: var(--c-rare);
+  }
+  .tip-stat .rarity[data-rarity="MAGIC"] {
+    color: var(--c-magic);
   }
   .tip-flav {
     margin-top: 6px;
