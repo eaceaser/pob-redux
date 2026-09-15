@@ -27,8 +27,13 @@
   const status = $derived(app.status);
   const paths = $derived(app.paths);
 
-  onMount(() => {
+  $effect(() => {
+    if (status && status.state !== "booting") return;
     const tick = window.setInterval(() => (bootDots = (bootDots + 1) % 4), 400);
+    return () => clearInterval(tick);
+  });
+
+  onMount(() => {
     // Single-letter keys belong to the tree view.
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k" && game.isPoe2) {
@@ -39,7 +44,6 @@
     window.addEventListener("keydown", onKey);
     void app.boot();
     return () => {
-      clearInterval(tick);
       window.removeEventListener("keydown", onKey);
     };
   });

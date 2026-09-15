@@ -141,7 +141,7 @@
             title={(info.file ? `${info.file}\n` : "Not saved yet. ") + "Click to rename. The file is renamed with it."}
           >
             <span class="bn">{info.name}</span>
-            {#if info.unsaved}<span class="unsaved" title="Unsaved changes">●</span>{/if}
+            {#if info.unsaved}<span class="unsaved" title="Unsaved changes (Ctrl+S saves)">●</span>{/if}
           </button>
         {/if}
       </div>

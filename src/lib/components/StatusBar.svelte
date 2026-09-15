@@ -9,10 +9,12 @@
 
   let { status, paths }: { status: EngineStatus | null; paths: AppPaths | null } = $props();
 
-  // worker engines boot in the background after the main engine; poll until all are up
+  // Workers spawn on demand and boot in the background; poll only while one is
+  // booting, and look again whenever engine activity starts or stops.
   let pool = $state<PoolStatus | null>(null);
   $effect(() => {
     if (status?.state !== "ready") return;
+    void telemetry.inflight;
     let timer = 0;
     const tick = async () => {
       try {
@@ -21,7 +23,7 @@
         pool = null;
         return;
       }
-      if (pool.ready < pool.size) timer = window.setTimeout(tick, 1500);
+      if (pool.spawned > pool.ready) timer = window.setTimeout(tick, 1500);
     };
     tick();
     return () => clearTimeout(timer);
@@ -41,7 +43,7 @@
   {#if pool && pool.size > 0}
     <div class="seg dim" title="Extra PoB engines that share node-power and gem-DPS scoring">
       <span>workers</span>
-      <span class="num" class:pulse={pool.ready < pool.size}>{pool.ready}/{pool.size}</span>
+      <span class="num" class:pulse={pool.spawned > pool.ready}>{pool.ready}/{pool.size}</span>
     </div>
   {/if}
   {#if paths?.sync}
@@ -62,6 +64,8 @@
     <button class="seg err" onclick={() => build.clearError()} title="Dismiss">
       <span>{build.error}</span>
     </button>
+  {:else if build.notice}
+    <div class="seg ok"><span>{build.notice}</span></div>
   {/if}
   {#if telemetry.lastMethod}
     <div class="seg dim">
@@ -143,6 +147,13 @@
     color: var(--bad);
     border-left: 1px solid var(--line-0);
     cursor: pointer;
+    max-width: 50vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ok {
+    color: var(--ok);
+    border-left: 1px solid var(--line-0);
     max-width: 50vw;
     overflow: hidden;
     text-overflow: ellipsis;

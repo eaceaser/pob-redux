@@ -9,6 +9,7 @@
     renameBuild,
     moveBuild,
     deleteBuild,
+    createBuildFolder,
     fetchBuildCode,
     isMobalyticsLink,
     resolveMobalytics,
@@ -161,6 +162,36 @@
     } catch {}
   }
 
+  let folderCollapsed = $state<Set<string>>(new Set());
+  try {
+    folderCollapsed = new Set(JSON.parse(localStorage.getItem("pob-redux:folders-collapsed") ?? "[]"));
+  } catch {}
+  const folderOpen = (folder: string) => !!filter.trim() || !folderCollapsed.has(folder);
+
+  function toggleFolder(folder: string) {
+    const s = new Set(folderCollapsed);
+    s.has(folder) ? s.delete(folder) : s.add(folder);
+    folderCollapsed = s;
+    try {
+      localStorage.setItem("pob-redux:folders-collapsed", JSON.stringify([...s]));
+    } catch {}
+  }
+
+  let newFolder = $state<string | null>(null);
+
+  async function commitNewFolder() {
+    const name = (newFolder ?? "").trim();
+    newFolder = null;
+    if (!name) return;
+    try {
+      await createBuildFolder(name);
+      say(`Created folder ${name}`);
+      await refresh();
+    } catch (e) {
+      build.error = String(e);
+    }
+  }
+
   async function refresh() {
     builds = await listBuilds().catch(() => []);
     folders = await listBuildFolders().catch(() => []);
@@ -238,16 +269,20 @@
 
   async function saveGameBuild() {
     commitAuthor();
-    const r = await build.run(() => engine.exportGameBuild({ author }), { sync: false });
+    const r = await build.run(() => engine.exportGameBuild({ author }), { sync: false, user: false });
     if (!r) return;
-    const p = await save({
-      defaultPath: `${gameBuilds?.dir ?? ""}\\${build.info?.name ?? r.name}.build`,
-      filters: [{ name: "Game Build Planner", extensions: ["build"] }],
-    });
-    if (p) {
+    try {
+      const p = await save({
+        defaultPath: `${gameBuilds?.dir ?? ""}\\${build.info?.name ?? r.name}.build`,
+        filters: [{ name: "Game Build Planner", extensions: ["build"] }],
+      });
+      if (!p) return;
       await writeTextFile(p, r.json);
       say(`Saved .build — ${r.passives} passives, ${r.skills} skills, ${r.gear} gear hints`);
+      build.say(`Saved ${p}`);
       refresh();
+    } catch (e) {
+      build.error = `Build Planner export: ${String(e)}`;
     }
   }
 
@@ -390,10 +425,16 @@
   }
 
   async function openXml() {
-    const p = await open({
-      multiple: false,
-      filters: [{ name: "Builds", extensions: ["xml", "build"] }],
-    });
+    let p: string | string[] | null;
+    try {
+      p = await open({
+        multiple: false,
+        filters: [{ name: "Builds", extensions: ["xml", "build"] }],
+      });
+    } catch (e) {
+      build.error = `Open dialog: ${String(e)}`;
+      return;
+    }
     if (typeof p === "string") {
       if (p.toLowerCase().endsWith(".build")) {
         await importGameBuildFile(p, p.replace(/^.*[\\/]/, "").replace(/\.build$/i, ""));
@@ -405,37 +446,34 @@
   }
 
   async function saveAs() {
-    const p = await save({
-      defaultPath: build.info?.file ?? `${paths?.builds_dir ?? ""}/${build.info?.name ?? "build"}.xml`,
-      filters: [{ name: "Path of Building", extensions: ["xml"] }],
-    });
-    if (!p) return;
-    // The dialog does not always append the filter's extension; the builds list only scans .xml.
-    const path = /.xml$/i.test(p) ? p : `${p}.xml`;
-    const r = await build.run(() => engine.saveBuildFile(path));
+    const r = await build.saveAs();
     if (r) {
-      say(`Saved ${path}`);
+      noteRecent(r.path);
+      say(`Saved ${r.path}`);
       refresh();
     }
   }
 
   async function saveCurrent() {
-    if (!build.info?.file) return saveAs();
-    const r = await build.run(() => engine.saveBuildFile());
+    const r = await build.save();
     if (r) {
-      say("Saved");
+      noteRecent(r.path);
+      say(`Saved ${r.path}`);
       refresh();
     }
   }
 
   async function exportXml() {
-    const r = await build.run(() => engine.saveBuildXml(), { sync: false });
-    if (r) {
+    const r = await build.run(() => engine.saveBuildXml(), { sync: false, user: false });
+    if (!r) return;
+    try {
       const p = await save({ defaultPath: `${build.info?.name ?? "build"}.xml`, filters: [{ name: "XML", extensions: ["xml"] }] });
-      if (p) {
-        await writeTextFile(p, r.xml);
-        say(`Exported ${p}`);
-      }
+      if (!p) return;
+      await writeTextFile(p, r.xml);
+      say(`Exported ${p}`);
+      build.say(`Exported ${p}`);
+    } catch (e) {
+      build.error = `Export: ${String(e)}`;
     }
   }
 
@@ -575,9 +613,27 @@
       </select>
       <span class="vr"></span>
       <button class="btn sm" onclick={openXml}>Open file…</button>
+      <button class="btn sm" onclick={() => (newFolder = "")}>New folder</button>
       <button class="btn sm primary" onclick={() => build.newBuild()} disabled={build.busy > 0}>New build</button>
     </div>
     <div class="list">
+      {#if newFolder !== null}
+        <div class="pdirrow">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="input grow"
+            placeholder="Folder name"
+            value={newFolder}
+            autofocus
+            oninput={(e) => (newFolder = (e.target as HTMLInputElement).value)}
+            onblur={commitNewFolder}
+            onkeydown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") (newFolder = null);
+            }}
+          />
+        </div>
+      {/if}
       {#if autosave && autosave.name !== build.info?.name}
         <div class="recover">
           <span>Unsaved session <b>{autosave.name}</b> · {fmtTime(autosave.at)}</span>
@@ -597,12 +653,18 @@
         <div class="dim small pad">No builds yet.</div>
       {/if}
       {#each grouped as [folder, items] (folder)}
-        <div class="ghead" title={paths?.builds_dir ?? ""}>{folder === "" ? "Builds" : folder}</div>
-        {#each items as b (b.path)}
-          {@render buildRow(b, false)}
-        {/each}
-        {#if items.length === 0}
-          <div class="dim small pad">empty folder</div>
+        <button class="ghead toggle" title={paths?.builds_dir ?? ""} onclick={() => toggleFolder(folder)}>
+          <span class="caret" class:open={folderOpen(folder)}>▸</span>
+          <span>{folder === "" ? "Builds" : folder}</span>
+          <span class="dim num">{items.length}</span>
+        </button>
+        {#if folderOpen(folder)}
+          {#each items as b (b.path)}
+            {@render buildRow(b, false)}
+          {/each}
+          {#if items.length === 0}
+            <div class="dim small pad">empty folder</div>
+          {/if}
         {/if}
       {/each}
       {#if game.isPoe2}
@@ -881,6 +943,22 @@
     margin-top: 8px;
     border-top: 1px solid var(--line-0);
     padding-top: 8px;
+  }
+  .ghead.toggle {
+    appearance: none;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .ghead.toggle:hover {
+    color: var(--fg-1);
   }
   .ghead.gb .act {
     margin-left: auto;

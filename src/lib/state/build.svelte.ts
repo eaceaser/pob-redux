@@ -5,6 +5,7 @@ import {
   buildFileGame,
   buildXmlGame,
   EngineError,
+  appPaths,
   type BuildInfo,
   type ClassInfo,
   type Sidebar,
@@ -14,6 +15,7 @@ import {
   type TreeState,
 } from "$lib/engine.svelte";
 import { game } from "$lib/state/game.svelte";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 const AUTOSAVE_KEY = "pob-redux:autosave";
 
@@ -173,6 +175,43 @@ class BuildStore {
 
   clearError() {
     this.error = null;
+  }
+
+  notice = $state<string | null>(null);
+  private noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  say(msg: string) {
+    this.notice = msg;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => (this.notice = null), 4_000);
+  }
+
+  async save() {
+    if (!this.info) return undefined;
+    if (!this.info.file) return this.saveAs();
+    const r = await this.run(() => engine.saveBuildFile(), { user: false });
+    if (r) this.say(`Saved ${r.path}`);
+    return r;
+  }
+
+  async saveAs() {
+    if (!this.info) return undefined;
+    let picked: string | null;
+    try {
+      const dir = this.info.file ? "" : (await appPaths()).builds_dir;
+      picked = await saveDialog({
+        defaultPath: this.info.file ?? `${dir}/${this.info.name}.xml`,
+        filters: [{ name: "Path of Building", extensions: ["xml"] }],
+      });
+    } catch (e) {
+      this.error = `Save dialog: ${String(e)}`;
+      return undefined;
+    }
+    if (!picked) return undefined;
+    const path = /\.xml$/i.test(picked) ? picked : `${picked}.xml`;
+    const r = await this.run(() => engine.saveBuildFile(path), { user: false });
+    if (r) this.say(`Saved ${r.path}`);
+    return r;
   }
 
   /** Forget the engine's state: the engine is being replaced (game switch). */

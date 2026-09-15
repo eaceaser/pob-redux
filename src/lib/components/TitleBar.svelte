@@ -35,7 +35,16 @@
     win.isMaximized().then((m) => (maximized = m));
     const un = win.onResized(async () => (maximized = await win.isMaximized()));
     const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+        void build.saveAs();
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+        if (e.key === "s") {
+          void build.save();
+          e.preventDefault();
+        }
         const t = tabs.find((t) => t.key === e.key);
         if (t && build.loaded) {
           build.view = t.id;
