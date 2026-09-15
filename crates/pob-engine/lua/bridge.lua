@@ -3584,8 +3584,24 @@ M.item_tooltip = function(p)
 	local tt = new("Tooltip"):Tooltip()
 	build.itemsTab:AddItemTooltip(tt, item, slot, dbMode and p.itemId == nil)
 	local r = tooltipPayload(tt)
+	-- PoB's Shift-hover tip describes its own window; there is no such hover here.
+	local kept = array({})
+	for _, l in ipairs(r.lines) do
+		if not (type(l.text) == "string" and l.text:find("Tip: Hold Shift", 1, true)) then kept[#kept + 1] = l end
+	end
+	r.lines = kept
 	r.rarity = opt(item.rarity)
 	return r
+end
+
+-- PoB's Ctrl+D: whether item tooltips carry the "removing this item" lines.
+-- With no `show` it only reports the current state.
+M.stat_differences = function(p)
+	ensureBuild()
+	if p and p.show ~= nil then
+		build.itemsTab.showStatDifferences = p.show == true
+	end
+	return { show = build.itemsTab.showStatDifferences == true }
 end
 
 M.item_db_equip = function(p)

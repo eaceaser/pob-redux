@@ -309,10 +309,34 @@
     build.run(() => engine.equipItem(slot, id));
   }
 
+  // PoB's own Ctrl+D: the "removing this item will give you" lines in item tooltips.
+  let statDiff = $state<boolean | null>(null);
+  engine.statDifferences().then((r) => (statDiff = r.show)).catch(() => {});
+  async function setStatDiff(show: boolean) {
+    try {
+      statDiff = (await engine.statDifferences(show)).show;
+      tipCache.clear();
+      tip = null;
+    } catch {}
+  }
+  function onKey(e: KeyboardEvent) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d" && statDiff !== null) {
+      e.preventDefault();
+      void setStatDiff(!statDiff);
+    }
+  }
+
+  // Beside the hovered row rather than under the pointer, so the row's own
+  // buttons and the rows below stay visible.
   function showTip(e: MouseEvent, key: string, fetch: () => Promise<Tooltip>) {
     clearTimeout(tipTimer);
-    const x = Math.min(e.clientX + 16, window.innerWidth - 560);
-    const y = Math.min(e.clientY + 12, Math.max(window.innerHeight - 520, 40));
+    const row = (e.currentTarget as HTMLElement | null)?.getBoundingClientRect();
+    let x = Math.min(e.clientX + 16, window.innerWidth - 560);
+    let y = Math.min(e.clientY + 12, Math.max(window.innerHeight - 520, 40));
+    if (row) {
+      x = row.right + 8 + 540 <= window.innerWidth ? row.right + 8 : Math.max(8, row.left - 540 - 8);
+      y = row.top;
+    }
     tipTimer = window.setTimeout(async () => {
       const cached = tipCache.get(key);
       if (cached) {
@@ -364,6 +388,8 @@
   };
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 {#snippet slotRow(s: SlotsResponse["slots"][number])}
   <div
     class="slot"
@@ -408,6 +434,13 @@
     <span class="vr"></span>
     <button class="btn sm" onclick={openCraft}>Craft item…</button>
     <button class="btn sm" onclick={() => openEdit(null)}>New item from text</button>
+    {#if statDiff !== null}
+      <span class="vr"></span>
+      <label class="chk small" title="Show what removing or swapping an item changes, in its tooltip (Ctrl+D)">
+        <input type="checkbox" checked={statDiff} onchange={(e) => setStatDiff((e.target as HTMLInputElement).checked)} />
+        Stat differences
+      </label>
+    {/if}
   </div>
 
   <div class="cols">
