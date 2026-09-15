@@ -83,6 +83,10 @@
     dirty = true;
     if (!raf) raf = requestAnimationFrame(frame);
   };
+  // Jewel rings turn slowly while one is on screen; a timer, not every frame.
+  const animate = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let spinning = false;
+  let spinTimer = 0;
 
   const palette = {
     bg: "#0b0b0c",
@@ -277,6 +281,14 @@
     raf = 0;
     if (!dirty || !canvas || !model) return;
     dirty = false;
+    spinning = false;
+    queueMicrotask(() => {
+      if (!spinning || !animate || spinTimer) return;
+      spinTimer = window.setTimeout(() => {
+        spinTimer = 0;
+        invalidate();
+      }, 50);
+    });
     const ctx = canvas.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
@@ -294,6 +306,39 @@
 
     // --- background tile ---
     if (A) A.tile(ctx, "Background2", w, h, 100);
+
+    // --- PoE1: class illustration, group rings, inactive class starts ---
+    if (A && model.poe1) {
+      const store = A;
+      // PoB's DrawAsset: half extents are the sheet size × 1.33 tree units.
+      const drawArt = (name: string, x: number, y: number, mirrored = false) => {
+        const r = store.rect(name);
+        if (!r) return;
+        const [sx, sy] = toScreen(x, y);
+        const hw = r.w * 1.33 * scale;
+        const hh = r.h * 1.33 * scale;
+        if (!mirrored) {
+          store.draw(ctx, name, sx, sy, hw, hh);
+          return;
+        }
+        store.draw(ctx, name, sx, sy - hh, hw, hh);
+        ctx.save();
+        ctx.translate(sx, sy + hh);
+        ctx.scale(1, -1);
+        store.draw(ctx, name, 0, 0, hw, hh);
+        ctx.restore();
+      };
+      const near = (x: number, y: number, r: number) => x >= minX - r && x <= maxX + r && y >= minY - r && y <= maxY + r;
+      const cls = model.classes.find((c) => c.name === currentClass);
+      if (cls?.area && near(cls.area.x, cls.area.y, 2000)) drawArt(cls.area.bg, cls.area.x, cls.area.y);
+      for (const g of model.groups) {
+        if (near(g.x, g.y, 400)) drawArt(g.bg, g.x, g.y, g.mirrored);
+      }
+      for (const c of model.classes) {
+        if (c.name === currentClass || c.startNode == null || !near(c.bgX, c.bgY, 400)) continue;
+        drawArt("PSStartNodeBackgroundInactive", c.bgX, c.bgY);
+      }
+    }
 
     // --- class hub and ascendancy backgrounds ---
     if (A) {
@@ -498,14 +543,42 @@
       ctx.globalAlpha = 1;
     };
     if (jewelRadii.length) {
-      // Allocated sockets with a jewel show their radius persistently (PoB's shaded rings).
+      // Allocated sockets with a jewel show their radius persistently: PoB's
+      // shaded rings, or a timeless jewel's own pair, turning slowly against
+      // each other (DrawImageRotated: angle × ms × 0.00003).
+      const t = animate ? performance.now() * 0.00003 : 0;
+      const spin = (name: string, sx: number, sy: number, half: number, speed: number) => {
+        if (!A || half <= 0) return false;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(speed * t);
+        const ok = A.draw(ctx, name, 0, 0, half, half);
+        ctx.restore();
+        return ok;
+      };
       for (const [nodeId, j] of sockets) {
         if (!j.radiusIndex || !allocated.has(nodeId) || hover?.id === nodeId) continue;
         const n = model.nodes.get(nodeId);
         const rad = jewelRadii[j.radiusIndex - 1];
         if (!n || !rad || !inView(n.x, n.y)) continue;
         const [sx, sy] = toScreen(n.x, n.y);
-        ring(sx, sy, rad, "#e6e6ea", 0.25, 1);
+        const outer = rad.outer * scale;
+        const inner = rad.inner * scale * 1.06;
+        const timeless = timelessArt(j.title);
+        let drew: boolean;
+        if (timeless && A?.has(`${timeless}JewelCircle1`)) {
+          drew = spin(`${timeless}JewelCircle1`, sx, sy, outer, -0.7);
+          spin(`${timeless}JewelCircle2`, sx, sy, outer, 0.7);
+        } else if (A?.has("ShadedOuterRing")) {
+          drew = spin("ShadedOuterRing", sx, sy, outer, -0.7);
+          spin("ShadedOuterRingFlipped", sx, sy, outer, 0.7);
+          spin("ShadedInnerRing", sx, sy, inner, -0.7);
+          spin("ShadedInnerRingFlipped", sx, sy, inner, 0.7);
+        } else {
+          drew = false;
+        }
+        if (drew) spinning = true;
+        else ring(sx, sy, rad, "#e6e6ea", 0.25, 1);
       }
       // Hovered socket: the socketed jewel's radius, or every radius when empty.
       if (hover?.kind === "socket") {
@@ -523,6 +596,18 @@
         }
       }
     }
+  }
+
+  /** The ring pair a timeless jewel draws instead of the shaded rings, by item title. */
+  function timelessArt(title: string | null): string | null {
+    if (!title) return null;
+    if (title.startsWith("Glorious Vanity")) return "Vaal";
+    if (title.startsWith("Lethal Pride")) return "Karui";
+    if (title.startsWith("Brutal Restraint")) return "Maraketh";
+    if (title.startsWith("Militant Faith")) return "Templar";
+    if (title.startsWith("Elegant Hubris")) return "EternalEmpire";
+    if (title.startsWith("Heroic Tragedy")) return "Kalguuran";
+    return null;
   }
 
   function pobColor(code: string): string {
@@ -973,6 +1058,7 @@
       window.removeEventListener("keydown", onShift);
       window.removeEventListener("keyup", onShift);
       if (raf) cancelAnimationFrame(raf);
+      if (spinTimer) clearTimeout(spinTimer);
     };
   });
 </script>

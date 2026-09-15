@@ -89,18 +89,40 @@ export interface TClass {
   ringHalf: number;
   /** The hub plate switches to the chosen ascendancy's art (PoE2); PoE1 draws that at the ascendancy instead. */
   hubAsc: boolean;
+  /** PoE1's class illustration, drawn at PoB's fixed spot when the class is current. */
+  area: { bg: string; x: number; y: number } | null;
   ascendancies: TAscendancy[];
   startNode: number | null;
 }
 
+/** PoE1 group ring art; `mirrored` is PoB's half image drawn twice, top and flipped. */
+export interface TGroupArt {
+  x: number;
+  y: number;
+  bg: string;
+  mirrored: boolean;
+}
+
 export interface TreeModel {
   version: string;
+  poe1: boolean;
   nodes: Map<number, TNode>;
   edges: TEdge[];
   classes: TClass[];
+  groups: TGroupArt[];
   classStart: Map<string, number>;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
+
+// PassiveTreeView.lua draws these at fixed tree coordinates per class id.
+const POE1_AREA: Record<number, { bg: string; x: number; y: number }> = {
+  1: { bg: "BackgroundStr", x: -2750, y: 1600 },
+  2: { bg: "BackgroundDex", x: 2550, y: 1600 },
+  3: { bg: "BackgroundInt", x: -250, y: -2200 },
+  4: { bg: "BackgroundStrDex", x: -150, y: 2350 },
+  5: { bg: "BackgroundStrInt", x: -2100, y: -1500 },
+  6: { bg: "BackgroundDexInt", x: 2350, y: -1950 },
+};
 
 interface RawNode {
   skill: number;
@@ -132,7 +154,8 @@ interface RawNode {
   isMastery?: boolean;
   isProxy?: boolean;
   isBlighted?: boolean;
-  expansionJewel?: unknown;
+  /** Cluster socket; `parent` marks a sub-socket that only exists inside a socketed cluster. */
+  expansionJewel?: { size?: number; index?: number; proxy?: string | number; parent?: string | number } | null;
   activeIcon?: string;
   inactiveIcon?: string;
   masteryEffects?: { effect: number; stats: string[] }[];
@@ -286,17 +309,25 @@ function normalisePoe1(raw: RawTree) {
     if (rn.isAscendancyStart && rn.ascendancyName) ascStart.set(rn.ascendancyName, rn);
     if (rn.isBloodline && rn.ascendancyName) raw.bloodline.add(rn.ascendancyName);
   }
+  // tree.lua group ids are 1-based while the array is not; membership decides.
+  const groupOf = (rn: RawNode) => {
+    const a = raw.groups[rn.group - 1];
+    if (a?.nodes?.includes(rn.skill)) return a;
+    const b = raw.groups[rn.group];
+    if (b?.nodes?.includes(rn.skill)) return b;
+    return a ?? b ?? null;
+  };
   // The ascendancy plate sits on its start node. Sheets are 0.3835× the
   // 1300 px source, drawn at ×1.33.
   for (const c of raw.classes) {
     const start = Object.values(raw.nodes).find((n) => n.classesStart?.includes(c.name));
     if (start) {
-      const g = raw.groups[start.group];
+      const g = groupOf(start);
       if (g) c.background = { image: POE1_START_ART[c.integerId] ?? "", x: g.x, y: g.y, width: 241 * P1, height: 241 * P1 };
     }
     for (const a of c.ascendancies) {
       const s = ascStart.get(a.id);
-      const g = s ? raw.groups[s.group] : null;
+      const g = s ? groupOf(s) : null;
       if (g) a.background = { image: `Classes${a.id}`, x: g.x, y: g.y, width: 1300 * 0.3835 * P1, height: 1300 * 0.3835 * P1 };
     }
   }
@@ -306,7 +337,7 @@ function normalisePoe1(raw: RawTree) {
     const alt = raw.alternate_ascendancies
       .map((a) => {
         const s = ascStart.get(a.id);
-        const g = s ? raw.groups[s.group] : null;
+        const g = s ? groupOf(s) : null;
         const background = g ? { image: `Classes${a.id}`, x: g.x, y: g.y, width: 1488 * 0.3835 * P1, height: 1412 * 0.3835 * P1 } : undefined;
         return { id: a.id, name: a.name, internalId: a.id, background };
       });
@@ -415,7 +446,8 @@ export function parseTree(version: string, json: string): TreeModel {
       effect: rn.activeEffectImage ?? null,
       size,
       r: kind === "mastery" ? size.base : kind === "ascStart" ? 0 : overlay ? size.overlay : 0,
-      hidden: rn.aliasPassiveSocket !== undefined || rn.isProxy === true,
+      // PassiveSpec.lua drops sub-sockets with a parent; PoB regenerates them inside a socketed cluster.
+      hidden: rn.aliasPassiveSocket !== undefined || rn.isProxy === true || rn.expansionJewel?.parent != null,
     });
   }
 
@@ -457,6 +489,28 @@ export function parseTree(version: string, json: string): TreeModel {
     }
   }
 
+  // PoE1 group rings: the largest of orbits 1..3 in use picks the art, as in
+  // PassiveTreeView.lua's renderGroup; ascendancy and proxy groups have none.
+  const groups: TGroupArt[] = [];
+  if (poe1) {
+    const orbitsOf = new Map<number, Set<number>>();
+    const skip = new Set<number>();
+    for (const rn of Object.values(raw.nodes)) {
+      const gi = gidx(rn.group);
+      if (rn.ascendancyName || rn.isProxy) skip.add(gi);
+      let s = orbitsOf.get(gi);
+      if (!s) orbitsOf.set(gi, (s = new Set()));
+      s.add(rn.orbit);
+    }
+    for (const [gi, s] of orbitsOf) {
+      const g = groupsArr[gi];
+      if (!g || skip.has(gi)) continue;
+      if (s.has(3)) groups.push({ x: g.x, y: g.y, bg: "PSGroupBackground3", mirrored: true });
+      else if (s.has(2)) groups.push({ x: g.x, y: g.y, bg: "PSGroupBackground2", mirrored: false });
+      else if (s.has(1)) groups.push({ x: g.x, y: g.y, bg: "PSGroupBackground1", mirrored: false });
+    }
+  }
+
   const classes: TClass[] = raw.classes.map((c) => ({
     name: c.name,
     id: c.integerId,
@@ -467,6 +521,7 @@ export function parseTree(version: string, json: string): TreeModel {
     activeHalf: c.background?.active?.width ?? (poe1 ? 0 : 2000),
     ringHalf: c.background?.bg?.width ?? (poe1 ? 0 : 2000),
     hubAsc: !poe1,
+    area: poe1 ? (POE1_AREA[c.integerId] ?? null) : null,
     ascendancies: c.ascendancies
       .filter((a) => a.background)
       .map((a) => ({
@@ -482,9 +537,11 @@ export function parseTree(version: string, json: string): TreeModel {
 
   return {
     version,
+    poe1,
     nodes,
     edges,
     classes,
+    groups,
     classStart,
     bounds: { minX: raw.min_x, minY: raw.min_y, maxX: raw.max_x, maxY: raw.max_y },
   };
@@ -502,7 +559,7 @@ export function withDynamicNodes(base: TreeModel, dyn: DynamicNode[]): TreeModel
   const seen = new Set<string>();
   for (const d of dyn) {
     const kind: NodeKind = d.type === "Notable" ? "notable" : d.type === "Keystone" ? "keystone" : d.type === "Socket" ? "socket" : "normal";
-    const rn = { expansionJewel: d.expansion || undefined } as RawNode;
+    const rn = { expansionJewel: d.expansion ? {} : undefined } as RawNode;
     const size = targetSizePoe1(rn, kind);
     const overlay = poe1Overlay(rn, kind);
     nodes.set(d.id, {

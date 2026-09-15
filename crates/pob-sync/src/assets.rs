@@ -290,6 +290,38 @@ pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result
             stats.layers += 1;
         }
     }
+    // Standalone images PoB loads outside the sheets: the class illustrations
+    // beside the version folders (LoadImage checks TreeData/ first) and the
+    // jewel radius rings PassiveTreeView.lua opens by path.
+    let src_root = src_tree.parent().and_then(Path::parent).unwrap_or(src_tree);
+    let mut standalone: Vec<(String, String)> = Vec::new();
+    for name in ["BackgroundStr", "BackgroundDex", "BackgroundInt", "BackgroundStrDex", "BackgroundStrInt", "BackgroundDexInt"] {
+        standalone.push((name.to_string(), format!("TreeData/{name}.png")));
+    }
+    for name in ["EternalEmpire", "Karui", "Maraketh", "Templar", "Vaal", "Kalguuran"] {
+        for i in 1..=2 {
+            standalone.push((format!("{name}JewelCircle{i}"), format!("TreeData/PassiveSkillScreen{name}JewelCircle{i}.png")));
+        }
+    }
+    for name in ["ShadedOuterRing", "ShadedOuterRingFlipped", "ShadedInnerRing", "ShadedInnerRingFlipped"] {
+        standalone.push((name.to_string(), format!("Assets/{name}.png")));
+    }
+    standalone.push(("JewelRing".to_string(), "Assets/ring.png".to_string()));
+    for (name, rel) in standalone {
+        let src = src_root.join(&rel);
+        if !src.is_file() {
+            stats.skipped.push(format!("{rel} missing"));
+            continue;
+        }
+        let (w, h) = image::image_dimensions(&src).with_context(|| format!("read {}", src.display()))?;
+        let basename = format!("{name}.png");
+        let out = web.join(&basename);
+        fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
+        stats.files += 1;
+        stats.bytes += fs::metadata(&out)?.len();
+        let file = format!("TreeData/{version}/web/{basename}");
+        manifest.assets.insert(name, AssetRect { file, x: 0, y: 0, w, h, ow: w, oh: h });
+    }
     fs::write(web.join("manifest.json"), serde_json::to_vec_pretty(&manifest)?)?;
     Ok(stats)
 }
