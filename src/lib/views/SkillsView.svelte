@@ -536,7 +536,7 @@
     border: 1px solid transparent;
     background: none;
     color: var(--fg-3);
-    font-size: 9px;
+    font-size: 10px;
     width: 18px;
     height: 18px;
     cursor: pointer;

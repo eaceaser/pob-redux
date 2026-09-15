@@ -868,7 +868,7 @@
     color: var(--bad);
   }
   .tdelta.dim {
-    color: var(--fg-4);
+    color: var(--fg-3);
   }
   .pill {
     appearance: none;

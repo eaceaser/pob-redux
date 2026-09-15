@@ -24,9 +24,9 @@
 
   --fg-0: #f2f2f4;
   --fg-1: #b9b9c1;
-  --fg-2: #80808a;
-  --fg-3: #56565f;
-  --fg-4: #3a3a42;
+  --fg-2: #8a8a94;
+  --fg-3: #76767f;
+  --fg-4: #484850;
 
   --focus: #7f9dff;
   --ok: #67d38a;
@@ -75,9 +75,9 @@
 
   --fg-0: #1b1b1f;
   --fg-1: #3f3f47;
-  --fg-2: #6d6d78;
-  --fg-3: #9c9ca6;
-  --fg-4: #c3c3ca;
+  --fg-2: #5f5f69;
+  --fg-3: #70707a;
+  --fg-4: #b0b0b8;
 
   --focus: #3b5bdb;
   --ok: #1f8f4a;
@@ -105,6 +105,32 @@
   --backdrop: rgb(40 40 50 / 0.35);
   --shadow-pop: 0 8px 30px rgba(30, 30, 40, 0.16);
   --shadow-modal: 0 12px 40px rgba(30, 30, 40, 0.2);
+}
+
+/* Contrast steps remap the grey ramp only; hues and hairlines stay put. */
+:root[data-contrast="more"] {
+  --fg-1: #c4c4cb;
+  --fg-2: #9a9aa4;
+  --fg-3: #8a8a94;
+  --fg-4: #5e5e67;
+}
+:root[data-contrast="most"] {
+  --fg-1: #d4d4da;
+  --fg-2: #a8a8b2;
+  --fg-3: #9a9aa4;
+  --fg-4: #72727c;
+}
+:root[data-theme="light"][data-contrast="more"] {
+  --fg-1: #33333a;
+  --fg-2: #55555f;
+  --fg-3: #6d6d78;
+  --fg-4: #8a8a94;
+}
+:root[data-theme="light"][data-contrast="most"] {
+  --fg-1: #2a2a30;
+  --fg-2: #4a4a54;
+  --fg-3: #55555f;
+  --fg-4: #76767f;
 }
 
 :root {
@@ -326,7 +352,7 @@ optgroup {
   letter-spacing: -0.01em;
 }
 .label {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;

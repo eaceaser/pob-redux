@@ -3,7 +3,9 @@
   import { onMount } from "svelte";
   import { build, type ViewId } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
+  import { appOptions } from "$lib/state/options.svelte";
   import { game, GAME_SHORT, GAME_LABEL } from "$lib/state/game.svelte";
+  import Icon from "$lib/components/Icon.svelte";
 
   const otherGame = $derived(game.isPoe2 ? "poe1" : "poe2");
   import logo from "$lib/assets/logo.png";
@@ -49,6 +51,22 @@
         }
         if (e.key === "b") {
           ui.toggleSidebar();
+          e.preventDefault();
+        }
+        if (e.key === ",") {
+          appOptions.open = true;
+          e.preventDefault();
+        }
+        if (e.key === "=" || e.key === "+") {
+          ui.stepScale(1);
+          e.preventDefault();
+        }
+        if (e.key === "-") {
+          ui.stepScale(-1);
+          e.preventDefault();
+        }
+        if (e.key === "0") {
+          ui.setScale(1);
           e.preventDefault();
         }
       }
@@ -114,6 +132,9 @@
   <div class="spacer" data-tauri-drag-region></div>
 
   <div class="controls">
+    <button class="wc opts" aria-label="Options" title="Options (Ctrl+,)" onclick={() => (appOptions.open = true)}>
+      <Icon name="gear" size={15} />
+    </button>
     <button class="wc" aria-label="Minimize" onclick={() => win.minimize()}>
       <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5.5h10" stroke="currentColor" stroke-width="1" /></svg>
     </button>
@@ -210,7 +231,7 @@
     border-radius: var(--r-1);
     cursor: pointer;
     font-family: var(--font-mono);
-    font-size: var(--fs-2xs);
+    font-size: var(--fs-xs);
     letter-spacing: 0.06em;
   }
   .gswitch:hover:not(:disabled) {
@@ -221,7 +242,7 @@
     opacity: 0.6;
   }
   .glabel {
-    color: var(--fg-4);
+    color: var(--fg-2);
   }
   .glabel.on {
     color: var(--ok);
@@ -317,6 +338,12 @@
   .wc:hover {
     background: var(--bg-hover);
     color: var(--fg-0);
+  }
+  .wc.opts {
+    width: 40px;
+    margin-right: 6px;
+    border-right: 1px solid var(--line-0);
+    cursor: pointer;
   }
   .wc.close:hover {
     background: #c42b1c;

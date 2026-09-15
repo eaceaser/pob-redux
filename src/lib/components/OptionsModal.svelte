@@ -5,7 +5,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { getVersion } from "@tauri-apps/api/app";
   import { appUpdate } from "$lib/state/update.svelte";
-  import { ui, type Theme } from "$lib/state/ui.svelte";
+  import { ui, type Theme, type Contrast } from "$lib/state/ui.svelte";
 
   const mcpUrl = $derived(mcp.status?.running ? mcp.status.url : null);
   const mcpToken = $derived(mcp.status?.token ?? "");
@@ -31,6 +31,14 @@
     ["dark", "Dark"],
     ["light", "Light"],
   ];
+  const contrasts: [Contrast, string][] = [
+    ["system", "System"],
+    ["normal", "Normal"],
+    ["more", "More"],
+    ["most", "Most"],
+  ];
+  const scalePresets = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+  const scales = $derived(scalePresets.includes(ui.scale) ? scalePresets : [...scalePresets, ui.scale].sort((a, b) => a - b));
 
   const v = $derived(appOptions.values);
 
@@ -56,6 +64,28 @@
             {/each}
           </div>
         </div>
+        <div class="opt">
+          <span>
+            Contrast
+            <span class="hint">Lifts the grey text tones. System follows the OS setting.</span>
+          </span>
+          <div class="seg" role="radiogroup" aria-label="Contrast">
+            {#each contrasts as [id, label] (id)}
+              <button role="radio" aria-checked={ui.contrast === id} class:on={ui.contrast === id} onclick={() => ui.setContrast(id)}>{label}</button>
+            {/each}
+          </div>
+        </div>
+        <label class="opt">
+          <span>
+            Interface scale
+            <span class="hint">Ctrl+= and Ctrl+- step it, Ctrl+0 resets.</span>
+          </span>
+          <select class="select" value={String(ui.scale)} onchange={(e) => ui.setScale(Number((e.target as HTMLSelectElement).value))}>
+            {#each scales as s (s)}
+              <option value={String(s)}>{Math.round(s * 100)}%</option>
+            {/each}
+          </select>
+        </label>
       </div>
       <div class="shead"><span class="label">Numbers and defaults</span></div>
       <div class="rows">

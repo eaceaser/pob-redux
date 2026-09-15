@@ -431,7 +431,7 @@
   }
   .unsaved {
     color: var(--warn);
-    font-size: 8px;
+    font-size: 10px;
     flex: 0 0 auto;
   }
   .lorow {
@@ -487,7 +487,7 @@
     color: var(--fg-4);
   }
   .label2 {
-    font-size: var(--fs-2xs);
+    font-size: var(--fs-xs);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -511,11 +511,11 @@
     align-items: center;
     gap: 8px;
     padding: 14px 0 4px;
-    font-size: var(--fs-2xs);
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--fg-3);
+    color: var(--fg-2);
   }
   .sgroup::after {
     content: "";
@@ -599,7 +599,7 @@
     overflow-y: auto;
   }
   .small {
-    font-size: var(--fs-2xs);
+    font-size: var(--fs-xs);
   }
   .warnings {
     margin-top: 12px;

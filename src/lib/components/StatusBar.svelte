@@ -83,8 +83,8 @@
       <Icon name="chat-text" size={15} />
     </button>
   {/if}
-  <button class="seg iconbtn" onclick={() => (appOptions.open = true)} title="Options" aria-label="Options" disabled={!appOptions.values}>
-    <Icon name="gear" size={15} />
+  <button class="seg iconbtn" onclick={() => (appOptions.open = true)} title="Options (Ctrl+,)" aria-label="Options" disabled={!appOptions.values}>
+    <Icon name="gear" size={17} />
   </button>
 </footer>
 
@@ -95,7 +95,7 @@
     align-items: stretch;
     background: var(--bg-1);
     border-top: 1px solid var(--line-0);
-    font-size: var(--fs-2xs);
+    font-size: var(--fs-xs);
     color: var(--fg-2);
     letter-spacing: 0.02em;
   }
@@ -129,7 +129,7 @@
      leaves it off-axis, so centre it explicitly on a fixed width. */
   .iconbtn {
     justify-content: center;
-    width: 32px;
+    width: 34px;
     padding: 0;
     border-left: 1px solid var(--line-0);
     border-right: 0;
