@@ -164,26 +164,27 @@
     return [(sx - w / 2) / scale + cx, (sy - h / 2) / scale + cy];
   }
 
-  function nodeState(n: TNode): "alloc" | "path" | "unalloc" {
-    if (allocated.has(n.id) || hover?.id === n.id) return "alloc";
-    if (hoverPath.has(n.id)) return "path";
+  function nodeState(n: TNode, S: Scene): "alloc" | "path" | "unalloc" {
+    if (S.alloc.has(n.id) || S.hover?.id === n.id) return "alloc";
+    if (S.path.has(n.id)) return "path";
     return "unalloc";
   }
 
   /** PoB's heat-map colour: offence → red, defence → blue, both → green mix. */
-  function powerColor(id: number): string | null {
-    if (!power) return null;
-    const pw = power.nodes[String(id)];
+  function powerColor(id: number, S: Scene): string | null {
+    const pwr = S.heat;
+    if (!pwr) return null;
+    const pw = pwr.nodes[String(id)];
     if (!pw) return null;
     const curve = (v: number, max: number) => Math.min(1, Math.sqrt((Math.max(v, 0) / (max || 1)) * 1.5));
     let r = 0;
     let g = 0;
     let b = 0;
-    if (power.stat) {
-      r = curve(pw.s ?? 0, power.max.singleStat);
+    if (pwr.stat) {
+      r = curve(pw.s ?? 0, pwr.max.singleStat);
     } else {
-      const dps = curve(pw.o ?? 0, power.max.offence);
-      const def = curve(pw.d ?? 0, power.max.defence);
+      const dps = curve(pw.o ?? 0, pwr.max.offence);
+      const def = curve(pw.d ?? 0, pwr.max.defence);
       const mix = (Math.max(dps - 0.5, 0) + Math.max(def - 0.5, 0)) / 2;
       r = dps;
       g = mix;
@@ -282,31 +283,117 @@
     jumpTo(ids[matchCursor]);
   }
 
-  function edgeState(a: TNode, b: TNode): LineState {
-    const aa = allocated.has(a.id);
-    const ab = allocated.has(b.id);
-    if (hoverDep.size && hoverDep.has(a.id) && hoverDep.has(b.id)) return "Depend";
-    if (compareAlloc) {
-      const ca = compareAlloc.has(a.id);
-      const cb = compareAlloc.has(b.id);
+  function edgeState(a: TNode, b: TNode, S: Scene): LineState {
+    const aa = S.alloc.has(a.id);
+    const ab = S.alloc.has(b.id);
+    if (S.dep.size && S.dep.has(a.id) && S.dep.has(b.id)) return "Depend";
+    if (S.cmp) {
+      const ca = S.cmp.has(a.id);
+      const cb = S.cmp.has(b.id);
       if (ca && cb && !(aa && ab)) return "CompareGain";
       if (aa && ab && !(ca && cb)) return "CompareLoss";
     }
     if (aa && ab) return "Active";
-    if (hoverPath.size) {
-      const q = (n: TNode) => n.id === hover?.id || hoverPath.has(n.id) || allocated.has(n.id);
+    if (S.path.size) {
+      const q = (n: TNode) => n.id === S.hover?.id || S.path.has(n.id) || S.alloc.has(n.id);
       if (q(a) && q(b)) return "Intermediate";
     }
     return "Normal";
   }
 
-  function iconFor(n: TNode, isAlloc = false): string {
-    return overrides[String(n.id)]?.icon ?? ((isAlloc && n.activeIcon) || n.icon);
+  function iconFor(n: TNode, S: Scene, isAlloc = false): string {
+    return S.ov[String(n.id)]?.icon ?? ((isAlloc && n.activeIcon) || n.icon);
   }
 
-  function frameFor(n: TNode, st: "alloc" | "path" | "unalloc"): string | null {
-    const ov = overrides[String(n.id)]?.overlay;
+  function frameFor(n: TNode, S: Scene, st: "alloc" | "path" | "unalloc"): string | null {
+    const ov = S.ov[String(n.id)]?.overlay;
     return ov?.[st] ?? n.overlay?.[st] ?? null;
+  }
+
+  // Everything a frame reads from reactive state, read once: a signal read
+  // per node per frame was a fifth of the frame time.
+  interface Scene {
+    alloc: Set<number>;
+    ov: typeof overrides;
+    sockets: typeof sockets;
+    asc: string | null;
+    cls: string | null;
+    hover: TNode | null;
+    path: Set<number>;
+    dep: Set<number>;
+    match: Set<number>;
+    cmp: Set<number> | null;
+    heat: TreePower | null;
+    radii: JewelRadius[];
+  }
+  interface View {
+    cx: number;
+    cy: number;
+    w: number;
+    h: number;
+  }
+  function scene(): Scene {
+    return {
+      alloc: allocated,
+      ov: overrides,
+      sockets,
+      asc: currentAsc,
+      cls: currentClass,
+      hover,
+      path: hoverPath,
+      dep: hoverDep,
+      match: matches,
+      cmp: compareAlloc,
+      heat: powerOn && power !== null ? power : null,
+      radii: jewelRadii,
+    };
+  }
+  function viewMath(V: View) {
+    const margin = 4000 * scale;
+    const minX = V.cx - (V.w / 2 + margin) / scale;
+    const maxX = V.cx + (V.w / 2 + margin) / scale;
+    const minY = V.cy - (V.h / 2 + margin) / scale;
+    const maxY = V.cy + (V.h / 2 + margin) / scale;
+    return {
+      toScreen: (x: number, y: number): [number, number] => [(x - V.cx) * scale + V.w / 2, (y - V.cy) * scale + V.h / 2],
+      inView: (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY,
+      near: (x: number, y: number, r: number) => x >= minX - r && x <= maxX + r && y >= minY - r && y <= maxY + r,
+    };
+  }
+
+  // While dragging, the scene is drawn once into a canvas larger than the
+  // view and each frame blits it. Anything in the key changes the picture.
+  let layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; cx: number; cy: number; w: number; h: number; key: unknown[] } | null = null;
+  let assetsGen = 0;
+  function layerKey(S: Scene): unknown[] {
+    return [scale, dpr, w, h, model, assetsGen, S.alloc, S.ov, S.sockets, S.asc, S.cls, S.hover, S.path, S.dep, S.match, S.cmp, S.heat, S.radii];
+  }
+  function layerValid(S: Scene): boolean {
+    if (!layer) return false;
+    const k = layerKey(S);
+    if (k.length !== layer.key.length || k.some((v, i) => v !== layer!.key[i])) return false;
+    return Math.abs(cx - layer.cx) * scale <= (layer.w - w) / 2 && Math.abs(cy - layer.cy) * scale <= (layer.h - h) / 2;
+  }
+  function renderLayer(S: Scene) {
+    const lw = w + 2 * Math.min(Math.round(w / 2), 900);
+    const lh = h + 2 * Math.min(Math.round(h / 2), 700);
+    if (!layer) {
+      const c = document.createElement("canvas");
+      layer = { canvas: c, ctx: c.getContext("2d")!, cx: 0, cy: 0, w: 0, h: 0, key: [] };
+    }
+    const pw = Math.floor(lw * dpr);
+    const ph = Math.floor(lh * dpr);
+    if (layer.canvas.width !== pw || layer.canvas.height !== ph) {
+      layer.canvas.width = pw;
+      layer.canvas.height = ph;
+    }
+    layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawScene(layer.ctx, S, { cx, cy, w: lw, h: lh });
+    layer.cx = cx;
+    layer.cy = cy;
+    layer.w = lw;
+    layer.h = lh;
+    layer.key = layerKey(S);
   }
 
   function frame() {
@@ -323,21 +410,32 @@
     });
     const ctx = canvas.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const S = scene();
+    const V: View = { cx, cy, w, h };
+    if (drag?.moved) {
+      if (!layerValid(S)) renderLayer(S);
+      const L = layer!;
+      ctx.fillStyle = palette.bg;
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(L.canvas, 0, 0, L.canvas.width, L.canvas.height, (L.cx - cx) * scale + (w - L.w) / 2, (L.cy - cy) * scale + (h - L.h) / 2, L.w, L.h);
+    } else {
+      drawScene(ctx, S, V);
+    }
+    drawRings(ctx, S, V);
+  }
+
+  function drawScene(ctx: CanvasRenderingContext2D, S: Scene, V: View) {
+    const { toScreen, inView, near } = viewMath(V);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "medium";
     ctx.fillStyle = palette.bg;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, V.w, V.h);
 
     const A = assets;
-    const margin = 4000 * scale;
-    const minX = cx - (w / 2 + margin) / scale;
-    const maxX = cx + (w / 2 + margin) / scale;
-    const minY = cy - (h / 2 + margin) / scale;
-    const maxY = cy + (h / 2 + margin) / scale;
-    const inView = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
+    if (!model) return;
 
     // --- background tile ---
-    if (A) A.tile(ctx, "Background2", w, h, 100);
+    if (A) A.tile(ctx, "Background2", V.w, V.h, 100);
 
     // --- PoE1: class illustration, group rings, inactive class starts ---
     if (A && model.poe1) {
@@ -360,24 +458,23 @@
         store.draw(ctx, name, 0, 0, hw, hh);
         ctx.restore();
       };
-      const near = (x: number, y: number, r: number) => x >= minX - r && x <= maxX + r && y >= minY - r && y <= maxY + r;
-      const cls = model.classes.find((c) => c.name === currentClass);
+      const cls = model.classes.find((c) => c.name === S.cls);
       if (cls?.area && near(cls.area.x, cls.area.y, 2000)) drawArt(cls.area.bg, cls.area.x, cls.area.y);
       for (const g of model.groups) {
         if (near(g.x, g.y, 400)) drawArt(g.bg, g.x, g.y, g.mirrored);
       }
       for (const c of model.classes) {
-        if (c.name === currentClass || c.startNode == null || !near(c.bgX, c.bgY, 400)) continue;
+        if (c.name === S.cls || c.startNode == null || !near(c.bgX, c.bgY, 400)) continue;
         drawArt("PSStartNodeBackgroundInactive", c.bgX, c.bgY);
       }
     }
 
     // --- class hub and ascendancy backgrounds ---
     if (A) {
-      const cls = model.classes.find((c) => c.name === currentClass);
+      const cls = model.classes.find((c) => c.name === S.cls);
       if (cls && cls.bg) {
         const [bx, by] = toScreen(cls.bgX, cls.bgY);
-        const ascBg = currentAsc && cls.hubAsc ? cls.ascendancies.find((a) => a.name === currentAsc)?.bg : null;
+        const ascBg = S.asc && cls.hubAsc ? cls.ascendancies.find((a) => a.name === S.asc)?.bg : null;
         A.draw(ctx, ascBg ?? cls.bg, bx, by, cls.bgHalf * scale, cls.bgHalf * scale);
         const start = cls.startNode != null ? model.nodes.get(cls.startNode) : null;
         if (start) {
@@ -391,14 +488,14 @@
         A.draw(ctx, "BGTree", bx, by, cls.ringHalf * scale, cls.ringHalf * scale);
       }
       // A variant plate (Abyssal Lich) covers its base (Lich) only while chosen.
-      const curAscId = model.classes.flatMap((c) => c.ascendancies).find((a) => a.name === currentAsc)?.id ?? currentAsc;
+      const curAscId = model.classes.flatMap((c) => c.ascendancies).find((a) => a.name === S.asc)?.id ?? S.asc;
       for (const c of model.classes) {
         for (const a of c.ascendancies) {
           if (!inView(a.x, a.y)) continue;
-          if (a.replaceBy && (a.replaceBy === curAscId || a.replaceBy === currentAsc)) continue;
-          if (a.replace && a.name !== currentAsc && a.id !== curAscId) continue;
+          if (a.replaceBy && (a.replaceBy === curAscId || a.replaceBy === S.asc)) continue;
+          if (a.replace && a.name !== S.asc && a.id !== curAscId) continue;
           const [ax, ay] = toScreen(a.x, a.y);
-          ctx.globalAlpha = a.name === currentAsc ? 1 : 0.45;
+          ctx.globalAlpha = a.name === S.asc ? 1 : 0.45;
           A.draw(ctx, a.bg, ax, ay, a.half * scale, a.half * scale);
         }
       }
@@ -406,10 +503,10 @@
     }
 
     // --- node glows: mastery and tattoo effects sit under the connectors (PoB layer 15) ---
-    if (A && scale > 0.045 && !(powerOn && power !== null)) {
+    if (A && scale > 0.045 && S.heat === null) {
       for (const n of model.nodes.values()) {
         if (n.hidden || n.kind === "classStart" || n.kind === "onlyImage" || !inView(n.x, n.y)) continue;
-        const ov = overrides[String(n.id)];
+        const ov = S.ov[String(n.id)];
         const effect = ov?.effect ?? n.effect;
         if (!effect) continue;
         let half = n.size.effect * scale;
@@ -418,8 +515,8 @@
           if (!r) continue;
           half = r.w * 1.33 * scale;
         } else if (n.size.effect <= 0) continue;
-        const lit = !!ov?.effect || allocated.has(n.id) || hoverPath.has(n.id);
-        const dimAsc = n.asc !== null && n.asc !== currentAsc;
+        const lit = !!ov?.effect || S.alloc.has(n.id) || S.path.has(n.id);
+        const dimAsc = n.asc !== null && n.asc !== S.asc;
         const [sx, sy] = toScreen(n.x, n.y);
         ctx.globalAlpha = (lit ? 1 : 0.15) * (dimAsc ? 0.6 : 1);
         A.draw(ctx, effect, sx, sy, half, half);
@@ -434,8 +531,8 @@
       const a = model.nodes.get(e.a)!;
       const b = model.nodes.get(e.b)!;
       if (!inView(a.x, a.y) && !inView(b.x, b.y)) continue;
-      const st = edgeState(a, b);
-      const dim = e.asc !== null && e.asc !== currentAsc;
+      const st = edgeState(a, b, S);
+      const dim = e.asc !== null && e.asc !== S.asc;
       const key = `${st}:${dim ? 1 : 0}`;
       let list = perState.get(key);
       if (!list) perState.set(key, (list = []));
@@ -477,21 +574,21 @@
     // --- nodes ---
     const drawEffects = scale > 0.045;
     const drawIcons = scale > 0.03;
-    const heat = powerOn && power !== null;
-    const hoverJewel = hover?.kind === "socket" ? sockets.get(hover.id) : undefined;
-    const hoverSocketSet = hoverJewel?.radiusIndex ? (socketRadius.get(hover!.id) ?? null) : null;
-    const hoverSocketColor = hoverJewel?.radiusIndex ? pobColor(jewelRadii[hoverJewel.radiusIndex - 1]?.color ?? "") : palette.search;
+    const heat = S.heat !== null;
+    const hoverJewel = S.hover?.kind === "socket" ? S.sockets.get(S.hover.id) : undefined;
+    const hoverSocketSet = hoverJewel?.radiusIndex ? (socketRadius.get(S.hover!.id) ?? null) : null;
+    const hoverSocketColor = hoverJewel?.radiusIndex ? pobColor(S.radii[hoverJewel.radiusIndex - 1]?.color ?? "") : palette.search;
     for (const n of model.nodes.values()) {
       if (n.hidden || n.kind === "classStart") continue;
       if (!inView(n.x, n.y)) continue;
       const [sx, sy] = toScreen(n.x, n.y);
-      const isAlloc = allocated.has(n.id);
-      const st = heat ? "alloc" : nodeState(n);
-      const onPath = hoverPath.has(n.id);
-      const dimAsc = n.asc !== null && n.asc !== currentAsc;
+      const isAlloc = S.alloc.has(n.id);
+      const st = heat ? "alloc" : nodeState(n, S);
+      const onPath = S.path.has(n.id);
+      const dimAsc = n.asc !== null && n.asc !== S.asc;
 
       if (!A) {
-        drawFallback(ctx, n, sx, sy, isAlloc, onPath, hover?.id === n.id);
+        drawFallback(ctx, n, sx, sy, isAlloc, onPath, S.hover?.id === n.id);
         continue;
       }
       // With art available, a not-yet-loaded sheet just leaves a gap for a
@@ -507,7 +604,7 @@
       }
 
       if (n.kind === "ascStart") {
-        ctx.globalAlpha = n.asc === currentAsc ? 1 : 0.5;
+        ctx.globalAlpha = n.asc === S.asc ? 1 : 0.5;
         A.draw(ctx, n.overlay?.unalloc ?? "AscendancyMiddle", sx, sy, n.size.overlay * scale, n.size.overlay * scale);
         ctx.globalAlpha = 1;
         continue;
@@ -516,7 +613,7 @@
       ctx.globalAlpha = dimAsc ? 0.6 : 1;
 
       if (heat && !isAlloc) {
-        const col = powerColor(n.id);
+        const col = powerColor(n.id, S);
         if (col) {
           ctx.beginPath();
           ctx.arc(sx, sy, Math.max((n.size.overlay || n.size.base) * scale * 0.95, 2.5), 0, Math.PI * 2);
@@ -526,21 +623,21 @@
       }
 
       if (n.kind === "socket") {
-        const frameName = frameFor(n, st);
+        const frameName = frameFor(n, S, st);
         if (frameName) A.draw(ctx, frameName, sx, sy, n.size.base * scale, n.size.base * scale);
-        const jewel = sockets.get(n.id);
+        const jewel = S.sockets.get(n.id);
         if (jewel && isAlloc) {
           const art = socketArt(jewel.baseName, n.overlay?.alloc === "JewelSocketAltActive") ?? (jewel.title && A.has(jewel.title) ? jewel.title : jewel.baseName);
           if (art) A.draw(ctx, art, sx, sy, n.size.overlay * scale, n.size.overlay * scale);
         }
       } else {
         if (drawIcons && n.size.base > 0) {
-          const icon = iconFor(n, isAlloc);
+          const icon = iconFor(n, S, isAlloc);
           if (!isAlloc && !heat) ctx.globalAlpha *= 0.7;
           A.draw(ctx, icon, sx, sy, n.size.base * scale, n.size.base * scale, !isAlloc && !heat);
           ctx.globalAlpha = dimAsc ? 0.6 : 1;
         }
-        const frameName = frameFor(n, st);
+        const frameName = frameFor(n, S, st);
         if (frameName && n.size.overlay > 0) {
           const half = n.size.overlay * scale;
           A.draw(ctx, frameName, sx, sy, half, half);
@@ -548,21 +645,21 @@
       }
       ctx.globalAlpha = 1;
 
-      if (hoverDep.has(n.id) && hover?.id !== n.id) {
+      if (S.dep.has(n.id) && S.hover?.id !== n.id) {
         ctx.beginPath();
         ctx.arc(sx, sy, Math.max(n.r * scale, 3), 0, Math.PI * 2);
         ctx.fillStyle = "rgba(240,106,106,0.35)";
         ctx.fill();
       }
-      if (matches.has(n.id)) {
+      if (S.match.has(n.id)) {
         ctx.beginPath();
         ctx.arc(sx, sy, Math.max(n.r, 30) * scale + 6, 0, Math.PI * 2);
         ctx.strokeStyle = palette.search;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
-      if (compareAlloc) {
-        const ca = compareAlloc.has(n.id);
+      if (S.cmp) {
+        const ca = S.cmp.has(n.id);
         if (ca !== isAlloc) {
           ctx.beginPath();
           ctx.arc(sx, sy, Math.max(n.r, 30) * scale + 4, 0, Math.PI * 2);
@@ -580,6 +677,12 @@
       }
     }
 
+  }
+
+  function drawRings(ctx: CanvasRenderingContext2D, S: Scene, V: View) {
+    const { toScreen, inView } = viewMath(V);
+    const A = assets;
+    if (!model) return;
     // --- jewel radius rings ---
     const ring = (x: number, y: number, rad: JewelRadius, color: string, alpha: number, width: number) => {
       ctx.beginPath();
@@ -594,8 +697,8 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     };
-    if (jewelRadii.length) {
-      // Allocated sockets with a jewel show their radius persistently: PoB's
+    if (S.radii.length) {
+      // Allocated S.sockets with a jewel show their radius persistently: PoB's
       // shaded rings, or a timeless jewel's own pair, turning slowly against
       // each other (DrawImageRotated: angle × ms × 0.00003).
       const t = animate ? performance.now() * 0.00003 : 0;
@@ -608,10 +711,10 @@
         ctx.restore();
         return ok;
       };
-      for (const [nodeId, j] of sockets) {
-        if (!j.radiusIndex || !allocated.has(nodeId) || hover?.id === nodeId) continue;
+      for (const [nodeId, j] of S.sockets) {
+        if (!j.radiusIndex || !S.alloc.has(nodeId) || S.hover?.id === nodeId) continue;
         const n = model.nodes.get(nodeId);
-        const rad = jewelRadii[j.radiusIndex - 1];
+        const rad = S.radii[j.radiusIndex - 1];
         if (!n || !rad || !inView(n.x, n.y)) continue;
         const [sx, sy] = toScreen(n.x, n.y);
         const outer = rad.outer * scale;
@@ -633,15 +736,15 @@
         else ring(sx, sy, rad, "#e6e6ea", 0.25, 1);
       }
       // Hovered socket: the socketed jewel's radius, or every radius when empty.
-      if (hover?.kind === "socket") {
-        const [sx, sy] = toScreen(hover.x, hover.y);
-        const socketed = sockets.get(hover.id);
-        const own = socketed?.radiusIndex ? jewelRadii[socketed.radiusIndex - 1] : null;
+      if (S.hover?.kind === "socket") {
+        const [sx, sy] = toScreen(S.hover.x, S.hover.y);
+        const socketed = S.sockets.get(S.hover.id);
+        const own = socketed?.radiusIndex ? S.radii[socketed.radiusIndex - 1] : null;
         if (own) {
           ring(sx, sy, own, pobColor(own.color), 0.9, 1.5);
         } else {
           const variable = socketed?.radiusLabel === "Variable";
-          for (const r of jewelRadii) {
+          for (const r of S.radii) {
             if (variable ? r.inner === 0 : r.inner !== 0) continue;
             ring(sx, sy, r, pobColor(r.color), 0.8, 1.25);
           }
@@ -1113,7 +1216,10 @@
       try {
         const [json, store, radii, pstats] = await Promise.all([
           readTreeJson(v),
-          AssetStore.load(v, invalidate),
+          AssetStore.load(v, () => {
+            assetsGen++;
+            invalidate();
+          }),
           engine.jewelRadii().catch(() => ({ radii: [] as JewelRadius[] })),
           engine.powerStats().catch(() => ({ stats: [] as PowerStat[] })),
         ]);
