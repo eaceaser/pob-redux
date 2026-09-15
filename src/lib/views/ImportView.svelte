@@ -467,7 +467,7 @@
     const r = await build.run(() => engine.saveBuildXml(), { sync: false, user: false });
     if (!r) return;
     try {
-      const p = await save({ defaultPath: `${build.info?.name ?? "build"}.xml`, filters: [{ name: "XML", extensions: ["xml"] }] });
+      const p = await save({ defaultPath: `${paths?.builds_dir ?? ""}/${build.info?.name ?? "build"}.xml`, filters: [{ name: "XML", extensions: ["xml"] }] });
       if (!p) return;
       await writeTextFile(p, r.xml);
       say(`Exported ${p}`);
