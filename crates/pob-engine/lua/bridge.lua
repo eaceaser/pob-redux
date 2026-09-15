@@ -5905,13 +5905,19 @@ local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
 		for i = 1, limits[t] do item[t][i] = { modId = "None" } end
 	end
 	local used, chosen = {}, { prefixes = {}, suffixes = {} }
+	-- A chosen mod's tags zero the spawn weight of what the game forbids beside it.
+	local tags = {}
+	local function take(fam)
+		used[fam.group] = true
+		for _, tag in ipairs(item.affixes[fam.modId].tags or {}) do tags[tag] = true end
+	end
 	-- Boots carry movement speed on 57 of 63 published builds; it is the one
 	-- line the score cannot see the value of, so it is taken first.
 	if slotName == "Boots" then
 		for _, fam in ipairs(pools.prefixes) do
 			if fam.group == "MovementVelocity" then
 				chosen.prefixes[1] = fam
-				used[fam.group] = true
+				take(fam)
 				item.prefixes[1] = { modId = fam.modId, range = range }
 				break
 			end
@@ -5927,7 +5933,7 @@ local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
 			local n = #chosen[t]
 			if n < limits[t] then
 				for _, fam in ipairs(pools[t]) do
-					if not used[fam.group] then
+					if not used[fam.group] and item:GetModSpawnWeight(item.affixes[fam.modId], tags) > 0 then
 						item[t][n + 1] = { modId = fam.modId, range = range }
 						local out = evaluate()
 						evals = evals + 1
