@@ -7,13 +7,71 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// The AppImage carries Ubuntu 22.04's libwayland ahead of the host's on the
+/// library path, and a newer Mesa refuses to create an EGL display against it
+/// (tauri-apps/tauri#15976). Until the bundler can leave those libraries out,
+/// restart once with the host's copies preloaded. POB_REDUX_NO_PRELOAD=1 skips
+/// this.
+#[cfg(target_os = "linux")]
+fn preload_host_wayland() {
+    use std::os::unix::process::CommandExt;
+    use std::path::Path;
+
+    if std::env::var_os("APPIMAGE").is_none()
+        || std::env::var_os("POB_REDUX_PRELOADED").is_some()
+        || std::env::var_os("POB_REDUX_NO_PRELOAD").is_some()
+    {
+        return;
+    }
+    const DIRS: [&str; 6] = [
+        "/usr/lib64",
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib/aarch64-linux-gnu",
+        "/usr/lib",
+        "/lib64",
+        "/lib/x86_64-linux-gnu",
+    ];
+    const LIBS: [&str; 4] = [
+        "libwayland-client.so.0",
+        "libwayland-cursor.so.0",
+        "libwayland-egl.so.1",
+        "libwayland-server.so.0",
+    ];
+    let mut found: Vec<String> = Vec::new();
+    for lib in LIBS {
+        if let Some(path) = DIRS.iter().map(|d| Path::new(d).join(lib)).find(|p| p.is_file()) {
+            found.push(path.to_string_lossy().into_owned());
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    let mut preload = found.join(":");
+    if let Some(existing) = std::env::var_os("LD_PRELOAD") {
+        let existing = existing.to_string_lossy();
+        if !existing.is_empty() {
+            preload = format!("{preload}:{existing}");
+        }
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let err = std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .env("LD_PRELOAD", preload)
+        .env("POB_REDUX_PRELOADED", "1")
+        .exec();
+    eprintln!("could not restart with the host's wayland libraries preloaded: {err}");
+}
+
 fn main() {
     // WebKitGTK's DMA-BUF path fails on a bundled WebKit whose Mesa disagrees
     // with the host's (a black window on Fedora and openSUSE AppImages).
     // POB_REDUX_GPU=1 opts back in.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("POB_REDUX_GPU").is_none() && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    {
+        preload_host_wayland();
+        if std::env::var_os("POB_REDUX_GPU").is_none() && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
     }
     pob_redux_lib::run()
 }
