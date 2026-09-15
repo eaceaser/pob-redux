@@ -227,18 +227,26 @@
         </label>
       </div>
       <div class="row2">
-        <label class="field lvl">
+        <div class="field lvl">
           <span class="label">Level</span>
-          <input
-            class="input num"
-            type="number"
-            min="1"
-            max="100"
-            bind:value={levelDraft}
-            onchange={commitLevel}
-            onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          />
-        </label>
+          <div class="lvlrow">
+            <input
+              class="input num"
+              type="number"
+              min="1"
+              max="100"
+              bind:value={levelDraft}
+              onchange={commitLevel}
+              onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            />
+            <button
+              class="auto"
+              class:on={info.levelAuto}
+              title={info.levelAuto ? "Level follows the points spent (PoB's Auto mode). Click for Manual." : "Set the level from the points spent, as PoB's Auto mode does"}
+              onclick={() => build.setLevelAuto(!info.levelAuto)}
+            >auto</button>
+          </div>
+        </div>
         <div class="field points" title={info.points.requiredLevelText ?? ""}>
           <span class="label">Points</span>
           <div class="pts num">
@@ -473,6 +481,33 @@
   }
   .lvl .input {
     width: 100%;
+  }
+  .lvlrow {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .lvlrow .auto {
+    appearance: none;
+    flex: none;
+    padding: 0 7px;
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-1);
+    background: transparent;
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .lvlrow .auto:hover {
+    color: var(--fg-0);
+    border-color: var(--line-2);
+  }
+  .lvlrow .auto.on {
+    color: var(--ok);
+    border-color: var(--line-2);
   }
   .pts {
     height: 26px;

@@ -1013,6 +1013,15 @@ M.set_level = function(p)
 	return M.get_build()
 end
 
+-- PoB's Auto/Manual level button: in auto mode EstimatePlayerProgress sets
+-- the level from the points spent on every stat refresh.
+M.set_level_auto = function(p)
+	ensureBuild()
+	build.characterLevelAutoMode = p and p.auto == true
+	refresh()
+	return M.get_build()
+end
+
 -- ---------------------------------------------------------------------------
 -- Class / ascendancy
 -- ---------------------------------------------------------------------------

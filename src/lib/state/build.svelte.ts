@@ -273,6 +273,10 @@ class BuildStore {
     return this.run(() => engine.setLevel(level));
   }
 
+  setLevelAuto(auto: boolean) {
+    return this.run(() => engine.setLevelAuto(auto));
+  }
+
   rename(name: string) {
     return this.run(() => engine.setBuildName(name));
   }

@@ -1022,6 +1022,7 @@ export const engine = {
   configVisibility: () => call<{ visibility: Record<string, boolean>; rev: number }>("config_visibility"),
   getStats: (fields?: string[]) => call<{ stats: Record<string, number | string | boolean>; rev: number }>("get_stats", fields ? { fields } : undefined),
   setLevel: (level: number) => call<BuildInfo>("set_level", { level }),
+  setLevelAuto: (auto: boolean) => call<BuildInfo>("set_level_auto", { auto }),
   listClasses: () => call<{ classes: ClassInfo[] }>("list_classes"),
   selectClass: (classId?: number, ascendClassId?: number) => call<BuildInfo>("select_class", { classId, ascendClassId }),
   getTreeState: () => call<TreeState>("get_tree_state"),
