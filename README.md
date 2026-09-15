@@ -13,12 +13,13 @@
 A modern Path of Building UI for Path of Exile 1 and 2, powered by the community projects. Pick a game
 on first start and switch any time from the title bar; each game runs its own Path of Building.
 
-![PoB Redux showing the passive tree of a Mercenary build](.github/screenshot.png)
+[![PoB Redux: a modern Path of Building for Path of Exile 1 and 2](https://pobredux.com/assets/og.png)](https://pobredux.com)
 
 ## Download
 
-Get `PoB Redux_<version>_x64-setup.exe` from the [Releases](../../releases) page and run it. It
-installs for the current user only, and fetches the WebView2 runtime if Windows does not have it.
+Download from [pobredux.com](https://pobredux.com), which picks the installer for your system, or get
+`PoB Redux_<version>_x64-setup.exe` from the [Releases](../../releases) page and run it. It installs
+for the current user only, and fetches the WebView2 runtime if Windows does not have it.
 
 Your builds stay where Path of Building keeps them, in `Documents/Path of Building (PoE2)/Builds` and
 `Documents/Path of Building/Builds`, so both apps can open the same files.
