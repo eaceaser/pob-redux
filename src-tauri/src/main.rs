@@ -8,5 +8,12 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
+    // WebKitGTK's DMA-BUF path fails on a bundled WebKit whose Mesa disagrees
+    // with the host's (a black window on Fedora and openSUSE AppImages).
+    // POB_REDUX_GPU=1 opts back in.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("POB_REDUX_GPU").is_none() && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
     pob_redux_lib::run()
 }
