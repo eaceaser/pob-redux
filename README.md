@@ -10,10 +10,11 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-2a2a30?style=flat-square)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Svelte%205-2a2a30?style=flat-square)
 
-A modern Path of Building UI for Path of Exile 1 and 2, powered by the community projects. Pick a game
-on first start and switch any time from the title bar; each game runs its own Path of Building.
+A new interface for Path of Building, for Path of Exile 1 and 2. It runs Path of Building Community's
+own calculation engine, so the numbers match. Pick a game on first start and switch any time from the
+title bar; each game runs its own Path of Building.
 
-[![PoB Redux: a modern Path of Building for Path of Exile 1 and 2](https://pobredux.com/assets/og.png)](https://pobredux.com)
+[![PoB Redux: a new interface for Path of Building, for Path of Exile 1 and 2](https://pobredux.com/assets/og.png)](https://pobredux.com)
 
 ## Download
 
@@ -31,9 +32,9 @@ signed or notarized yet, so Gatekeeper needs a right-click → Open on first lau
 
 ## Features
 
-Every Path of Building tab is here, with PoB's own numbers, tooltips and breakdowns: tree, skills,
-items, calcs, config, notes, party and builds. The calculations are Path of Building Community's own
-Lua code, run headless, so the numbers match.
+Every Path of Building tab is here: tree, skills, items, calcs, config, notes, party and builds, with
+PoB's tooltips and breakdowns. The calculations are Path of Building Community's Lua code, run
+headless, so the results match PoB's.
 
 Builds import from share codes, PoB XML, GGG's `.build` planner files, and links from pobb.in,
 Maxroll, Mobalytics, poe.ninja, poe2db.tw, poedb.tw, Pastebin and Rentry. A build from the other game
@@ -88,7 +89,7 @@ bun run tauri dev     # run the app with hot reload
 [CONTRIBUTING.md](CONTRIBUTING.md) has the rest: full prerequisites, project layout, updating the
 bundled PoB data, the `pobctl` command line, and the environment variables.
 
-Keep the numbers PoB's own. Do not reimplement calculations in Rust or TypeScript.
+Keep the calculations in PoB's Lua. Do not reimplement them in Rust or TypeScript.
 
 ## Credits
 
