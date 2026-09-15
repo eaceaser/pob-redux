@@ -250,6 +250,17 @@ fn open_on_start() -> Option<String> {
         .or_else(|| std::env::var("POB_REDUX_OPEN").ok().filter(|p| Path::new(p).is_file()))
 }
 
+/// The updater replaces the running binary, which on Linux only works for an
+/// AppImage; a .deb or .rpm install has to fetch the package itself.
+#[tauri::command]
+fn update_installable() -> bool {
+    if cfg!(target_os = "linux") {
+        std::env::var_os("APPIMAGE").is_some()
+    } else {
+        true
+    }
+}
+
 #[tauri::command]
 fn app_paths(state: State<'_, AppState>) -> AppPaths {
     let pob_root = state.pob_root();
@@ -1034,6 +1045,7 @@ pub fn run() {
             power_scan_parallel,
             gem_dps_parallel,
             app_paths,
+            update_installable,
             game_status,
             set_game,
             build_file_game,

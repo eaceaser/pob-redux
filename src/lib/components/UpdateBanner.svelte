@@ -6,7 +6,11 @@
   <div class="banner" role="status">
     {#if appUpdate.phase === "available"}
       <span class="txt">Version <span class="mono">{appUpdate.version}</span> is available.</span>
-      <button class="btn sm" onclick={() => appUpdate.install()}>Update</button>
+      {#if appUpdate.installable}
+        <button class="btn sm" onclick={() => appUpdate.install()}>Update</button>
+      {:else}
+        <button class="btn sm" onclick={() => appUpdate.openReleases()} title="A package install is replaced by its package manager, not by the app">Download</button>
+      {/if}
       <button class="btn sm ghost" onclick={() => appUpdate.dismiss()}>Later</button>
     {:else if appUpdate.phase === "downloading"}
       <span class="txt">

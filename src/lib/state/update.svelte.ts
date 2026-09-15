@@ -1,7 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
 const KEY = "pob-redux:update";
+const RELEASES_URL = "https://github.com/juddisjudd/pob-redux/releases/latest";
 
 export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
 
@@ -20,6 +23,8 @@ class UpdateStore {
   progress = $state<number | null>(null);
   /** Set when the user closes the banner, so it stays closed for that version. */
   dismissed = $state<string | null>(null);
+  /** False on a Linux package install: the updater can only replace an AppImage. */
+  installable = $state(true);
 
   private update: Update | null = null;
   private downloaded = 0;
@@ -36,6 +41,9 @@ class UpdateStore {
     try {
       this.dismissed = localStorage.getItem(KEY);
     } catch {}
+    invoke<boolean>("update_installable")
+      .then((v) => (this.installable = v))
+      .catch(() => {});
     // Let the engine finish booting before touching the network.
     setTimeout(() => void this.check(false), 4000);
   }
@@ -45,6 +53,10 @@ class UpdateStore {
     try {
       if (this.version) localStorage.setItem(KEY, this.version);
     } catch {}
+  }
+
+  openReleases() {
+    return openUrl(RELEASES_URL);
   }
 
   /** `manual` surfaces "you are up to date" and any error; the boot check is silent. */
