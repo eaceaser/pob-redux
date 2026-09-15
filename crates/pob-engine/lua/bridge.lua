@@ -2126,11 +2126,21 @@ M.list_specs = function()
 	return { specs = specs, activeSpec = build.treeTab.activeSpec }
 end
 
+-- A loadout is the sets that share a name (Build.lua SyncLoadouts), so picking
+-- one set brings its namesakes in the other tabs along, as the loadout
+-- dropdown does. A set with no tree of its name leaves the others alone.
+local function followLoadout(title)
+	if not build.GetLoadoutByName then return end
+	local lo = build:GetLoadoutByName(title or "Default")
+	if lo then build:SetActiveLoadout(lo) end
+end
+
 M.select_spec = function(p)
 	ensureBuild()
 	local index = tonumber(p and p.index)
 	if not index or not build.treeTab.specList[index] then error("unknown spec index", 0) end
 	build.treeTab:SetActiveSpec(index)
+	followLoadout(build.treeTab.specList[index].title)
 	refresh()
 	return M.list_specs()
 end
@@ -2362,6 +2372,7 @@ M.select_item_set = function(p)
 	local id = tonumber(p and p.id)
 	if not id or not build.itemsTab.itemSets[id] then error("unknown item set id", 0) end
 	build.itemsTab:SetActiveItemSet(id)
+	followLoadout(build.itemsTab.itemSets[id].title)
 	refresh()
 	return M.list_item_sets()
 end
@@ -3024,6 +3035,7 @@ M.select_skill_set = function(p)
 	local id = tonumber(p and p.id)
 	if not id or not build.skillsTab.skillSets[id] then error("unknown skill set id " .. tostring(p and p.id), 0) end
 	build.skillsTab:SetActiveSkillSet(id)
+	followLoadout(build.skillsTab.skillSets[id].title)
 	refresh()
 	return M.get_skills()
 end
@@ -5073,6 +5085,7 @@ M.select_config_set = function(p)
 	local id = tonumber(p and p.id)
 	if not id or not build.configTab.configSets[id] then error("unknown config set id " .. tostring(p and p.id), 0) end
 	build.configTab:SetActiveConfigSet(id)
+	followLoadout(build.configTab.configSets[id].title)
 	refresh()
 	return M.get_config()
 end
@@ -5133,8 +5146,12 @@ M.get_loadouts = function()
 			names[#names + 1] = entry
 		end
 	end
-	local active = build.activeLoadout or 0
-	return { loadouts = names, active = names[active] or null }
+	-- SyncLoadouts selects the dropdown entry whose sets are all active, so a
+	-- freshly loaded build reports its loadout before anything is picked.
+	local ctl = build.controls and build.controls.buildLoadouts
+	local sel = ctl and ctl.list and ctl.list[ctl.selIndex or 0]
+	local name = type(sel) == "string" and not sel:match("^%^7%^7") and sel ~= "No Loadouts" and sel or nil
+	return { loadouts = names, active = name or names[build.activeLoadout or 0] or null }
 end
 
 M.select_loadout = function(p)
