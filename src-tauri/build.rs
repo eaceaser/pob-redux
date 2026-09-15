@@ -47,5 +47,6 @@ fn main() {
         println!("cargo:rerun-if-changed=../dist/index.html");
         println!("cargo:rerun-if-env-changed=POB_REDUX_ALLOW_STALE_DIST");
     }
-    tauri_build::build()
+    let windows = tauri_build::WindowsAttributes::new().app_manifest(include_str!("windows-app-manifest.xml"));
+    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows)).expect("tauri-build failed");
 }
