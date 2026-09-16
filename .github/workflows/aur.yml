@@ -69,7 +69,8 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run || false }}
         run: |
           set -euo pipefail
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          # ssh reads the passwd home (/root), not $HOME (/github/home in a container job).
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
           git clone ssh://aur@aur.archlinux.org/pob-redux-bin.git aur
 
           old_ver=""
