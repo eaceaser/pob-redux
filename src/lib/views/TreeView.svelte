@@ -4,7 +4,7 @@
   import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type PowerStat, type SocketedJewel, type Tooltip, type TreePower } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
-  import { parseTree, withDynamicNodes, NodeIndex, type TreeModel, type TNode } from "$lib/tree/model";
+  import { parseTree, withDynamicNodes, NodeIndex, type TEdge, type TreeModel, type TNode } from "$lib/tree/model";
   import { AssetStore } from "$lib/tree/assets";
   import PobText from "$lib/components/PobText.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
@@ -12,7 +12,7 @@
   let canvas = $state<HTMLCanvasElement | null>(null);
   let wrap = $state<HTMLDivElement | null>(null);
   let searchEl = $state<HTMLInputElement | null>(null);
-  let model = $state<TreeModel | null>(null);
+  let model = $state.raw<TreeModel | null>(null);
   /** The static tree; `model` adds PoE1 cluster jewel subgraphs on top. */
   let baseModel: TreeModel | null = null;
   let dynKey = "";
@@ -80,7 +80,7 @@
 
   // node power heat map (PoB "Show Node Power")
   let powerOn = $state(false);
-  let power = $state<TreePower | null>(null);
+  let power = $state.raw<TreePower | null>(null);
   let powerStat = $state<string | null>(null);
   let powerDepth = $state<number | null>(10);
   let powerStats = $state<PowerStat[]>([]);
@@ -302,11 +302,11 @@
   }
 
   function iconFor(n: TNode, S: Scene, isAlloc = false): string {
-    return S.ov[String(n.id)]?.icon ?? ((isAlloc && n.activeIcon) || n.icon);
+    return (S.ovAny ? S.ov[String(n.id)]?.icon : undefined) ?? ((isAlloc && n.activeIcon) || n.icon);
   }
 
   function frameFor(n: TNode, S: Scene, st: "alloc" | "path" | "unalloc"): string | null {
-    const ov = S.ov[String(n.id)]?.overlay;
+    const ov = S.ovAny ? S.ov[String(n.id)]?.overlay : undefined;
     return ov?.[st] ?? n.overlay?.[st] ?? null;
   }
 
@@ -315,6 +315,7 @@
   interface Scene {
     alloc: Set<number>;
     ov: typeof overrides;
+    ovAny: boolean;
     sockets: typeof sockets;
     asc: string | null;
     cls: string | null;
@@ -332,10 +333,14 @@
     w: number;
     h: number;
   }
+  const NO_IDS: Set<number> = new Set();
   function scene(): Scene {
+    const ov = overrides;
+    const ovAny = Object.keys(ov).length > 0;
     return {
       alloc: allocated,
-      ov: overrides,
+      ov: ovAny ? { ...ov } : ov,
+      ovAny,
       sockets,
       asc: currentAsc,
       cls: currentClass,
@@ -348,51 +353,94 @@
       radii: jewelRadii,
     };
   }
+  /** The scene as it looks with nothing hovered, which is what the layer holds. */
+  function baseScene(S: Scene): Scene {
+    if (S.hover === null && S.path.size === 0 && S.dep.size === 0) return S;
+    return { ...S, hover: null, path: NO_IDS, dep: NO_IDS };
+  }
   function viewMath(V: View) {
     const margin = 4000 * scale;
     const minX = V.cx - (V.w / 2 + margin) / scale;
     const maxX = V.cx + (V.w / 2 + margin) / scale;
     const minY = V.cy - (V.h / 2 + margin) / scale;
     const maxY = V.cy + (V.h / 2 + margin) / scale;
+    const ox = V.w / 2 - V.cx * scale;
+    const oy = V.h / 2 - V.cy * scale;
     return {
-      toScreen: (x: number, y: number): [number, number] => [(x - V.cx) * scale + V.w / 2, (y - V.cy) * scale + V.h / 2],
+      tx: (x: number) => x * scale + ox,
+      ty: (y: number) => y * scale + oy,
+      toScreen: (x: number, y: number): [number, number] => [x * scale + ox, y * scale + oy],
       inView: (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY,
       near: (x: number, y: number, r: number) => x >= minX - r && x <= maxX + r && y >= minY - r && y <= maxY + r,
     };
   }
 
-  // While dragging, the scene is drawn once into a canvas larger than the
-  // view and each frame blits it. Anything in the key changes the picture.
-  let layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; cx: number; cy: number; w: number; h: number; key: unknown[] } | null = null;
+  // The tree without hover decoration is drawn into its own canvas and each
+  // frame blits it, so panning, zooming and hovering cost one image copy
+  // instead of thousands. Anything in the key changes the picture.
+  let layer: {
+    below: HTMLCanvasElement;
+    belowCtx: CanvasRenderingContext2D;
+    nodes: HTMLCanvasElement;
+    nodesCtx: CanvasRenderingContext2D;
+    cx: number;
+    cy: number;
+    w: number;
+    h: number;
+    scale: number;
+    key: unknown[];
+  } | null = null;
   let assetsGen = 0;
+  let zooming = false;
+  let zoomTimer = 0;
+  // Blitting the layer magnified past this looks soft, so it re-renders.
+  const ZOOM_BAND = 1.7;
   function layerKey(S: Scene): unknown[] {
-    return [scale, dpr, w, h, model, assetsGen, S.alloc, S.ov, S.sockets, S.asc, S.cls, S.hover, S.path, S.dep, S.match, S.cmp, S.heat, S.radii];
+    return [dpr, w, h, model, assetsGen, S.alloc, overrides, S.sockets, S.asc, S.cls, S.match, S.cmp, S.heat];
   }
-  function layerValid(S: Scene): boolean {
-    if (!layer) return false;
+  function layerUsable(S: Scene): boolean {
+    const L = layer;
+    if (!L) return false;
     const k = layerKey(S);
-    if (k.length !== layer.key.length || k.some((v, i) => v !== layer!.key[i])) return false;
-    return Math.abs(cx - layer.cx) * scale <= (layer.w - w) / 2 && Math.abs(cy - layer.cy) * scale <= (layer.h - h) / 2;
+    if (k.length !== L.key.length || k.some((v, i) => v !== L.key[i])) return false;
+    const m = scale / L.scale;
+    if (m !== 1 && (!zooming || m < 1 / ZOOM_BAND || m > ZOOM_BAND)) return false;
+    return Math.abs(cx - L.cx) + w / 2 / scale <= L.w / 2 / L.scale && Math.abs(cy - L.cy) + h / 2 / scale <= L.h / 2 / L.scale;
   }
   function renderLayer(S: Scene) {
-    const lw = w + 2 * Math.min(Math.round(w / 2), 900);
-    const lh = h + 2 * Math.min(Math.round(h / 2), 700);
+    // Only a pan or a zoom needs room around the view; a settled view renders
+    // what it shows, so allocating a node repaints one screen and not four.
+    // The margin is in device pixels across two canvases, so a dense display
+    // trades a little of it back rather than holding a hundred megabytes.
+    const pad = drag?.moved || zooming;
+    const lw = w + (pad ? 2 * Math.round(Math.min(w / 2, 900) / dpr) : 0);
+    const lh = h + (pad ? 2 * Math.round(Math.min(h / 2, 700) / dpr) : 0);
     if (!layer) {
-      const c = document.createElement("canvas");
-      layer = { canvas: c, ctx: c.getContext("2d")!, cx: 0, cy: 0, w: 0, h: 0, key: [] };
+      const below = document.createElement("canvas");
+      const nodes = document.createElement("canvas");
+      layer = { below, belowCtx: below.getContext("2d")!, nodes, nodesCtx: nodes.getContext("2d")!, cx: 0, cy: 0, w: 0, h: 0, scale: 1, key: [] };
     }
     const pw = Math.floor(lw * dpr);
     const ph = Math.floor(lh * dpr);
-    if (layer.canvas.width !== pw || layer.canvas.height !== ph) {
-      layer.canvas.width = pw;
-      layer.canvas.height = ph;
+    for (const c of [layer.below, layer.nodes]) {
+      if (c.width !== pw || c.height !== ph) {
+        c.width = pw;
+        c.height = ph;
+      }
     }
-    layer.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawScene(layer.ctx, S, { cx, cy, w: lw, h: lh });
+    const B = baseScene(S);
+    const LV: View = { cx, cy, w: lw, h: lh };
+    layer.belowCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawBelow(layer.belowCtx, B, LV);
+    layer.nodesCtx.setTransform(1, 0, 0, 1, 0, 0);
+    layer.nodesCtx.clearRect(0, 0, pw, ph);
+    layer.nodesCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawNodes(layer.nodesCtx, B, LV);
     layer.cx = cx;
     layer.cy = cy;
     layer.w = lw;
     layer.h = lh;
+    layer.scale = scale;
     layer.key = layerKey(S);
   }
 
@@ -412,33 +460,112 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const S = scene();
     const V: View = { cx, cy, w, h };
-    if (drag?.moved) {
-      if (!layerValid(S)) renderLayer(S);
-      const L = layer!;
-      ctx.fillStyle = palette.bg;
-      ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(L.canvas, 0, 0, L.canvas.width, L.canvas.height, (L.cx - cx) * scale + (w - L.w) / 2, (L.cy - cy) * scale + (h - L.h) / 2, L.w, L.h);
-    } else {
-      drawScene(ctx, S, V);
-    }
+    if (!layerUsable(S)) renderLayer(S);
+    const L = layer!;
+    const m = scale / L.scale;
+    const dw = L.w * m;
+    const dh = L.h * m;
+    const dx = (L.cx - cx) * scale + (w - dw) / 2;
+    const dy = (L.cy - cy) * scale + (h - dh) / 2;
+    const H = hoverParts(S, V);
+    ctx.fillStyle = palette.bg;
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(L.below, 0, 0, L.below.width, L.below.height, dx, dy, dw, dh);
+    if (H) drawHoverEdges(ctx, V, H);
+    ctx.drawImage(L.nodes, 0, 0, L.nodes.width, L.nodes.height, dx, dy, dw, dh);
+    if (H) drawHoverNodes(ctx, S, V, H);
     drawRings(ctx, S, V);
   }
 
-  function drawScene(ctx: CanvasRenderingContext2D, S: Scene, V: View) {
-    const { toScreen, inView, near } = viewMath(V);
+  const EDGE_ORDER = ["Normal", "Intermediate", "Active", "CompareGain", "CompareLoss", "Depend"] as const;
+  const EDGE_INDEX: Record<LineState, number> = { Normal: 0, Intermediate: 1, Active: 2, CompareGain: 3, CompareLoss: 4, Depend: 5 };
+  const edgeBuckets: TEdge[][] = Array.from({ length: EDGE_ORDER.length * 2 }, () => [] as TEdge[]);
+  // Below this many pixels the frame art is a smudge, so the nodes are drawn
+  // as rings in one batched stroke per state instead of an image apiece.
+  const DOT_PX = 3;
+  // The average colour of PoB's frame art at a couple of pixels across, by
+  // state and by node size, so a dot reads the same as the art it replaces.
+  const DOT_FILL = ["#caa371", "#806650", "#454139", "#bc9b64", "#a0754d", "#716248"];
+  const dots: number[][] = [[], [], [], [], [], []];
+  function dotBucket(n: TNode, st: "alloc" | "path" | "unalloc"): number {
+    const big = n.kind === "notable" || n.kind === "keystone" || n.kind === "socket";
+    return (big ? 3 : 0) + (st === "alloc" ? 0 : st === "path" ? 1 : 2);
+  }
+
+  function strokeEdges(ctx: CanvasRenderingContext2D, M: TreeModel, list: TEdge[], st: LineState, dim: boolean, tx: (x: number) => number, ty: (y: number) => number) {
+    const style = LINE[st];
+    ctx.beginPath();
+    for (const e of list) {
+      const a = M.nodes.get(e.a)!;
+      const b = M.nodes.get(e.b)!;
+      ctx.moveTo(tx(a.x), ty(a.y));
+      if (e.arc) ctx.arc(tx(e.arc.cx), ty(e.arc.cy), e.arc.r * scale, e.arc.a1, e.arc.a2, e.arc.ccw);
+      else ctx.lineTo(tx(b.x), ty(b.y));
+    }
+    ctx.globalAlpha = dim ? 0.45 : 1;
+    ctx.strokeStyle = style.outer;
+    ctx.lineWidth = Math.max(1.2, style.ow * scale);
+    ctx.stroke();
+    ctx.strokeStyle = style.inner;
+    ctx.lineWidth = Math.max(0.6, style.iw * scale);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  let edgeBy: { model: TreeModel; map: Map<number, TEdge[]> } | null = null;
+  function edgeLookup(M: TreeModel): Map<number, TEdge[]> {
+    if (edgeBy?.model === M) return edgeBy.map;
+    const map = new Map<number, TEdge[]>();
+    for (const e of M.edges) {
+      let la = map.get(e.a);
+      if (!la) map.set(e.a, (la = []));
+      la.push(e);
+      let lb = map.get(e.b);
+      if (!lb) map.set(e.b, (lb = []));
+      lb.push(e);
+    }
+    edgeBy = { model: M, map };
+    return map;
+  }
+
+  // The backdrop is fixed to the canvas, so it is tiled once and stamped.
+  let backdrop: { canvas: HTMLCanvasElement; gen: number; dpr: number } | null = null;
+  const BACKDROP = 1000;
+  function drawBackdrop(ctx: CanvasRenderingContext2D, bw: number, bh: number) {
+    const A = assets;
+    if (!A) return;
+    if (!backdrop || backdrop.gen !== assetsGen || backdrop.dpr !== dpr) {
+      const c = backdrop?.canvas ?? document.createElement("canvas");
+      c.width = Math.floor(BACKDROP * dpr);
+      c.height = Math.floor(BACKDROP * dpr);
+      const bctx = c.getContext("2d")!;
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (!A.tile(bctx, "Background2", BACKDROP, BACKDROP, 100)) return;
+      backdrop = { canvas: c, gen: assetsGen, dpr };
+    }
+    for (let y = 0; y < bh; y += BACKDROP) {
+      for (let x = 0; x < bw; x += BACKDROP) {
+        ctx.drawImage(backdrop.canvas, 0, 0, backdrop.canvas.width, backdrop.canvas.height, x, y, BACKDROP, BACKDROP);
+      }
+    }
+  }
+
+  function drawBelow(ctx: CanvasRenderingContext2D, S: Scene, V: View) {
+    const M = model;
+    if (!M) return;
+    const { tx, ty, toScreen, inView, near } = viewMath(V);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "medium";
     ctx.fillStyle = palette.bg;
     ctx.fillRect(0, 0, V.w, V.h);
 
     const A = assets;
-    if (!model) return;
 
     // --- background tile ---
-    if (A) A.tile(ctx, "Background2", V.w, V.h, 100);
+    drawBackdrop(ctx, V.w, V.h);
 
     // --- PoE1: class illustration, group rings, inactive class starts ---
-    if (A && model.poe1) {
+    if (A && M.poe1) {
       const store = A;
       // PoB's DrawAsset: half extents are the sheet size × 1.33 tree units.
       const drawArt = (name: string, x: number, y: number, mirrored = false) => {
@@ -458,12 +585,12 @@
         store.draw(ctx, name, 0, 0, hw, hh);
         ctx.restore();
       };
-      const cls = model.classes.find((c) => c.name === S.cls);
+      const cls = M.classes.find((c) => c.name === S.cls);
       if (cls?.area && near(cls.area.x, cls.area.y, 2000)) drawArt(cls.area.bg, cls.area.x, cls.area.y);
-      for (const g of model.groups) {
+      for (const g of M.groups) {
         if (near(g.x, g.y, 400)) drawArt(g.bg, g.x, g.y, g.mirrored);
       }
-      for (const c of model.classes) {
+      for (const c of M.classes) {
         if (c.name === S.cls || c.startNode == null || !near(c.bgX, c.bgY, 400)) continue;
         drawArt("PSStartNodeBackgroundInactive", c.bgX, c.bgY);
       }
@@ -471,12 +598,12 @@
 
     // --- class hub and ascendancy backgrounds ---
     if (A) {
-      const cls = model.classes.find((c) => c.name === S.cls);
+      const cls = M.classes.find((c) => c.name === S.cls);
       if (cls && cls.bg) {
         const [bx, by] = toScreen(cls.bgX, cls.bgY);
         const ascBg = S.asc && cls.hubAsc ? cls.ascendancies.find((a) => a.name === S.asc)?.bg : null;
         A.draw(ctx, ascBg ?? cls.bg, bx, by, cls.bgHalf * scale, cls.bgHalf * scale);
-        const start = cls.startNode != null ? model.nodes.get(cls.startNode) : null;
+        const start = cls.startNode != null ? M.nodes.get(cls.startNode) : null;
         if (start) {
           const ang = Math.PI / 2 + Math.atan2(start.y - cls.bgY, start.x - cls.bgX);
           ctx.save();
@@ -488,8 +615,8 @@
         A.draw(ctx, "BGTree", bx, by, cls.ringHalf * scale, cls.ringHalf * scale);
       }
       // A variant plate (Abyssal Lich) covers its base (Lich) only while chosen.
-      const curAscId = model.classes.flatMap((c) => c.ascendancies).find((a) => a.name === S.asc)?.id ?? S.asc;
-      for (const c of model.classes) {
+      const curAscId = M.classes.flatMap((c) => c.ascendancies).find((a) => a.name === S.asc)?.id ?? S.asc;
+      for (const c of M.classes) {
         for (const a of c.ascendancies) {
           if (!inView(a.x, a.y)) continue;
           if (a.replaceBy && (a.replaceBy === curAscId || a.replaceBy === S.asc)) continue;
@@ -504,7 +631,7 @@
 
     // --- node glows: mastery and tattoo effects sit under the connectors (PoB layer 15) ---
     if (A && scale > 0.045 && S.heat === null) {
-      for (const n of model.nodes.values()) {
+      for (const n of M.nodes.values()) {
         if (n.hidden || n.kind === "classStart" || n.kind === "onlyImage" || !inView(n.x, n.y)) continue;
         const ov = S.ov[String(n.id)];
         const effect = ov?.effect ?? n.effect;
@@ -517,7 +644,8 @@
         } else if (n.size.effect <= 0) continue;
         const lit = !!ov?.effect || S.alloc.has(n.id) || S.path.has(n.id);
         const dimAsc = n.asc !== null && n.asc !== S.asc;
-        const [sx, sy] = toScreen(n.x, n.y);
+        const sx = tx(n.x);
+        const sy = ty(n.y);
         ctx.globalAlpha = (lit ? 1 : 0.15) * (dimAsc ? 0.6 : 1);
         A.draw(ctx, effect, sx, sy, half, half);
       }
@@ -526,62 +654,41 @@
 
     // --- connectors, batched per state ---
     ctx.lineCap = "round";
-    const perState = new Map<string, typeof model.edges>();
-    for (const e of model.edges) {
-      const a = model.nodes.get(e.a)!;
-      const b = model.nodes.get(e.b)!;
+    for (const b of edgeBuckets) b.length = 0;
+    for (const e of M.edges) {
+      const a = M.nodes.get(e.a)!;
+      const b = M.nodes.get(e.b)!;
       if (!inView(a.x, a.y) && !inView(b.x, b.y)) continue;
-      const st = edgeState(a, b, S);
       const dim = e.asc !== null && e.asc !== S.asc;
-      const key = `${st}:${dim ? 1 : 0}`;
-      let list = perState.get(key);
-      if (!list) perState.set(key, (list = []));
-      list.push(e);
+      edgeBuckets[EDGE_INDEX[edgeState(a, b, S)] * 2 + (dim ? 1 : 0)].push(e);
     }
-    const order: LineState[] = ["Normal", "Intermediate", "Active", "CompareGain", "CompareLoss", "Depend"];
-    for (const st of order) {
-      for (const dim of [true, false]) {
-        const list = perState.get(`${st}:${dim ? 1 : 0}`);
-        if (!list?.length) continue;
-        const style = LINE[st];
-        ctx.beginPath();
-        for (const e of list) {
-          const a = model.nodes.get(e.a)!;
-          const b = model.nodes.get(e.b)!;
-          if (e.arc) {
-            const [acx, acy] = toScreen(e.arc.cx, e.arc.cy);
-            const [ax, ay] = toScreen(a.x, a.y);
-            ctx.moveTo(ax, ay);
-            ctx.arc(acx, acy, e.arc.r * scale, e.arc.a1, e.arc.a2, e.arc.ccw);
-          } else {
-            const [ax, ay] = toScreen(a.x, a.y);
-            const [bx, by] = toScreen(b.x, b.y);
-            ctx.moveTo(ax, ay);
-            ctx.lineTo(bx, by);
-          }
-        }
-        ctx.globalAlpha = dim ? 0.45 : 1;
-        ctx.strokeStyle = style.outer;
-        ctx.lineWidth = Math.max(1.2, style.ow * scale);
-        ctx.stroke();
-        ctx.strokeStyle = style.inner;
-        ctx.lineWidth = Math.max(0.6, style.iw * scale);
-        ctx.stroke();
+    for (let i = 0; i < EDGE_ORDER.length; i++) {
+      for (let d = 1; d >= 0; d--) {
+        const list = edgeBuckets[i * 2 + d];
+        if (list.length) strokeEdges(ctx, M, list, EDGE_ORDER[i], d === 1, tx, ty);
       }
     }
-    ctx.globalAlpha = 1;
+  }
 
-    // --- nodes ---
+  // The nodes are their own layer so a highlighted connector can be painted
+  // between the two and still pass behind the node art, as PoB draws it.
+  function drawNodes(ctx: CanvasRenderingContext2D, S: Scene, V: View) {
+    const M = model;
+    if (!M) return;
+    const A = assets;
+    const { tx, ty, inView } = viewMath(V);
     const drawEffects = scale > 0.045;
     const drawIcons = scale > 0.03;
     const heat = S.heat !== null;
     const hoverJewel = S.hover?.kind === "socket" ? S.sockets.get(S.hover.id) : undefined;
     const hoverSocketSet = hoverJewel?.radiusIndex ? (socketRadius.get(S.hover!.id) ?? null) : null;
     const hoverSocketColor = hoverJewel?.radiusIndex ? pobColor(S.radii[hoverJewel.radiusIndex - 1]?.color ?? "") : palette.search;
-    for (const n of model.nodes.values()) {
+    for (const d of dots) d.length = 0;
+    for (const n of M.nodes.values()) {
       if (n.hidden || n.kind === "classStart") continue;
       if (!inView(n.x, n.y)) continue;
-      const [sx, sy] = toScreen(n.x, n.y);
+      const sx = tx(n.x);
+      const sy = ty(n.y);
       const isAlloc = S.alloc.has(n.id);
       const st = heat ? "alloc" : nodeState(n, S);
       const onPath = S.path.has(n.id);
@@ -623,12 +730,17 @@
       }
 
       if (n.kind === "socket") {
-        const frameName = frameFor(n, S, st);
-        if (frameName) A.draw(ctx, frameName, sx, sy, n.size.base * scale, n.size.base * scale);
-        const jewel = S.sockets.get(n.id);
-        if (jewel && isAlloc) {
-          const art = socketArt(jewel.baseName, n.overlay?.alloc === "JewelSocketAltActive") ?? (jewel.title && A.has(jewel.title) ? jewel.title : jewel.baseName);
-          if (art) A.draw(ctx, art, sx, sy, n.size.overlay * scale, n.size.overlay * scale);
+        const half = n.size.base * scale;
+        if (half < DOT_PX) {
+          if (!heat || isAlloc) dots[dotBucket(n, st)].push(sx, sy, half);
+        } else {
+          const frameName = frameFor(n, S, st);
+          if (frameName) A.draw(ctx, frameName, sx, sy, half, half);
+          const jewel = S.sockets.get(n.id);
+          if (jewel && isAlloc) {
+            const art = socketArt(jewel.baseName, n.overlay?.alloc === "JewelSocketAltActive") ?? (jewel.title && A.has(jewel.title) ? jewel.title : jewel.baseName);
+            if (art) A.draw(ctx, art, sx, sy, n.size.overlay * scale, n.size.overlay * scale);
+          }
         }
       } else {
         if (drawIcons && n.size.base > 0) {
@@ -637,10 +749,12 @@
           A.draw(ctx, icon, sx, sy, n.size.base * scale, n.size.base * scale, !isAlloc && !heat);
           ctx.globalAlpha = dimAsc ? 0.6 : 1;
         }
-        const frameName = frameFor(n, S, st);
-        if (frameName && n.size.overlay > 0) {
-          const half = n.size.overlay * scale;
-          A.draw(ctx, frameName, sx, sy, half, half);
+        const half = n.size.overlay * scale;
+        if (half < DOT_PX) {
+          if (n.size.overlay > 0 && (!heat || isAlloc)) dots[dotBucket(n, st)].push(sx, sy, half);
+        } else {
+          const frameName = frameFor(n, S, st);
+          if (frameName && n.size.overlay > 0) A.draw(ctx, frameName, sx, sy, half, half);
         }
       }
       ctx.globalAlpha = 1;
@@ -677,10 +791,135 @@
       }
     }
 
+    for (let i = 0; i < dots.length; i++) {
+      const list = dots[i];
+      if (!list.length) continue;
+      ctx.beginPath();
+      for (let j = 0; j < list.length; j += 3) {
+        const r = Math.max(list[j + 2] * 0.75, 0.5);
+        ctx.moveTo(list[j] + r, list[j + 1]);
+        ctx.arc(list[j], list[j + 1], r, 0, Math.PI * 2);
+      }
+      ctx.strokeStyle = DOT_FILL[i];
+      ctx.lineWidth = Math.max(list[2] * 0.5, 0.7);
+      ctx.stroke();
+    }
+  }
+
+  // Only the hover highlight changes as the pointer moves, so it is painted
+  // over the layers rather than redrawing the tree: the connectors it restates,
+  // then the nodes it restyles, the dependency marks and the radius rings.
+  interface Hover {
+    hot: Set<number>;
+    edges: TEdge[][];
+    socketSet: Set<number> | null;
+    socketColor: string;
+    base: Scene;
+  }
+  function hoverParts(S: Scene, V: View): Hover | null {
+    const M = model;
+    if (!M) return null;
+    const hoverJewel = S.hover?.kind === "socket" ? S.sockets.get(S.hover.id) : undefined;
+    const socketSet = hoverJewel?.radiusIndex ? (socketRadius.get(S.hover!.id) ?? null) : null;
+    if (!S.hover && S.path.size === 0 && S.dep.size === 0 && !socketSet) return null;
+    const base = baseScene(S);
+    const { inView } = viewMath(V);
+
+    const hot = new Set<number>(S.path);
+    for (const id of S.dep) hot.add(id);
+    if (S.hover) hot.add(S.hover.id);
+
+    const edges: TEdge[][] = Array.from({ length: EDGE_ORDER.length * 2 }, () => [] as TEdge[]);
+    const seen = new Set<TEdge>();
+    const byNode = edgeLookup(M);
+    for (const id of hot) {
+      const list = byNode.get(id);
+      if (!list) continue;
+      for (const e of list) {
+        if (seen.has(e)) continue;
+        seen.add(e);
+        const a = M.nodes.get(e.a);
+        const b = M.nodes.get(e.b);
+        if (!a || !b || (!inView(a.x, a.y) && !inView(b.x, b.y))) continue;
+        const st = edgeState(a, b, S);
+        if (st === edgeState(a, b, base)) continue;
+        edges[EDGE_INDEX[st] * 2 + (e.asc !== null && e.asc !== S.asc ? 1 : 0)].push(e);
+      }
+    }
+    const socketColor = hoverJewel?.radiusIndex ? pobColor(S.radii[hoverJewel.radiusIndex - 1]?.color ?? "") : palette.search;
+    return { hot, edges, socketSet, socketColor, base };
+  }
+
+  function drawHoverEdges(ctx: CanvasRenderingContext2D, V: View, H: Hover) {
+    const M = model;
+    if (!M) return;
+    const { tx, ty } = viewMath(V);
+    ctx.lineCap = "round";
+    for (let i = 0; i < EDGE_ORDER.length; i++) {
+      for (let d = 1; d >= 0; d--) {
+        const list = H.edges[i * 2 + d];
+        if (list.length) strokeEdges(ctx, M, list, EDGE_ORDER[i], d === 1, tx, ty);
+      }
+    }
+  }
+
+  function drawHoverNodes(ctx: CanvasRenderingContext2D, S: Scene, V: View, H: Hover) {
+    const M = model;
+    if (!M) return;
+    const { tx, ty, inView } = viewMath(V);
+    const A = assets;
+    const heat = S.heat !== null;
+    const B = H.base;
+    for (const id of H.hot) {
+      const n = M.nodes.get(id);
+      if (!n || n.hidden || n.kind === "classStart" || n.kind === "onlyImage" || n.kind === "ascStart") continue;
+      if (!inView(n.x, n.y)) continue;
+      const sx = tx(n.x);
+      const sy = ty(n.y);
+      const isAlloc = S.alloc.has(n.id);
+      if (!A) {
+        drawFallback(ctx, n, sx, sy, isAlloc, S.path.has(n.id), S.hover?.id === n.id);
+      } else if (!heat) {
+        const st = nodeState(n, S);
+        const half = (n.kind === "socket" ? n.size.base : n.size.overlay) * scale;
+        if (st !== nodeState(n, B) && half > 0) {
+          ctx.globalAlpha = n.asc !== null && n.asc !== S.asc ? 0.6 : 1;
+          if (half < DOT_PX) {
+            ctx.beginPath();
+            ctx.arc(sx, sy, Math.max(half * 0.75, 0.5), 0, Math.PI * 2);
+            ctx.strokeStyle = DOT_FILL[dotBucket(n, st)];
+            ctx.lineWidth = Math.max(half * 0.5, 0.7);
+            ctx.stroke();
+          } else {
+            const frameName = frameFor(n, S, st);
+            if (frameName) A.draw(ctx, frameName, sx, sy, half, half);
+          }
+          ctx.globalAlpha = 1;
+        }
+      }
+      if (S.dep.has(n.id) && S.hover?.id !== n.id) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(n.r * scale, 3), 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(240,106,106,0.35)";
+        ctx.fill();
+      }
+    }
+
+    if (H.socketSet) {
+      ctx.strokeStyle = H.socketColor;
+      ctx.lineWidth = 1.75;
+      for (const id of H.socketSet) {
+        const n = M.nodes.get(id);
+        if (!n || !inView(n.x, n.y)) continue;
+        ctx.beginPath();
+        ctx.arc(tx(n.x), ty(n.y), Math.max(n.r, 30) * scale + 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
   }
 
   function drawRings(ctx: CanvasRenderingContext2D, S: Scene, V: View) {
-    const { toScreen, inView } = viewMath(V);
+    const { tx, ty, toScreen, inView } = viewMath(V);
     const A = assets;
     if (!model) return;
     // --- jewel radius rings ---
@@ -716,7 +955,8 @@
         const n = model.nodes.get(nodeId);
         const rad = S.radii[j.radiusIndex - 1];
         if (!n || !rad || !inView(n.x, n.y)) continue;
-        const [sx, sy] = toScreen(n.x, n.y);
+        const sx = tx(n.x);
+        const sy = ty(n.y);
         const outer = rad.outer * scale;
         const inner = rad.inner * scale * 1.06;
         const rings = timelessRings(j);
@@ -909,6 +1149,13 @@
     scale = Math.min(1.2, Math.max(0.012, scale * factor));
     cx = wx - (sx - w / 2) / scale;
     cy = wy - (sy - h / 2) / scale;
+    zooming = true;
+    if (zoomTimer) clearTimeout(zoomTimer);
+    zoomTimer = window.setTimeout(() => {
+      zoomTimer = 0;
+      zooming = false;
+      invalidate();
+    }, 120);
     invalidate();
   }
 
@@ -1270,6 +1517,7 @@
       window.removeEventListener("keyup", onShift);
       if (raf) cancelAnimationFrame(raf);
       if (spinTimer) clearTimeout(spinTimer);
+      if (zoomTimer) clearTimeout(zoomTimer);
     };
   });
 </script>
