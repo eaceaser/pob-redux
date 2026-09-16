@@ -11,9 +11,11 @@ system WKWebView, so there is no equivalent of the WebView2 download on Windows 
 Builds live in `~/Documents/Path of Building (PoE2)/Builds` and `~/Documents/Path of Building/Builds`,
 the same as every other platform, so a Path of Building install shares the same files.
 
-Until the app is signed with a Developer ID and notarized, Gatekeeper refuses it on first launch with
-*"cannot be opened because the developer cannot be verified"*. Right-click the app and choose **Open**,
-which offers the same dialog with an Open button, or clear the quarantine flag:
+Until the app is signed with a Developer ID and notarized, Gatekeeper blocks it on first launch. On
+macOS 15 Sequoia or later, open System Settings, go to **Privacy & Security**, scroll to the note that
+PoB Redux was blocked and click **Open Anyway**, then confirm. macOS 11 to 14 still let you right-click
+the app and choose **Open**, which shows the same warning with an Open button. Clearing the quarantine
+flag works on any version:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/PoB Redux.app"

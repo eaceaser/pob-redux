@@ -32,8 +32,9 @@ with `WEBKIT_DISABLE_DMABUF_RENDERER=1` to avoid that (`POB_REDUX_GPU=1` turns t
 Make the AppImage executable before running it (`chmod +x`). Saving an assistant API key needs a Secret
 Service (gnome-keyring or KWallet) on the session bus.
 
-macOS builds run on Apple Silicon: take the `.dmg` and see [MACOS.md](MACOS.md). It is not
-signed or notarized yet, so Gatekeeper needs a right-click → Open on first launch.
+macOS builds run on Apple Silicon: take the `.dmg` and see [MACOS.md](MACOS.md). The app is not
+signed or notarized yet, so macOS blocks its first launch. Allow it under System Settings → Privacy &
+Security → Open Anyway, or on macOS 14 and earlier, right-click the app and choose Open.
 
 ## Features
 
