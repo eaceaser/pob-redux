@@ -135,8 +135,10 @@ jobs:
           args: --bundles ${{ matrix.bundles }}
 
       # Launch the AppImage on a virtual display and refuse a black window, the
-      # failure WebKitGTK produces when its GPU path breaks. Advisory for now:
-      # the screenshot is uploaded either way.
+      # failure WebKitGTK produces when its GPU path breaks. The script waits for
+      # the window rather than sleeping a fixed time, which missed a cold start on
+      # the runner and screenshotted an empty display. Advisory for now: the
+      # screenshot is uploaded either way.
       - name: Smoke-test the AppImage
         if: runner.os == 'Linux'
         continue-on-error: true
@@ -144,17 +146,13 @@ jobs:
           POB_REDUX_GAME: poe2
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
-          sudo apt-get install -y xvfb imagemagick
+          sudo apt-get install -y xvfb imagemagick xdotool
           app=$(ls target/release/bundle/appimage/*.AppImage | head -1)
-          chmod +x "$app"
-          xvfb-run -a -s "-screen 0 1600x1000x24" bash -c "\"$app\" & pid=\$!; sleep 30; import -window root smoke.png; kill \$pid"
-          mean=$(convert smoke.png -colorspace Gray -format "%[fx:mean]" info:)
-          echo "mean brightness: $mean"
-          awk -v m="$mean" 'BEGIN { exit (m > 0.01) ? 0 : 1 }'
+          xvfb-run -a -s "-screen 0 1600x1000x24" bash scripts/smoke-appimage.sh "$app"
 
       - name: Upload the smoke screenshot
         if: runner.os == 'Linux' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-smoke
           path: smoke.png
