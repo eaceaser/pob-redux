@@ -1,0 +1,116 @@
+name: aur
+
+# Publishes pob-redux-bin to the AUR from packaging/aur/PKGBUILD. It runs when a
+# release is published rather than on the tag: release.yml creates a draft, and
+# the .deb URL only resolves once the release is public. A release event runs
+# the workflow file from the tagged commit, so a tag cut before this file
+# existed needs the manual trigger.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release tag to package, e.g. v0.2.17"
+        required: true
+      dry_run:
+        description: "Build and test the package without pushing to the AUR"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aur
+  cancel-in-progress: false
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git openssh pacman-contrib
+
+      - name: Version
+        id: v
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          ver="${TAG#v}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::unexpected tag '$TAG'"
+            exit 1
+          fi
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+
+      # The host key is pinned to the Ed25519 fingerprint the AUR publishes on
+      # its front page (SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4).
+      - name: SSH
+        shell: bash
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          install -dm700 "$HOME/.ssh"
+          printf '%s\n' "$AUR_KEY" > "$HOME/.ssh/aur"
+          chmod 600 "$HOME/.ssh/aur"
+          echo 'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' > "$HOME/.ssh/known_hosts"
+
+      - name: Build, test and push
+        shell: bash
+        env:
+          VER: ${{ steps.v.outputs.ver }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          git clone ssh://aur@aur.archlinux.org/pob-redux-bin.git aur
+
+          old_ver=""
+          old_rel=0
+          if [ -f aur/PKGBUILD ]; then
+            old_ver=$(sed -n 's/^pkgver=//p' aur/PKGBUILD)
+            old_rel=$(sed -n 's/^pkgrel=//p' aur/PKGBUILD)
+          fi
+          rel=1
+          [ "$old_ver" = "$VER" ] && rel=$old_rel
+
+          # makepkg refuses to run as root.
+          useradd -m builder
+          install -d -o builder -g builder /home/builder/pkg
+          install -o builder -g builder -m644 packaging/aur/PKGBUILD /home/builder/pkg/PKGBUILD
+          cd /home/builder/pkg
+          sed -i "s/^pkgver=.*/pkgver=$VER/; s/^pkgrel=.*/pkgrel=$rel/" PKGBUILD
+          sudo -u builder updpkgsums
+          sudo -u builder env PKGEXT=.pkg.tar makepkg -f --nodeps --noconfirm
+          sudo -u builder makepkg --printsrcinfo > .SRCINFO
+
+          cd "$GITHUB_WORKSPACE/aur"
+          cp /home/builder/pkg/PKGBUILD /home/builder/pkg/.SRCINFO .
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "pob-redux-bin $VER-$rel is already on the AUR"
+            exit 0
+          fi
+          # Same version with a changed PKGBUILD: the AUR needs a new pkgrel.
+          if [ "$old_ver" = "$VER" ]; then
+            rel=$((old_rel + 1))
+            sed -i "s/^pkgrel=.*/pkgrel=$rel/" /home/builder/pkg/PKGBUILD
+            (cd /home/builder/pkg && sudo -u builder makepkg --printsrcinfo > .SRCINFO)
+            cp /home/builder/pkg/PKGBUILD /home/builder/pkg/.SRCINFO .
+          fi
+
+          git symbolic-ref HEAD refs/heads/master
+          git add PKGBUILD .SRCINFO
+          git -c user.name="Judd" -c user.email="ipajudd@gmail.com" commit -m "Update to $VER-$rel"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: would push pob-redux-bin $VER-$rel"
+            git show --stat HEAD
+            exit 0
+          fi
+          git push origin master
