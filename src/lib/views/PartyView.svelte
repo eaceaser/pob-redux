@@ -6,6 +6,19 @@
   let party = $state<PartyState | null>(null);
   let importText = $state("");
   let append = $state(false);
+  let only = $state("all");
+
+  // PoB's destination dropdown: take everything, or just one kind of buff.
+  const DESTINATIONS: [string, string][] = [
+    ["all", "Everything"],
+    ["editPartyMemberStats", "Party member stats"],
+    ["editAuras", "Auras"],
+    ["editCurses", "Curses"],
+    ["editWarcries", "Warcries"],
+    ["editLinks", "Link skills"],
+    ["enemyCond", "Enemy conditions"],
+    ["enemyMods", "Enemy modifiers"],
+  ];
   let advanced = $state(false);
   let fetching = $state(false);
 
@@ -39,7 +52,7 @@
       }
       fetching = false;
     }
-    const p = text.startsWith("<") ? { xml: text, append } : { code, append };
+    const p = text.startsWith("<") ? { xml: text, append, only } : { code, append, only };
     const r = await build.run(() => engine.partyImport(p));
     if (r) importText = "";
   }
@@ -60,8 +73,22 @@
       <input type="checkbox" bind:checked={append} />
       Append
     </label>
+    <label class="fld-inline" title="Take only one kind of support from the imported build">
+      <span class="label">Take</span>
+      <select class="select sm" bind:value={only}>
+        {#each DESTINATIONS as [id, label] (id)}
+          <option value={id}>{label}</option>
+        {/each}
+      </select>
+    </label>
     <span class="vr"></span>
     <button class="btn sm ghost" onclick={() => build.run(() => engine.partyClear())} disabled={build.busy > 0}>Clear</button>
+    <button
+      class="btn sm ghost"
+      title="Turn the party's effects off without losing the pasted data. Rebuild all puts them back."
+      onclick={() => build.run(() => engine.partyDisable())}
+      disabled={build.busy > 0}>Disable effects</button
+    >
     <button class="btn sm ghost" title="Reparse all boxes after manual edits" onclick={() => build.run(() => engine.partyRebuild())} disabled={build.busy > 0}>Rebuild all</button>
     <span class="vr"></span>
     <label class="chk small" title="Include this build's own auras/curses/buffs when exporting its share code, so a party member can import them here">

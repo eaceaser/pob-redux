@@ -26,6 +26,20 @@
 
   // per-build gem defaults (persisted by PoB in the build file)
   let options = $state<SkillsOptions | null>(null);
+
+  // PoB's own labels for the two gem-option dropdowns.
+  const SORT_LABELS: Record<string, string> = {
+    FullDPS: 'Full DPS',
+    CombinedDPS: 'Combined DPS',
+    TotalDPS: 'Hit DPS',
+    AverageDamage: 'Average hit',
+    TotalDot: 'DoT DPS',
+    BleedDPS: 'Bleed DPS',
+    IgniteDPS: 'Ignite DPS',
+    TotalPoisonDPS: 'Poison DPS',
+    TotalEHP: 'Effective hit pool',
+  };
+  const SUPPORT_LABELS: Record<string, string> = { ALL: 'All', LINEAGE: 'Lineage', NORMAL: 'Non-lineage', EXCEPTIONAL: 'Exceptional' };
   $effect(() => {
     build.rev;
     engine
@@ -231,6 +245,34 @@
       <span class="label">Quality</span>
       <input class="input opt num" type="number" min="0" max="23" value={options?.defaultGemQuality ?? 0} onchange={(e) => setOptions({ defaultGemQuality: Number((e.target as HTMLInputElement).value) })} />
     </label>
+    <span class="vr"></span>
+    <label class="chk small" title="Order the gem picker by what each gem would do for this build">
+      <input type="checkbox" checked={options?.sortGemsByDPS ?? true} onchange={(e) => setOptions({ sortGemsByDPS: (e.target as HTMLInputElement).checked })} />
+      Sort by
+    </label>
+    <select
+      class="select opt"
+      title="Which number the gem picker sorts on"
+      disabled={!(options?.sortGemsByDPS ?? true)}
+      value={options?.sortGemsByDPSField ?? "FullDPS"}
+      onchange={(e) => setOptions({ sortGemsByDPSField: (e.target as HTMLSelectElement).value })}
+    >
+      {#each options?.sortFields ?? [] as f}
+        <option value={f}>{SORT_LABELS[f] ?? f}</option>
+      {/each}
+    </select>
+    <label class="fld-inline" title="Which support gems the picker offers">
+      <span class="label">Supports</span>
+      <select class="select opt" value={options?.showSupportGemTypes ?? "ALL"} onchange={(e) => setOptions({ showSupportGemTypes: (e.target as HTMLSelectElement).value })}>
+        {#each options?.supportTypes ?? [] as t}
+          <option value={t}>{SUPPORT_LABELS[t] ?? t}</option>
+        {/each}
+      </select>
+    </label>
+    <label class="chk small" title="Offer gems that are no longer obtainable">
+      <input type="checkbox" checked={options?.showLegacyGems ?? false} onchange={(e) => setOptions({ showLegacyGems: (e.target as HTMLInputElement).checked })} />
+      Legacy
+    </label>
   </div>
 
   <div class="cols">
@@ -274,6 +316,19 @@
           <span class="grow"></span>
           <label class="chk small"><input type="checkbox" checked={sel.includeInFullDPS} onchange={(e) => patchGroup(sel.index, { includeInFullDPS: (e.target as HTMLInputElement).checked })} /> Full DPS</label>
           <label class="chk small"><input type="checkbox" checked={sel.enabled} onchange={(e) => patchGroup(sel.index, { enabled: (e.target as HTMLInputElement).checked })} /> Enabled</label>
+          {#if sel.groupCount !== null && sel.groupCount !== undefined}
+            <label class="fld-inline" title="How many copies of this item-granted skill apply">
+              <span class="label">Count</span>
+              <input
+                class="input opt num"
+                type="number"
+                min="1"
+                max="99"
+                value={sel.groupCount}
+                onchange={(e) => patchGroup(sel.index, { groupCount: Number((e.target as HTMLInputElement).value) })}
+              />
+            </label>
+          {/if}
           <button
             class="btn sm ghost danger"
             disabled={!!sel.source}

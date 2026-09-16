@@ -23,6 +23,7 @@
     { id: "notes", label: "Notes", key: "7" },
     { id: "party", label: "Party", key: "8" },
     { id: "optimise", label: "Optimise", key: "9" },
+    { id: "compare", label: "Compare", key: "0" },
   ];
 
   // the build name lives in the sidebar; the OS title carries it for the taskbar

@@ -24,7 +24,7 @@ export function autosaveKey() {
   return game.isPoe2 ? AUTOSAVE_KEY : `${AUTOSAVE_KEY}:${game.current}`;
 }
 
-export type ViewId = "tree" | "skills" | "items" | "calcs" | "config" | "notes" | "party" | "optimise" | "import";
+export type ViewId = "tree" | "skills" | "items" | "calcs" | "config" | "notes" | "party" | "optimise" | "compare" | "import";
 
 /**
  * The one live build. Mutations go through the engine and then re-pull the
@@ -39,6 +39,8 @@ class BuildStore {
   skills = $state<Skills | null>(null);
   specs = $state<SpecInfo[]>([]);
   classes = $state<ClassInfo[]>([]);
+  /** PoE1's alternate ascendancies; empty on PoE2. */
+  secondaryAscendancies = $state<{ id: number; name: string }[]>([]);
   /** Engine metadata (PoB version, tree versions); fetched once. */
   meta = $state<{ pobVersion: string; treeVersions: string[]; latestTreeVersion: string } | null>(null);
   view = $state<ViewId>("import");
@@ -165,7 +167,9 @@ class BuildStore {
     this.rev = info.rev;
     this.schedulePresync();
     if (this.classes.length === 0) {
-      this.classes = (await engine.listClasses()).classes;
+      const list = await engine.listClasses();
+      this.classes = list.classes;
+      this.secondaryAscendancies = list.secondaryAscendancies ?? [];
     }
     if (!this.meta) {
       const v = await engine.version();
@@ -225,6 +229,7 @@ class BuildStore {
     this.skills = null;
     this.specs = [];
     this.classes = [];
+    this.secondaryAscendancies = [];
     this.meta = null;
     this.error = null;
     this.lastAutosave = "";
@@ -281,8 +286,8 @@ class BuildStore {
     return this.run(() => engine.setBuildName(name));
   }
 
-  selectClass(classId?: number, ascendClassId?: number) {
-    return this.run(() => engine.selectClass(classId, ascendClassId));
+  selectClass(classId?: number, ascendClassId?: number, secondaryAscendClassId?: number) {
+    return this.run(() => engine.selectClass(classId, ascendClassId, secondaryAscendClassId));
   }
 
   /** Pick an ascendancy and show its ring, so the points can be spent right away. */

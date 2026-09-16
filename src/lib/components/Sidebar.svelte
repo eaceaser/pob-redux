@@ -2,9 +2,12 @@
   import PobText from "./PobText.svelte";
   import BreakdownPanel from "./BreakdownPanel.svelte";
   import Icon from "./Icon.svelte";
+  import MinionLibrary from "./MinionLibrary.svelte";
   import { engine, type BreakdownSection } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { groupSidebar } from "$lib/sidebar-groups";
+
+  let libraryOpen = $state(false);
 
   // breakdown popup for hovered/pinned stat rows
   let bd = $state<{ sections: BreakdownSection[]; row: number; y: number; pinned: boolean } | null>(null);
@@ -102,6 +105,9 @@
   }
   function onAsc(e: Event) {
     build.chooseAscendancy(Number((e.target as HTMLSelectElement).value));
+  }
+  function onSecondaryAsc(e: Event) {
+    build.selectClass(undefined, undefined, Number((e.target as HTMLSelectElement).value));
   }
   function onMainSkill(e: Event) {
     build.setMainSkill(Number((e.target as HTMLSelectElement).value));
@@ -226,6 +232,19 @@
           </select>
         </label>
       </div>
+      {#if build.secondaryAscendancies.length}
+        <div class="row2">
+          <label class="field wide">
+            <span class="label">Second ascendancy</span>
+            <select class="select" value={info.secondaryAscendClassId ?? 0} onchange={onSecondaryAsc} disabled={build.busy > 0}>
+              <option value={0}>None</option>
+              {#each build.secondaryAscendancies as a}
+                <option value={a.id}>{a.name}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      {/if}
       <div class="row2">
         <div class="field lvl">
           <span class="label">Level</span>
@@ -308,7 +327,14 @@
           </select>
         </label>
       {/if}
+      <button class="btn sm ghost wide" title="Choose which spectres this build owns, so a Raise Spectre gem can use them" onclick={() => (libraryOpen = true)}>
+        Spectre library…
+      </button>
     </section>
+
+    {#if libraryOpen}
+      <MinionLibrary onclose={() => (libraryOpen = false)} />
+    {/if}
 
     <div class="stats" class:busy={build.busy > 0}>
       {#if side}
@@ -386,6 +412,13 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .btn.wide {
+    width: 100%;
+    margin-top: 2px;
+  }
+  .field.wide {
+    grid-column: 1 / -1;
   }
   .row2 {
     display: grid;

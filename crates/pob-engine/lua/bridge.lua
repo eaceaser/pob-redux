@@ -712,6 +712,9 @@ M.get_build = function()
 		className = spec.curClassName,
 		ascendClassId = spec.curAscendClassId,
 		ascendClassName = opt(spec.curAscendClassName),
+		-- PoE1 only; PoE2 trees carry no alternate ascendancies.
+		secondaryAscendClassId = spec.curSecondaryAscendClassId or 0,
+		secondaryAscendClassName = opt(spec.curSecondaryAscendClassName),
 		mainSocketGroup = build.mainSocketGroup,
 		treeVersion = spec.treeVersion,
 		rev = build.outputRevision,
@@ -922,6 +925,23 @@ end
 
 -- The Calcs tab grid: PoB's own section controls with every cell's format
 -- string resolved against the requested actor.
+local BUFF_MODES = { UNBUFFED = true, BUFFED = true, COMBAT = true, EFFECTIVE = true }
+
+-- Which buffs the Calcs tab assumes. The sidebar is always EFFECTIVE, as in PoB.
+M.calc_mode = function(p)
+	ensureBuild()
+	local input = build.calcsTab.input
+	if p and p.mode ~= nil then
+		local mode = string.upper(tostring(p.mode))
+		if not BUFF_MODES[mode] then error("mode must be UNBUFFED, BUFFED, COMBAT or EFFECTIVE", 0) end
+		input.misc_buffMode = mode
+		pcall(function() build.calcsTab.controls.mode:SelByValue(mode, "buffMode") end)
+		build.calcsTab:AddUndoState()
+		refresh()
+	end
+	return { mode = input.misc_buffMode or "EFFECTIVE", modes = array({ "UNBUFFED", "BUFFED", "COMBAT", "EFFECTIVE" }) }
+end
+
 M.calc_sections = function(p)
 	ensureBuild()
 	local calcsTab = build.calcsTab
@@ -1040,7 +1060,12 @@ M.list_classes = function()
 		classes[#classes + 1] = { id = classId, name = classData.name, ascendancies = ascendancies }
 	end
 	table.sort(classes, function(a, b) return a.id < b.id end)
-	return { classes = classes }
+	local secondary = array({})
+	for id, data in pairs(build.spec.tree.alternate_ascendancies or {}) do
+		if id ~= 0 and data.name then secondary[#secondary + 1] = { id = id, name = data.name } end
+	end
+	table.sort(secondary, function(a, b) return a.id < b.id end)
+	return { classes = classes, secondaryAscendancies = secondary }
 end
 
 M.select_class = function(p)
@@ -1055,6 +1080,9 @@ M.select_class = function(p)
 		end
 		if p.ascendClassId ~= nil then
 			build.spec:SelectAscendClass(tonumber(p.ascendClassId))
+		end
+		if p.secondaryAscendClassId ~= nil and build.spec.SelectSecondaryAscendClass then
+			build.spec:SelectSecondaryAscendClass(tonumber(p.secondaryAscendClassId))
 		end
 	end)
 	if not ok then
@@ -2229,6 +2257,11 @@ M.list_slots = function()
 	-- PoB flags unallocated tree jewel sockets inactive (and relabels the
 	-- active ones "Socket #n") only from its draw path; do it here instead
 	pcall(build.itemsTab.UpdateSockets, build.itemsTab)
+	-- Populate also decides which abyssal sub-sockets an item actually has,
+	-- which PoB otherwise only works out while drawing the slot.
+	for _, slot in pairs(build.itemsTab.slots or {}) do
+		if slot.Populate then pcall(slot.Populate, slot) end
+	end
 	local slots = array({})
 	for _, slot in ipairs(build.itemsTab.orderedSlots) do
 		local item = slot.selItemId and slot.selItemId ~= 0 and build.itemsTab.items[slot.selItemId] or nil
@@ -2565,6 +2598,7 @@ M.get_skills = function()
 			includeInFullDPS = group.includeInFullDPS == true,
 			slot = opt(group.slot),
 			source = opt(group.source),
+			groupCount = group.source and math.max(tonumber(group.groupCount) or 1, 1) or null,
 			-- Set on groups a weapon, shield or other item grants: the skill
 			-- comes with the item and is not a socket the player filled.
 			grantedBy = grantedBy(group),
@@ -2864,10 +2898,16 @@ end
 -- Per-build gem defaults; SkillsTab persists them in the build file.
 M.get_skills_options = function()
 	ensureBuild()
+	local tab = build.skillsTab
 	return {
-		defaultGemLevel = build.skillsTab.defaultGemLevel or "normalMaximum",
-		defaultGemQuality = build.skillsTab.defaultGemQuality or 0,
-		sortGemsByDPSField = build.skillsTab.sortGemsByDPSField or "FullDPS",
+		defaultGemLevel = tab.defaultGemLevel or "normalMaximum",
+		defaultGemQuality = tab.defaultGemQuality or 0,
+		sortGemsByDPS = tab.sortGemsByDPS ~= false,
+		sortGemsByDPSField = tab.sortGemsByDPSField or "FullDPS",
+		showSupportGemTypes = tab.showSupportGemTypes or "ALL",
+		showLegacyGems = tab.showLegacyGems == true,
+		sortFields = array({ "FullDPS", "CombinedDPS", "TotalDPS", "AverageDamage", "TotalDot", "BleedDPS", "IgniteDPS", "TotalPoisonDPS", "TotalEHP" }),
+		supportTypes = array(IS_POE2 and { "ALL", "LINEAGE", "NORMAL" } or { "ALL", "NORMAL", "EXCEPTIONAL" }),
 	}
 end
 
@@ -2883,6 +2923,9 @@ M.set_skills_options = function(p)
 		pcall(function() build.skillsTab.controls.defaultQuality:SetText(tostring(build.skillsTab.defaultGemQuality)) end)
 	end
 	if p.sortGemsByDPSField ~= nil then build.skillsTab.sortGemsByDPSField = p.sortGemsByDPSField end
+	if p.sortGemsByDPS ~= nil then build.skillsTab.sortGemsByDPS = p.sortGemsByDPS == true end
+	if p.showSupportGemTypes ~= nil then build.skillsTab.showSupportGemTypes = tostring(p.showSupportGemTypes) end
+	if p.showLegacyGems ~= nil then build.skillsTab.showLegacyGems = p.showLegacyGems == true end
 	build.modFlag = true
 	return M.get_skills_options()
 end
@@ -3140,6 +3183,7 @@ M.set_socket_group = function(p)
 	if p.label ~= nil then group.label = p.label end
 	if p.slot ~= nil then group.slot = (p.slot ~= "" and p.slot) or nil end
 	if p.mainActiveSkill ~= nil then group.mainActiveSkill = tonumber(p.mainActiveSkill) end
+	if p.groupCount ~= nil then group.groupCount = math.max(tonumber(p.groupCount) or 1, 1) end
 	build.skillsTab:ProcessSocketGroup(group)
 	build.skillsTab:AddUndoState()
 	refresh()
@@ -4178,6 +4222,288 @@ M.set_item_props = function(p)
 	return { ok = true }
 end
 
+-- ---------------------------------------------------------------------------
+-- PoE1 item shape: influence, sockets and links, and cluster jewel crafting.
+-- PoE2 items have none of these, so every reader reports what the item can
+-- take and the UI shows only what comes back.
+-- ---------------------------------------------------------------------------
+
+local INFLUENCES = {
+	{ key = "shaper", name = "Shaper" },
+	{ key = "elder", name = "Elder" },
+	{ key = "adjudicator", name = "Warlord" },
+	{ key = "basilisk", name = "Hunter" },
+	{ key = "crusader", name = "Crusader" },
+	{ key = "eyrie", name = "Redeemer" },
+	{ key = "cleansing", name = "Searing Exarch" },
+	{ key = "tangle", name = "Eater of Worlds" },
+}
+
+local SOCKET_COLOURS = { "R", "G", "B", "W", "A" }
+
+M.item_shape = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	local influences = array({})
+	for _, inf in ipairs(INFLUENCES) do
+		influences[#influences + 1] = { key = inf.key, name = inf.name, on = item[inf.key] == true }
+	end
+	local sockets = array({})
+	for _, sock in ipairs(item.sockets or {}) do
+		sockets[#sockets + 1] = { colour = sock.color, group = sock.group or 0 }
+	end
+	local cluster = null
+	if item.clusterJewel then
+		local skills = array({})
+		for id, skill in pairs(item.clusterJewel.skills or {}) do
+			skills[#skills + 1] = { id = id, name = skill.name or id }
+		end
+		table.sort(skills, function(a, b) return a.name < b.name end)
+		cluster = {
+			skills = skills,
+			skill = opt(item.clusterJewelSkill),
+			nodeCount = item.clusterJewelNodeCount or item.clusterJewel.maxNodes,
+			minNodes = item.clusterJewel.minNodes,
+			maxNodes = item.clusterJewel.maxNodes,
+		}
+	end
+	return {
+		canBeInfluenced = item.canBeInfluenced == true,
+		influences = influences,
+		sockets = sockets,
+		socketLimit = (item.base and item.base.socketLimit) or 0,
+		colours = strArray(SOCKET_COLOURS),
+		abyssalSocketCount = item.abyssalSocketCount or 0,
+		cluster = cluster,
+	}
+end
+
+M.set_item_shape = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	if p.influences ~= nil then
+		if item.ResetInfluence then item:ResetInfluence() end
+		local byKey = {}
+		for _, inf in ipairs(INFLUENCES) do byKey[inf.key] = true end
+		local applied = 0
+		for _, key in ipairs(p.influences) do
+			-- PoB allows two, the same as its pair of dropdowns.
+			if byKey[key] and applied < 2 then
+				item[key] = true
+				applied = applied + 1
+			end
+		end
+	end
+	if p.sockets ~= nil then
+		local limit = (item.base and item.base.socketLimit) or 0
+		local ok = {}
+		for _, c in ipairs(SOCKET_COLOURS) do ok[c] = true end
+		local next_ = {}
+		for _, sock in ipairs(p.sockets) do
+			if #next_ >= limit then break end
+			local colour = tostring(sock.colour or "W"):upper()
+			if not ok[colour] then colour = "W" end
+			next_[#next_ + 1] = { color = colour, group = math.max(tonumber(sock.group) or 0, 0) }
+		end
+		item.sockets = next_
+	end
+	if p.clusterSkill ~= nil and item.clusterJewel then
+		local skill = tostring(p.clusterSkill)
+		item.clusterJewelSkill = (skill ~= "" and item.clusterJewel.skills[skill]) and skill or nil
+	end
+	if p.clusterNodeCount ~= nil and item.clusterJewel then
+		local n = tonumber(p.clusterNodeCount) or item.clusterJewel.maxNodes
+		item.clusterJewelNodeCount = math.max(math.min(n, item.clusterJewel.maxNodes), item.clusterJewel.minNodes)
+	end
+	commitItemEdit(item)
+	return M.item_shape(p)
+end
+
+-- ---------------------------------------------------------------------------
+-- Enchantments (PoE1): ItemsTab:EnchantDisplayItem. An item's enchantments
+-- table is keyed either by source (lab, Heist, Harvest) or, for helmets, by
+-- skill and then by source.
+-- ---------------------------------------------------------------------------
+
+M.item_enchants = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	local ench = item.enchantments
+	if not ench then
+		return { available = false, bySkill = false, skills = array({}), sources = array({}), lines = array({}), current = array({}), slots = 1 }
+	end
+	-- If any top-level key is a known source then this item is not per-skill.
+	local bySkill = true
+	for _, source in ipairs(build.data.enchantmentSource or {}) do
+		if ench[source.name] then
+			bySkill = false
+			break
+		end
+	end
+	local skills = array({})
+	if bySkill then
+		for name in pairs(ench) do skills[#skills + 1] = name end
+		table.sort(skills)
+	end
+	local skill = p and p.skill
+	if bySkill and (skill == nil or ench[skill] == nil) then skill = skills[1] end
+	local scope = bySkill and (skill and ench[skill] or {}) or ench
+	local sources = array({})
+	for _, source in ipairs(build.data.enchantmentSource or {}) do
+		if scope[source.name] then sources[#sources + 1] = source.name end
+	end
+	local source = p and p.source
+	if source == nil or scope[source] == nil then source = sources[1] end
+	local lines = array({})
+	for _, line in ipairs((source and scope[source]) or {}) do lines[#lines + 1] = line end
+	local current = array({})
+	for _, mod in ipairs(item.enchantModLines or {}) do current[#current + 1] = mod.line end
+	local slots = 1
+	if item.canHaveTwoEnchants then slots = 2 end
+	if item.canHaveThreeEnchants then slots = 3 end
+	if item.canHaveFourEnchants then slots = 4 end
+	return {
+		available = #sources > 0 or #skills > 0,
+		bySkill = bySkill,
+		skills = skills,
+		skill = opt(skill),
+		sources = sources,
+		source = opt(source),
+		lines = lines,
+		current = current,
+		slots = slots,
+	}
+end
+
+M.set_item_enchant = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	local slot = math.max(tonumber(p.slot) or 1, 1)
+	item.enchantModLines = item.enchantModLines or {}
+	if p.remove then
+		table.remove(item.enchantModLines, slot)
+	elseif p.line ~= nil then
+		local line = tostring(p.line)
+		-- PoB writes a pair when the entry carries two lines separated by "/".
+		local first, second = line:match("([^/]+)/([^/]+)")
+		if first then
+			item.enchantModLines = { { crafted = true, line = first }, { crafted = true, line = second } }
+		else
+			if not item.canHaveTwoEnchants and #item.enchantModLines > 1 then
+				item.enchantModLines = { item.enchantModLines[1] }
+			end
+			if #item.enchantModLines >= slot then table.remove(item.enchantModLines, slot) end
+			table.insert(item.enchantModLines, slot, { crafted = true, line = line })
+		end
+	else
+		error("params.line or params.remove is required", 0)
+	end
+	commitItemEdit(item)
+	return M.item_enchants(p)
+end
+
+-- ---------------------------------------------------------------------------
+-- Crucible trees (PoE1): ItemsTab:AddCrucibleModifierToDisplayItem. A weapon
+-- carries up to five nodes, each holding one mod from the crucible pool that
+-- can sit in that position.
+-- ---------------------------------------------------------------------------
+
+local CRUCIBLE_NODES = 5
+
+-- "Allocates 12345" reads as the node's name once the tree is known.
+local function crucibleLine(line)
+	if line and line:match("Allocates") then
+		local nodeId = tonumber(line:match("%d+"))
+		local node = nodeId and build.spec.nodes[nodeId]
+		if node then return "Allocates " .. node.name end
+	end
+	return line
+end
+
+local function crucibleLabel(mod)
+	local parts = {}
+	for _, line in ipairs(mod) do parts[#parts + 1] = crucibleLine(line) end
+	return table.concat(parts, " / ")
+end
+
+M.item_crucible = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	local pool = build.data.crucible
+	if not pool then
+		return { available = false, nodes = array({}), selected = array({}) }
+	end
+	local nodes = array({})
+	for i = 1, CRUCIBLE_NODES do nodes[i] = array({}) end
+	for order, mod in pairs(pool) do
+		if item:CanHaveMod(mod) then
+			for _, location in ipairs(mod.nodeLocation or {}) do
+				if nodes[location] then
+					nodes[location][#nodes[location] + 1] = {
+						id = order,
+						label = crucibleLabel(mod),
+						tier = mod.tier,
+						type = opt(mod.type),
+					}
+				end
+			end
+		end
+	end
+	for _, list in ipairs(nodes) do
+		table.sort(list, function(a, b)
+			if a.type ~= b.type then return a.type == "Spawn" end
+			return a.id < b.id
+		end)
+	end
+	-- Work out which option each node is showing by matching the lines already
+	-- on the item, the way PoB seeds its dropdowns.
+	local onItem = {}
+	for _, mod in ipairs(item.crucibleModLines or {}) do onItem[mod.line] = true end
+	-- An empty string means the node is clear, so the array keeps its shape.
+	local selected = array({})
+	for i = 1, CRUCIBLE_NODES do selected[i] = "" end
+	for order, mod in pairs(pool) do
+		if item:CanHaveMod(mod) and onItem[crucibleLine(mod[1])] and (not mod[2] or onItem[crucibleLine(mod[2])]) then
+			local loc = mod.nodeLocation or {}
+			if loc[1] and selected[loc[1]] ~= "" and loc[2] then
+				selected[loc[2]] = order
+			elseif loc[1] then
+				selected[loc[1]] = order
+			end
+		end
+	end
+	return {
+		available = item.base ~= nil and item.base.weapon ~= nil,
+		nodes = nodes,
+		selected = selected,
+		count = CRUCIBLE_NODES,
+	}
+end
+
+M.set_item_crucible = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	local pool = build.data.crucible
+	if not pool then error("this game has no crucible mods", 0) end
+	if type(p.selected) ~= "table" then error("params.selected is required", 0) end
+	item.crucibleModLines = {}
+	for i = 1, CRUCIBLE_NODES do
+		local order = p.selected[i]
+		if order == "" then order = nil end
+		local mod = order ~= nil and pool[order] or nil
+		if mod then
+			for _, line in ipairs(mod) do
+				-- The line is tagged {crucible} on the way out, which is how a
+				-- re-parse knows to put it back on the crucible tree.
+				local entry = { line = crucibleLine(line), modTags = mod.modTags, crucible = true }
+				item.crucibleModLines[#item.crucibleModLines + 1] = entry
+			end
+		end
+	end
+	commitItemEdit(item)
+	return M.item_crucible(p)
+end
+
 M.catalyst_info = function(p)
 	ensureBuild()
 	local item = requireItem(p)
@@ -4394,6 +4720,29 @@ end
 
 local tradeGen, tradeState
 
+-- The trade site's listing filter, in the order TradeQueryGenerator indexes it.
+local TRADE_STATUS = { "securable", "available", "onlineleague", "online", "any" }
+
+-- A jewel socket has no base type to infer from, so the caller picks one.
+-- The generator appends "Jewel" to this, so only these three read back as a
+-- category it knows.
+local TRADE_JEWEL_TYPES = { Base = true, Abyss = true, Any = true }
+
+M.trade_status_options = function()
+	local out = array({})
+	local labels = {
+		securable = "Instant buyout",
+		available = "Buyout or fixed price",
+		onlineleague = "Online in this league",
+		online = "Online anywhere",
+		any = "Any listing",
+	}
+	for i, id in ipairs(TRADE_STATUS) do
+		out[i] = { id = id, label = labels[id] }
+	end
+	return { options = out }
+end
+
 M.trade_search_start = function(p)
 	ensureBuild()
 	local slot = build.itemsTab.slots[p and p.slotName or ""]
@@ -4422,8 +4771,20 @@ M.trade_search_start = function(p)
 		includeMirrored = p and p.includeMirrored and true or false,
 		maxLevel = tonumber(p and p.maxLevel),
 		sockets = tonumber(p and p.sockets),
-		jewelType = (p and p.jewelType) or "Sapphire",
+		jewelType = (p and p.jewelType) or "Base",
 	}
+	if not TRADE_JEWEL_TYPES[options.jewelType] then
+		error("jewelType must be Base, Abyss or Any", 0)
+	end
+	local statusIndex = 4
+	if p and p.status then
+		statusIndex = nil
+		for i, id in ipairs(TRADE_STATUS) do
+			if id == p.status then statusIndex = i break end
+		end
+		if not statusIndex then error("unknown trade status " .. tostring(p.status), 0) end
+	end
+	tradeGen.tradeTypeIndex = statusIndex
 	tradeState = { done = false }
 	tradeGen.requesterContext = nil
 	tradeGen.requesterCallback = function(_, queryJson, errMsg)
@@ -4463,9 +4824,16 @@ M.trade_leagues = function()
 	local body, err = native.http_get("https://www.pathofexile.com/api/" .. api .. "/data/leagues", "Path of Building/" .. (launch and launch.versionNumber or "2"))
 	if not body then error(err or "download failed", 0) end
 	local decoded = dkjson.decode(body)
+	-- GGG repeats every league once per realm (pc, xbox and sony on PoE1; poe2
+	-- and its consoles on PoE2). The trade links this app builds carry no realm,
+	-- so keep the first entry for each league and drop the rest.
 	local leagues = array({})
+	local seen = {}
 	for _, l in ipairs((decoded and decoded.result) or {}) do
-		leagues[#leagues + 1] = { id = l.id, text = l.text or l.id }
+		if l.id and not seen[l.id] then
+			seen[l.id] = true
+			leagues[#leagues + 1] = { id = l.id, text = l.text or l.id, realm = opt(l.realm) }
+		end
 	end
 	if #leagues == 0 then error("league list unavailable", 0) end
 	return { leagues = leagues }
@@ -5265,6 +5633,1127 @@ local function partyRebuild(pt)
 	build.buildFlag = true
 end
 
+-- The spectre and beast libraries: which monsters this build owns. PoB keeps
+-- them on the build, and they only do anything once a Raise Spectre or
+-- Companion gem in the build is set to one of them.
+local function libraryField(kind)
+	return kind == "beast" and "beastList" or "spectreList"
+end
+
+local function minionEntry(id)
+	local m = build.data.minions[id]
+	if not m then return nil end
+	local flags = m.extraFlags or {}
+	return {
+		id = id,
+		name = m.name or id,
+		category = opt(m.monsterCategory),
+		recommended = (flags.recommendedSpectre or flags.recommendedBeast) and true or false,
+	}
+end
+
+M.minion_library = function(p)
+	ensureBuild()
+	local kind = (p and p.kind == "beast") and "beast" or "spectre"
+	local field = libraryField(kind)
+	local owned = array({})
+	for _, id in ipairs(build[field] or {}) do
+		local e = minionEntry(id)
+		if e then owned[#owned + 1] = e end
+	end
+	local available = array({})
+	local categories, seen = array({}), {}
+	for id in pairs(build.data.spectres or {}) do
+		local e = minionEntry(id)
+		if e then
+			-- A beast library only offers what PoB counts as a beast.
+			if kind ~= "beast" or e.category == "Beast" then
+				available[#available + 1] = e
+				if e.category ~= null and not seen[e.category] then
+					seen[e.category] = true
+					categories[#categories + 1] = e.category
+				end
+			end
+		end
+	end
+	table.sort(available, function(a, b)
+		if a.name == b.name then return a.id < b.id end
+		return a.name < b.name
+	end)
+	table.sort(categories)
+	return {
+		kind = kind,
+		owned = owned,
+		available = available,
+		categories = categories,
+		-- PoE1 has no separate beast library.
+		hasBeasts = build.beastList ~= nil,
+	}
+end
+
+M.set_minion_library = function(p)
+	ensureBuild()
+	if not p or type(p.ids) ~= "table" then error("params.ids is required", 0) end
+	local kind = (p.kind == "beast") and "beast" or "spectre"
+	local field = libraryField(kind)
+	if kind == "beast" and build.beastList == nil then error("this game has no beast library", 0) end
+	local next_ = {}
+	local seen = {}
+	for _, id in ipairs(p.ids) do
+		id = tostring(id)
+		if build.data.minions[id] and not seen[id] then
+			seen[id] = true
+			next_[#next_ + 1] = id
+		end
+	end
+	build[field] = next_
+	build.modFlag = true
+	refresh()
+	return M.minion_library({ kind = kind })
+end
+
+-- ---------------------------------------------------------------------------
+-- Tattoos (PoE1): TreeTab:ModifyNodePopup. A tattoo replaces one tree node's
+-- modifier in place; the spec keeps it in hashOverrides so it survives a save.
+-- ---------------------------------------------------------------------------
+
+local TATTOO_LIMIT = 50
+
+local function tattooTree()
+	local tree = build.spec and build.spec.tree
+	return tree and tree.tattoo and tree.tattoo.nodes or nil
+end
+
+local function tattooCount()
+	local n = 0
+	for _, node in pairs(build.spec.hashOverrides or {}) do
+		if node and node.isTattoo then n = n + 1 end
+	end
+	return n
+end
+
+M.node_tattoos = function(p)
+	ensureBuild()
+	local pool = tattooTree()
+	local nodeId = tonumber(p and p.node)
+	if not pool or not nodeId then
+		return { available = false, options = array({}), applied = null, count = tattooCount(), limit = TATTOO_LIMIT }
+	end
+	local node = build.spec.nodes[nodeId]
+	local treeNode = build.spec.tree.nodes[nodeId]
+	if not node or not treeNode then error("unknown node id", 0) end
+	local showLegacy = p.legacy == true
+	local nodeName = treeNode.dn or ""
+	local nodeValue = (treeNode.sd and treeNode.sd[1]) or ""
+	local linked = node.linkedId and #node.linkedId or 0
+	local options = array({})
+	for id, t in pairs(pool) do
+		local target = t.targetType or ""
+		local matches = nodeName:match((target:gsub("^Small ", "")))
+			or (t.targetValue ~= "" and t.targetValue ~= nil and nodeValue:match(t.targetValue))
+			or (target == "Small Attribute" and (nodeName == "Intelligence" or nodeName == "Strength" or nodeName == "Dexterity"))
+			or (target == "Keystone" and treeNode.type == target)
+		local legacyOk = (t.legacy == nil or t.legacy == false) or t.legacy == showLegacy
+		if matches and (t.MinimumConnected or 0) <= linked and legacyOk then
+			options[#options + 1] = { id = id, name = t.dn or id, stats = strArray(t.sd or {}), legacy = t.legacy == true }
+		end
+	end
+	table.sort(options, function(a, b) return a.name < b.name end)
+	local current = build.spec.hashOverrides and build.spec.hashOverrides[nodeId]
+	return {
+		available = #options > 0,
+		options = options,
+		applied = (current and current.isTattoo) and { id = opt(current.id2 or current.skill), name = opt(current.dn), stats = strArray(current.sd or {}) } or null,
+		nodeName = nodeName,
+		count = tattooCount(),
+		limit = TATTOO_LIMIT,
+	}
+end
+
+M.set_node_tattoo = function(p)
+	ensureBuild()
+	local pool = tattooTree()
+	if not pool then error("this game has no tattoos", 0) end
+	local nodeId = tonumber(p and p.node)
+	local node = nodeId and build.spec.nodes[nodeId]
+	if not node then error("unknown node id", 0) end
+	if p.remove then
+		build.spec.tree.nodes[nodeId].isTattoo = false
+		build.spec.hashOverrides[nodeId] = nil
+		build.spec:ReplaceNode(node, build.spec.tree.nodes[nodeId])
+		node.allMasteryOptions = false
+	else
+		local t = p.tattoo and pool[p.tattoo]
+		if not t then error("unknown tattoo id", 0) end
+		if tattooCount() >= TATTOO_LIMIT and not (build.spec.hashOverrides[nodeId] and build.spec.hashOverrides[nodeId].isTattoo) then
+			error("a character may carry " .. TATTOO_LIMIT .. " tattoos", 0)
+		end
+		t.id = nodeId
+		build.spec.hashOverrides[nodeId] = t
+		build.spec:ReplaceNode(node, t)
+		if node.type == "Mastery" then node.allMasteryOptions = false end
+	end
+	build.spec:BuildAllDependsAndPaths()
+	build.spec:AddUndoState()
+	build.modFlag = true
+	refresh()
+	return M.node_tattoos({ node = nodeId, legacy = p.legacy })
+end
+
+-- ---------------------------------------------------------------------------
+-- Timeless jewel search (PoE1): TreeTab:FindTimelessJewel. Every seed of a
+-- legion jewel rewrites the passives around one socket, and data.readLUT says
+-- into what. The search walks the jewel's seed range, weighs each seed by the
+-- nodes the caller asked for and ranks them. It runs in steps because a range
+-- is thousands of seeds wide.
+--
+-- The abyss jewels (types 7 and up) are left out: they transform a node from
+-- components stored on the jewel rather than from a seed, so a seed search
+-- does not apply to them.
+-- ---------------------------------------------------------------------------
+
+local TIMELESS_TYPES = {
+	{ id = 1, label = "Glorious Vanity", name = "vaal" },
+	{ id = 2, label = "Lethal Pride", name = "karui" },
+	{ id = 3, label = "Brutal Restraint", name = "maraketh" },
+	{ id = 4, label = "Militant Faith", name = "templar" },
+	{ id = 5, label = "Elegant Hubris", name = "eternal" },
+	{ id = 6, label = "Heroic Tragedy", name = "kalguur" },
+}
+
+local TIMELESS_CONQUERORS = {
+	[1] = { "Any", "Doryani (Corrupted Soul)", "Xibaqua (Divine Flesh)", "Ahuana (Immortal Ambition)" },
+	[2] = { "Any", "Kaom (Strength of Blood)", "Rakiata (Tempered by War)", "Akoya (Chainbreaker)" },
+	[3] = { "Any", "Asenath (Dance with Death)", "Nasima (Second Sight)", "Balbala (The Traitor)" },
+	[4] = { "Any", "Avarius (Power of Purpose)", "Dominus (Inner Conviction)", "Maxarius (Transcendence)" },
+	[5] = { "Any", "Cadiro (Supreme Decadence)", "Victario (Supreme Grandstanding)", "Caspiro (Supreme Ostentation)" },
+	[6] = { "Any", "Vorana (Black Scythe Training)", "Uhtred (Celestial Mathematics)", "Medved (The Unbreaking Circle)" },
+}
+
+local TIMELESS_DEVOTION = {
+	"Any", "Totem Damage", "Brand Damage", "Channelling Damage", "Area Damage",
+	"Elemental Damage", "Elemental Resistances", "Effect of non-Damaging Ailments",
+	"Elemental Ailment Duration", "Duration of Curses", "Minion Attack and Cast Speed",
+	"Minions Accuracy Rating", "Mana Regen", "Mana Cost (legacy)", "Non-Curse Aura Effect",
+	"Defences from Shield", "Mana Cost Efficiency",
+}
+
+-- Devotion variants are listed in the order the trade ids expect, which is not
+-- the order the dropdown shows them in.
+local TIMELESS_DEVOTION_TRADE = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 15 }
+
+local TIMELESS_IGNORED = {
+	["Might of the Vaal"] = true, ["Legacy of the Vaal"] = true, ["Strength"] = true,
+	["Add Strength"] = true, ["Dex"] = true, ["Add Dexterity"] = true, ["Devotion"] = true,
+	["Price of Glory"] = true, ["Ward"] = true,
+}
+
+local TIMELESS_TOTALS = { [2] = "Strength", [3] = "Dexterity", [4] = "Devotion" }
+
+-- Legion ids that roll into the "Total <stat>" pseudo-entry.
+local TIMELESS_TOTAL_MEMBERS = {
+	karui_notable_add_strength = true, karui_attribute_strength = true, karui_small_strength = true,
+	maraketh_notable_add_dexterity = true, maraketh_attribute_dex = true, maraketh_small_dex = true,
+	templar_notable_devotion = true, templar_devotion_node = true, templar_small_devotion = true,
+}
+
+local TIMELESS_ATTRIBUTES = { Strength = true, Dexterity = true, Intelligence = true }
+
+local function timelessTree()
+	if IS_POE2 then error("the timeless jewel search is Path of Exile 1 only", 0) end
+	local tree = build.spec and build.spec.tree
+	if not tree or not tree.legion then error("this tree has no legion data", 0) end
+	return tree
+end
+
+local function timelessType(id)
+	for _, t in ipairs(TIMELESS_TYPES) do
+		if t.id == id then return t end
+	end
+	error("jewel type " .. tostring(id) .. " cannot be searched by seed", 0)
+end
+
+--- The jewel sockets on the tree, labelled by their nearest keystone the way
+--- PoB labels them.
+local function timelessSockets(tree)
+	local out = array({})
+	for socketId, socketData in pairs(build.spec.nodes) do
+		if socketData.isJewelSocket and socketData.name ~= "Charm Socket" then
+			local keystone = "Unknown"
+			if socketId == 26725 then
+				keystone = "Marauder"
+			elseif socketId == 54127 then
+				keystone = "Duelist"
+			elseif socketId == 7960 then
+				keystone = "Templar/Witch"
+			else
+				local best = math.huge
+				for _, near in pairs(tree.nodes[socketId] and tree.nodes[socketId].nodesInRadius[3] or {}) do
+					if near.isKeystone then
+						local d = (near.x - socketData.x) ^ 2 + (near.y - socketData.y) ^ 2
+						if d < best then
+							keystone = near.name
+							best = d
+						end
+					end
+				end
+			end
+			out[#out + 1] = {
+				id = socketId,
+				keystone = keystone,
+				label = keystone .. ": " .. socketId,
+				allocated = build.spec.allocNodes[socketId] ~= nil,
+			}
+		end
+	end
+	table.sort(out, function(a, b) return a.label < b.label end)
+	return out
+end
+
+--- The nodes a seed can produce for one jewel type, which is the list the
+--- caller picks its wanted nodes from.
+local function timelessNodes(tree, jewelType)
+	local kind = timelessType(jewelType)
+	local out = array({})
+	local total = TIMELESS_TOTALS[jewelType]
+	if total then
+		out[#out + 1] = {
+			id = "total_" .. total:lower(),
+			name = "Total " .. total,
+			stats = strArray({ "Every addition to " .. total .. " around the socket, counted together" }),
+			notable = false,
+			total = true,
+		}
+	end
+	for _, node in pairs(tree.legion.nodes) do
+		if node.id:match("^" .. kind.name .. "_.+")
+			and not node.id:match("^abyss_special_ascendancy_notable_")
+			and not TIMELESS_IGNORED[node.dn] and not node.ks then
+			out[#out + 1] = {
+				id = node.id,
+				name = node.dn,
+				stats = strArray(node.sd),
+				notable = node["not"] and true or false,
+				total = false,
+			}
+		end
+	end
+	if kind.name ~= "vaal" then
+		for _, addition in pairs(tree.legion.additions) do
+			if addition.id:match("^" .. kind.name .. "_.+") and not TIMELESS_IGNORED[addition.dn] then
+				out[#out + 1] = {
+					id = addition.id,
+					name = addition.dn,
+					stats = strArray(addition.sd),
+					notable = false,
+					total = false,
+				}
+			end
+		end
+	end
+	table.sort(out, function(a, b)
+		if a.total ~= b.total then return a.total end
+		if a.notable ~= b.notable then return a.notable end
+		return a.name < b.name
+	end)
+	return out
+end
+
+--- The passives one socket's radius covers, which is what a seed can rewrite.
+local function timelessRadius(tree, socketId)
+	local out = array({})
+	local socket = socketId and tree.nodes[socketId]
+	if not socket or not socket.isJewelSocket then return out end
+	local roots = {}
+	for _, class in pairs(tree.classes) do roots[class.startNodeId] = true end
+	for nodeId in pairs(socket.nodesInRadius[3] or {}) do
+		local node = tree.nodes[nodeId]
+		if node and not roots[nodeId] and not node.isJewelSocket then
+			out[#out + 1] = {
+				id = nodeId,
+				name = node.dn,
+				notable = node.isNotable and true or false,
+				keystone = node.isKeystone and true or false,
+				allocated = build.spec.allocNodes[nodeId] ~= nil,
+			}
+		end
+	end
+	table.sort(out, function(a, b)
+		if a.keystone ~= b.keystone then return a.keystone end
+		if a.notable ~= b.notable then return a.notable end
+		return a.name < b.name
+	end)
+	return out
+end
+
+M.timeless_info = function(p)
+	ensureBuild()
+	local tree = timelessTree()
+	local jewelType = tonumber(p and p.jewelType) or 1
+	local jewels = array({})
+	for _, t in ipairs(TIMELESS_TYPES) do
+		local conquerors = array({})
+		for i, label in ipairs(TIMELESS_CONQUERORS[t.id]) do
+			conquerors[i] = { id = i, label = label }
+		end
+		jewels[#jewels + 1] = {
+			id = t.id,
+			label = t.label,
+			name = t.name,
+			-- Elegant Hubris stores its seed divided by twenty; the number a
+			-- player reads off the jewel, and the one trade wants, is the
+			-- multiple, so the range is reported already multiplied.
+			seedMin = data.timelessJewelSeedMin[t.id] * (t.id == 5 and 20 or 1),
+			seedMax = data.timelessJewelSeedMax[t.id] * (t.id == 5 and 20 or 1),
+			step = t.id == 5 and 20 or 1,
+			conquerors = conquerors,
+			total = opt(TIMELESS_TOTALS[t.id]),
+		}
+	end
+	local devotion = array({})
+	for i, label in ipairs(TIMELESS_DEVOTION) do
+		devotion[i] = { id = i, label = label }
+	end
+	return {
+		available = true,
+		jewelType = jewelType,
+		jewels = jewels,
+		sockets = timelessSockets(tree),
+		nodes = timelessNodes(tree, jewelType),
+		radius = timelessRadius(tree, tonumber(p and p.socket)),
+		devotion = devotion,
+	}
+end
+
+local timeless = nil
+
+M.timeless_search_start = function(p)
+	ensureBuild()
+	p = p or {}
+	local tree = timelessTree()
+	local jewelType = tonumber(p.jewelType) or 1
+	local kind = timelessType(jewelType)
+	local socketId = tonumber(p.socket)
+	if not socketId then error("params.socket is required", 0) end
+	local socket = tree.nodes[socketId]
+	if not socket or not socket.isJewelSocket then error("node " .. socketId .. " is not a jewel socket", 0) end
+
+	local legionNodes, legionAdditions = tree.legion.nodes, tree.legion.additions
+	local totalId = TIMELESS_TOTALS[jewelType] and ("total_" .. TIMELESS_TOTALS[jewelType]:lower()) or nil
+
+	-- The wanted nodes, keyed the way a LUT result resolves: a legion node id,
+	-- or "totalStat" for the pooled attribute or devotion entry.
+	local desired, minimums, order = {}, {}, 0
+	for _, want in ipairs(p.desired or {}) do
+		local id = tostring(want.id or "")
+		if totalId and id == totalId then id = "totalStat" end
+		local name = id
+		if id ~= "totalStat" then
+			for _, node in pairs(legionNodes) do
+				if node.id == id then name = node.dn break end
+			end
+			if name == id then
+				for _, addition in pairs(legionAdditions) do
+					if addition.id == id then name = addition.dn break end
+				end
+			end
+		else
+			name = "Total " .. TIMELESS_TOTALS[jewelType]
+		end
+		if not desired[id] then
+			order = order + 1
+			desired[id] = {
+				weight = tonumber(want.weight) or 1,
+				weight2 = tonumber(want.weight2) or 0,
+				name = name,
+				order = order,
+			}
+			local min = tonumber(want.minWeight)
+			if min and min > 0 then minimums[#minimums + 1] = { id = id, weight = min } end
+		end
+	end
+	if not next(desired) then error("params.desired needs at least one node", 0) end
+
+	local protect = {}
+	for _, name in ipairs(p.protect or {}) do protect[tostring(name)] = true end
+
+	local roots = {}
+	for _, class in pairs(tree.classes) do roots[class.startNodeId] = true end
+
+	local filter = p.socketFilter and true or false
+	local reach = tonumber(p.socketFilterDistance) or 0
+	local grantedPassives = build.calcsTab.mainEnv and build.calcsTab.mainEnv.grantedPassives or {}
+
+	local targets, smalls, attributeSmalls = {}, 0, 0
+	for nodeId in pairs(socket.nodesInRadius[3] or {}) do
+		local node = tree.nodes[nodeId]
+		local wanted = node and not roots[nodeId] and not node.isJewelSocket and not node.isKeystone
+		if wanted and filter then
+			local alloc = grantedPassives[nodeId] ~= nil or build.spec.allocNodes[nodeId] ~= nil
+			local dist = build.spec.nodes[nodeId] and build.spec.nodes[nodeId].pathDist or 1000
+			wanted = alloc or (reach > 0 and dist <= reach)
+		end
+		if wanted then
+			if node.isNotable or jewelType == 1 then
+				targets[#targets + 1] = nodeId
+			elseif desired.totalStat then
+				if TIMELESS_ATTRIBUTES[node.dn] then
+					attributeSmalls = attributeSmalls + 1
+				else
+					smalls = smalls + 1
+				end
+			end
+		end
+	end
+	if #targets == 0 then error("no passives in that socket's radius match the filter", 0) end
+	table.sort(targets)
+
+	local step = jewelType == 5 and 20 or 1
+	timeless = {
+		tree = tree,
+		jewelType = jewelType,
+		kind = kind,
+		socket = socketId,
+		targets = targets,
+		desired = desired,
+		minimums = minimums,
+		protect = protect,
+		smalls = smalls,
+		attributeSmalls = attributeSmalls,
+		step = step,
+		seed = data.timelessJewelSeedMin[jewelType] * step,
+		seedMax = data.timelessJewelSeedMax[jewelType] * step,
+		total = data.timelessJewelSeedMax[jewelType] - data.timelessJewelSeedMin[jewelType] + 1,
+		totalMinWeight = tonumber(p.totalMinWeight) or 0,
+		checked = 0,
+		results = {},
+	}
+	return { done = false, progress = 0, checked = 0, found = 0, total = timeless.total }
+end
+
+--- Score one seed. Returns the per-node weights and the seed total, or nil if
+--- the seed is invalid for this search.
+local function timelessScore(seed)
+	local t = timeless
+	local legionNodes, legionAdditions = t.tree.legion.nodes, t.tree.legion.additions
+	local desired, protect = t.desired, t.protect
+	local hits, weight = {}, 0
+
+	local function credit(id, amount, targetName)
+		local hit = hits[id]
+		if not hit then
+			hit = { weight = 0, targets = {} }
+			hits[id] = hit
+		end
+		hit.weight = hit.weight + amount
+		hit.targets[#hit.targets + 1] = targetName
+		weight = weight + amount
+	end
+
+	for _, targetId in ipairs(t.targets) do
+		local lut = data.readLUT(seed, targetId, t.jewelType)
+		if next(lut) then
+			local targetNode = t.tree.nodes[targetId]
+			local node, id
+			local protected = t.jewelType == 4 and protect[targetNode.dn]
+			if protected then
+				-- Militant Faith cannot keep a protected keystone that the seed
+				-- replaces, so such a seed is no use.
+				if lut[1] >= data.timelessJewelAdditions then return nil end
+				if not desired.totalStat then
+					desired.totalStat = { weight = 0.1, weight2 = 0, name = "Devotion", order = 99 }
+				end
+				id = "totalStat"
+			end
+			if lut[1] >= data.timelessJewelAdditions and not protected then
+				node = legionNodes[lut[1] + 1 - data.timelessJewelAdditions]
+				id = node and node.id or nil
+			elseif not protected then
+				node = legionAdditions[lut[1] + 1]
+				id = node and node.id or nil
+			end
+			if desired.totalStat and TIMELESS_TOTAL_MEMBERS[id] then id = "totalStat" end
+
+			if t.jewelType == 1 then
+				local size = #lut
+				if size == 2 or size == 3 then
+					local want = desired[id]
+					if want and node then
+						local first = node.stats[node.sortedStats[1]]
+						local amount = want.weight * (lut[first.index + 1] or 0)
+						local second = node.stats[node.sortedStats[2]]
+						if second then amount = amount + want.weight2 * (lut[second.index + 1] or 0) end
+						credit(id, amount, targetNode.name)
+					end
+				elseif size == 6 or size == 8 then
+					for i = 1, size / 2 do
+						local addition = legionAdditions[lut[i] + 1]
+						local addId = addition and addition.id or nil
+						local want = addId and desired[addId]
+						if want then
+							credit(addId, want.weight * (lut[i + size / 2] or 0), targetNode.name)
+						end
+					end
+				end
+			elseif id and desired[id] then
+				credit(id, desired[id].weight, targetNode.name)
+			end
+		end
+	end
+
+	if desired.totalStat then
+		local hit = hits.totalStat
+		if not hit then
+			hit = { weight = 0, targets = {} }
+			hits.totalStat = hit
+		end
+		local base = desired.totalStat.weight
+		local extra
+		if t.jewelType == 4 then
+			extra = base * (5 * t.smalls + 10 * t.attributeSmalls) + hit.weight * 4
+		else
+			extra = base * (4 * t.smalls + 2 * t.attributeSmalls) + hit.weight * 19
+		end
+		hit.weight = hit.weight + extra
+		weight = weight + extra
+	end
+
+	for _, min in ipairs(t.minimums) do
+		if (hits[min.id] and hits[min.id].weight or 0) < min.weight then return nil end
+	end
+	if weight <= 0 or weight < t.totalMinWeight then return nil end
+	return hits, weight
+end
+
+M.timeless_search_step = function(p)
+	ensureBuild()
+	if not timeless then error("no search is running; call timeless_search_start first", 0) end
+	local t = timeless
+	local budget = tonumber(p and p.budgetMs) or 150
+	local t0 = GetTime()
+	while t.seed <= t.seedMax and GetTime() - t0 < budget do
+		local hits, weight = timelessScore(t.seed)
+		if hits then t.results[#t.results + 1] = { seed = t.seed, weight = weight, hits = hits } end
+		t.seed = t.seed + t.step
+		t.checked = t.checked + 1
+	end
+	return {
+		done = t.seed > t.seedMax,
+		progress = math.min(t.checked / t.total, 1),
+		checked = t.checked,
+		found = #t.results,
+		total = t.total,
+	}
+end
+
+M.timeless_search_result = function(p)
+	ensureBuild()
+	if not timeless then error("no search has been run", 0) end
+	local t = timeless
+	local limit = math.max(math.min(tonumber(p and p.limit) or 100, 500), 1)
+	table.sort(t.results, function(a, b)
+		if a.weight ~= b.weight then return a.weight > b.weight end
+		return a.seed < b.seed
+	end)
+	local wanted = array({})
+	for id, want in pairs(t.desired) do
+		wanted[#wanted + 1] = { id = id, name = want.name, order = want.order }
+	end
+	table.sort(wanted, function(a, b) return a.order < b.order end)
+	local out = array({})
+	for i = 1, math.min(#t.results, limit) do
+		local r = t.results[i]
+		local nodes = array({})
+		for _, want in ipairs(wanted) do
+			local hit = r.hits[want.id]
+			if hit then
+				nodes[#nodes + 1] = {
+					id = want.id,
+					name = want.name,
+					weight = hit.weight,
+					targets = strArray(hit.targets),
+				}
+			end
+		end
+		out[#out + 1] = { seed = r.seed, weight = r.weight, nodes = nodes }
+	end
+	return {
+		results = out,
+		found = #t.results,
+		checked = t.checked,
+		total = t.total,
+		jewelType = t.jewelType,
+		jewelName = t.kind.label,
+		socket = t.socket,
+		desired = wanted,
+	}
+end
+
+--- The pathofexile.com trade search for a set of seeds, built the way
+--- TreeTab's "Open Trade URL" builds it.
+M.timeless_trade_url = function(p)
+	ensureBuild()
+	timelessTree()
+	p = p or {}
+	local jewelType = tonumber(p.jewelType) or (timeless and timeless.jewelType) or 1
+	timelessType(jewelType)
+	local tradeIds = data.timelessJewelTradeIDs[jewelType]
+	if not tradeIds then error("no trade ids for that jewel type", 0) end
+	local conqueror = tonumber(p.conqueror) or 1
+	local keystones = {}
+	if conqueror > 1 then
+		keystones[1] = tradeIds.keystone[conqueror - 1]
+	else
+		keystones = { tradeIds.keystone[1], tradeIds.keystone[2], tradeIds.keystone[3] }
+	end
+	local filters = {}
+	for _, seed in ipairs(p.seeds or {}) do
+		local n = tonumber(seed)
+		if n then
+			for _, id in ipairs(keystones) do
+				filters[#filters + 1] = { id = id, value = { min = n, max = n } }
+			end
+		end
+	end
+	if #filters == 0 then error("params.seeds needs at least one seed", 0) end
+	local search = {
+		query = {
+			status = { option = tostring(p.status or "online") },
+			stats = { { filters = filters, type = "count", value = { min = 1 } } },
+		},
+		sort = { price = "asc" },
+	}
+	if tradeIds.devotion then
+		local devotion = {}
+		for _, variant in ipairs(p.devotion or {}) do
+			local idx = tonumber(variant)
+			if idx and idx > 1 then
+				local tradeIdx = TIMELESS_DEVOTION_TRADE[idx] and TIMELESS_DEVOTION_TRADE[idx] - 1 or nil
+				if tradeIdx and tradeIds.devotion[tradeIdx] then
+					devotion[#devotion + 1] = { id = tradeIds.devotion[tradeIdx] }
+				end
+			end
+		end
+		if #devotion > 0 then
+			search.query.stats[#search.query.stats + 1] = { filters = devotion, type = "and" }
+		end
+	end
+	local realm = tostring(p.realm or "pc"):lower()
+	local league = tostring(p.league or "Standard")
+	local url = "https://www.pathofexile.com/trade/search/"
+		.. (realm == "pc" and "" or (realm .. "/"))
+		.. league:gsub("[^a-zA-Z0-9]", function(c) return string.format("%%%02X", c:byte()) end)
+		.. "/?q=" .. dkjson.encode(search):gsub("[^a-zA-Z0-9]", function(c) return string.format("%%%02X", c:byte()) end)
+	return { url = url, seeds = #(p.seeds or {}), jewelType = jewelType }
+end
+
+-- ---------------------------------------------------------------------------
+-- Compare: a second build held beside the open one. PoB's own CompareEntry is
+-- a build without the UI chrome, living in the same Lua state, so both sides'
+-- numbers come from the same calculator and nothing has to be reimplemented.
+--
+-- A CompareEntry rebuild wipes the shared calc cache, so the open build pays
+-- for its next recalculation after one is added or its loadout changes.
+-- ---------------------------------------------------------------------------
+
+local compares = {}
+local compareActive = 0
+
+local function compareEntry()
+	local c = compares[compareActive]
+	if not c then error("no comparison build is loaded; call compare_add first", 0) end
+	return c.entry
+end
+
+local configLabels
+local function configLabel(var)
+	if not configLabels then
+		configLabels = {}
+		for _, v in ipairs(require("Modules.ConfigOptions")) do
+			if v.var then configLabels[v.var] = (v.label or v.var):gsub(":%s*$", "") end
+		end
+	end
+	return configLabels[var] or var
+end
+
+local function fmtStat(value, fmt)
+	if type(value) ~= "number" then return value == nil and null or tostring(value) end
+	if not fmt or fmt == "" then return tostring(value) end
+	local ok, s = pcall(string.format, "%" .. fmt, value)
+	return ok and s or tostring(value)
+end
+
+local function statValue(output, entry)
+	if not output then return nil end
+	local v = output[entry.stat]
+	if entry.childStat then
+		if type(v) ~= "table" then return nil end
+		v = v[entry.childStat]
+	end
+	if type(v) ~= "number" then return nil end
+	return v
+end
+
+--- Both sides of PoB's sidebar stat list, as rows the UI can diff.
+local function compareStatRows(mine, theirs, onlyDiff)
+	local rows = array({})
+	for _, entry in ipairs(build.displayStats or {}) do
+		if entry.stat then
+			local a, b = statValue(mine, entry), statValue(theirs, entry)
+			if a ~= nil or b ~= nil then
+				local same = a == b
+				if not (onlyDiff and same) then
+					local delta = (a ~= nil and b ~= nil) and (b - a) or nil
+					local better = null
+					if delta and delta ~= 0 then
+						better = entry.lowerIsBetter and delta < 0 or (not entry.lowerIsBetter and delta > 0)
+					end
+					rows[#rows + 1] = {
+						stat = entry.stat .. (entry.childStat and ("." .. entry.childStat) or ""),
+						label = entry.label or entry.stat,
+						mine = a == nil and null or a,
+						theirs = b == nil and null or b,
+						mineText = a == nil and null or fmtStat(a, entry.fmt),
+						theirsText = b == nil and null or fmtStat(b, entry.fmt),
+						delta = delta == nil and null or delta,
+						deltaText = delta == nil and null or fmtStat(delta, entry.fmt),
+						percent = (delta and a and a ~= 0) and (delta / math.abs(a) * 100) or null,
+						better = better,
+						same = same,
+					}
+				end
+			end
+		end
+	end
+	return rows
+end
+
+local function compareMeta(c)
+	local e = c.entry
+	local spec = e.treeTab and e.treeTab.specList and e.treeTab.specList[e.treeTab.activeSpec]
+	return {
+		label = c.label,
+		className = spec and spec.curClassName or null,
+		ascendClassName = (spec and spec.curAscendClassName ~= "None") and spec.curAscendClassName or null,
+		level = e.characterLevel,
+	}
+end
+
+M.compare_list = function()
+	ensureBuild()
+	local entries = array({})
+	for i, c in ipairs(compares) do
+		local m = compareMeta(c)
+		m.index = i
+		m.active = i == compareActive
+		entries[#entries + 1] = m
+	end
+	return { entries = entries, active = compareActive }
+end
+
+M.compare_add = function(p)
+	ensureBuild()
+	p = p or {}
+	local xml = p.xml
+	if not xml and p.code then xml = decodeCode(p.code) end
+	if not xml and p.path then
+		local f = io.open(p.path, "r")
+		if not f then error("could not read " .. tostring(p.path), 0) end
+		xml = f:read("*a")
+		f:close()
+	end
+	if type(xml) ~= "string" or xml == "" then error("params.xml, params.code or params.path is required", 0) end
+	local root = IS_POE2 and "PathOfBuilding2" or "PathOfBuilding"
+	if not xml:find("<" .. root .. "[%s>]") then
+		error("that build is not a " .. (IS_POE2 and "Path of Exile 2" or "Path of Exile 1") .. " build", 0)
+	end
+	local label = tostring(p.label or "Comparison")
+	local ok, entry = pcall(function() return new("CompareEntry"):CompareEntry(xml, label) end)
+	if not ok or not entry or not entry.calcsTab then
+		error("could not load that build for comparison" .. (ok and "" or (": " .. tostring(entry))), 0)
+	end
+	compares[#compares + 1] = { entry = entry, label = label, xml = xml }
+	compareActive = #compares
+	return M.compare_list()
+end
+
+M.compare_select = function(p)
+	ensureBuild()
+	local i = tonumber(p and p.index) or 0
+	if not compares[i] then error("no comparison build at " .. tostring(i), 0) end
+	compareActive = i
+	return M.compare_list()
+end
+
+M.compare_remove = function(p)
+	ensureBuild()
+	local i = tonumber(p and p.index) or compareActive
+	if not compares[i] then error("no comparison build at " .. tostring(i), 0) end
+	table.remove(compares, i)
+	compareActive = math.min(compareActive, #compares)
+	return M.compare_list()
+end
+
+M.compare_clear = function()
+	ensureBuild()
+	compares = {}
+	compareActive = 0
+	return M.compare_list()
+end
+
+M.compare_summary = function(p)
+	ensureBuild()
+	local entry = compareEntry()
+	return {
+		rows = compareStatRows(build.calcsTab.mainOutput, entry:GetOutput(), p and p.onlyDifferences and true or false),
+		mine = { label = build.buildName or "This build", level = build.characterLevel },
+		theirs = compareMeta(compares[compareActive]),
+	}
+end
+
+--- The loadout each side is showing: trees, item sets, skill sets and the
+--- main socket group.
+local function loadoutSide(b)
+	local specs = array({})
+	for i, spec in ipairs(b.treeTab.specList or {}) do
+		local count = 0
+		for _, node in pairs(spec.nodes) do
+			if node.alloc then count = count + 1 end
+		end
+		specs[#specs + 1] = { index = i, title = spec.title or "Default", nodes = count, active = i == b.treeTab.activeSpec }
+	end
+	local itemSets = array({})
+	for _, id in ipairs(b.itemsTab.itemSetOrderList or {}) do
+		local set = b.itemsTab.itemSets[id]
+		if set then itemSets[#itemSets + 1] = { id = id, title = set.title or "Default", active = id == b.itemsTab.activeItemSetId } end
+	end
+	local skillSets = array({})
+	for _, id in ipairs(b.skillsTab.skillSetOrderList or {}) do
+		local set = b.skillsTab.skillSets[id]
+		if set then skillSets[#skillSets + 1] = { id = id, title = set.title or "Default", active = id == b.skillsTab.activeSkillSetId } end
+	end
+	local groups = array({})
+	for i, group in ipairs(b.skillsTab.socketGroupList or {}) do
+		groups[#groups + 1] = { index = i, label = group.displayLabel or group.label or ("Group " .. i), active = i == b.mainSocketGroup }
+	end
+	return { specs = specs, itemSets = itemSets, skillSets = skillSets, socketGroups = groups }
+end
+
+M.compare_loadouts = function()
+	ensureBuild()
+	return { mine = loadoutSide(build), theirs = loadoutSide(compareEntry()) }
+end
+
+M.compare_set_loadout = function(p)
+	ensureBuild()
+	local entry = compareEntry()
+	p = p or {}
+	if p.spec then entry:SetActiveSpec(tonumber(p.spec)) end
+	if p.itemSet then entry:SetActiveItemSet(tonumber(p.itemSet)) end
+	if p.skillSet then entry:SetActiveSkillSet(tonumber(p.skillSet)) end
+	if p.socketGroup then
+		entry:SetMainSocketGroup(tonumber(p.socketGroup))
+		entry:SyncCalcsSkillSelection()
+		entry:Rebuild()
+	end
+	return M.compare_loadouts()
+end
+
+--- One row per equipment slot, with what each side has in it.
+M.compare_items = function(p)
+	ensureBuild()
+	local entry = compareEntry()
+	local onlyDiff = p and p.onlyDifferences and true or false
+	local rows = array({})
+	for _, slot in ipairs(build.itemsTab.orderedSlots) do
+		local shown = true
+		if type(slot.shown) == "function" then
+			local ok, s = pcall(slot.shown)
+			shown = ok and s and true or false
+		end
+		if shown and not slot.inactive then
+			local mineItem = slot.selItemId and slot.selItemId ~= 0 and build.itemsTab.items[slot.selItemId] or nil
+			local theirSlot = entry.itemsTab.slots[slot.slotName]
+			local theirItem = theirSlot and theirSlot.selItemId and theirSlot.selItemId ~= 0
+				and entry.itemsTab.items[theirSlot.selItemId] or nil
+			local same = (mineItem and mineItem.name or "") == (theirItem and theirItem.name or "")
+			if not (onlyDiff and same) then
+				rows[#rows + 1] = {
+					slot = slot.slotName,
+					label = opt(slot.label),
+					mine = mineItem and { name = mineItem.name, rarity = opt(mineItem.rarity) } or null,
+					theirs = theirItem and { name = theirItem.name, rarity = opt(theirItem.rarity) } or null,
+					same = same,
+				}
+			end
+		end
+	end
+	return { rows = rows }
+end
+
+--- The raw item text of one slot on either side, for a tooltip or a copy.
+M.compare_item_text = function(p)
+	ensureBuild()
+	local entry = compareEntry()
+	local slotName = tostring(p and p.slot or "")
+	local side = (p and p.side) == "mine" and "mine" or "theirs"
+	local b = side == "mine" and build or entry
+	local slot = b.itemsTab.slots[slotName]
+	if not slot then error("unknown slot " .. slotName, 0) end
+	local item = slot.selItemId and slot.selItemId ~= 0 and b.itemsTab.items[slot.selItemId] or nil
+	if not item then return { text = null, name = null } end
+	return { text = item.raw or item:BuildRaw(), name = item.name }
+end
+
+--- Put the comparison build's item for one slot into the open build.
+M.compare_copy_item = function(p)
+	ensureBuild()
+	local entry = compareEntry()
+	local slotName = tostring(p and p.slot or "")
+	local theirSlot = entry.itemsTab.slots[slotName]
+	if not theirSlot then error("unknown slot " .. slotName, 0) end
+	local theirItem = theirSlot.selItemId and theirSlot.selItemId ~= 0 and entry.itemsTab.items[theirSlot.selItemId] or nil
+	if not theirItem then error("the comparison build has nothing in " .. slotName, 0) end
+	local raw = theirItem.raw or theirItem:BuildRaw()
+	local item = new("Item"):Item(raw)
+	if not item.base then error("could not read that item", 0) end
+	build.itemsTab:AddItem(item, true)
+	if not build.itemsTab:IsItemValidForSlot(item, slotName) then
+		error(item.name .. " does not fit " .. slotName, 0)
+	end
+	build.itemsTab.slots[slotName]:SetSelItemId(item.id)
+	build.itemsTab:AddUndoState()
+	refresh()
+	return { ok = true, slot = slotName, itemName = item.name }
+end
+
+--- Socket groups on both sides, matched by the order they appear in.
+M.compare_skills = function(p)
+	ensureBuild()
+	local entry = compareEntry()
+	local onlyDiff = p and p.onlyDifferences and true or false
+	local function groupRow(group)
+		if not group then return null end
+		local gems = array({})
+		for _, gem in ipairs(group.gemList or {}) do
+			gems[#gems + 1] = {
+				name = gem.nameSpec or (gem.gemData and gem.gemData.name) or "?",
+				level = gem.level,
+				quality = gem.quality,
+				enabled = gem.enabled ~= false,
+			}
+		end
+		return { label = group.displayLabel or group.label or "", slot = opt(group.slot), enabled = group.enabled ~= false, gems = gems }
+	end
+	local function key(group)
+		if not group then return "" end
+		local parts = {}
+		for _, gem in ipairs(group.gemList or {}) do
+			parts[#parts + 1] = (gem.nameSpec or "?") .. "/" .. tostring(gem.level) .. "/" .. tostring(gem.quality)
+		end
+		return table.concat(parts, ",")
+	end
+	local mine, theirs = build.skillsTab.socketGroupList or {}, entry.skillsTab.socketGroupList or {}
+	local rows = array({})
+	for i = 1, math.max(#mine, #theirs) do
+		local same = key(mine[i]) == key(theirs[i])
+		if not (onlyDiff and same) then
+			rows[#rows + 1] = { index = i, mine = groupRow(mine[i]), theirs = groupRow(theirs[i]), same = same }
+		end
+	end
+	return { rows = rows }
+end
+
+--- Config options the two builds set differently.
+M.compare_config = function(p)
+	ensureBuild()
+	local entry = compareEntry()
+	local onlyDiff = p and p.onlyDifferences
+	if onlyDiff == nil then onlyDiff = true end
+	local mine = build.configTab.configSets[build.configTab.activeConfigSetId].input
+	local theirs = entry.configTab.input
+	local keys, seen = {}, {}
+	for k, v in pairs(mine) do if isScalar(v) and not seen[k] then seen[k] = true keys[#keys + 1] = k end end
+	for k, v in pairs(theirs) do if isScalar(v) and not seen[k] then seen[k] = true keys[#keys + 1] = k end end
+	table.sort(keys)
+	local rows = array({})
+	for _, k in ipairs(keys) do
+		local a, b = mine[k], theirs[k]
+		local same = a == b
+		if not (onlyDiff and same) then
+			rows[#rows + 1] = {
+				var = k,
+				label = configLabel(k),
+				mine = a == nil and null or a,
+				theirs = b == nil and null or b,
+				same = same,
+			}
+		end
+	end
+	return { rows = rows }
+end
+
+--- What the two trees allocate, and the keystones each side has that the
+--- other does not.
+M.compare_tree = function()
+	ensureBuild()
+	local entry = compareEntry()
+	local mySpec = build.spec
+	local theirSpec = entry.treeTab.specList[entry.treeTab.activeSpec]
+	if not theirSpec then error("the comparison build has no tree", 0) end
+	local function allocated(spec)
+		local ids, keystones, count = {}, {}, 0
+		for id, node in pairs(spec.nodes) do
+			if node.alloc then
+				count = count + 1
+				ids[id] = true
+				if node.type == "Keystone" and node.dn then keystones[node.dn] = true end
+			end
+		end
+		return ids, keystones, count
+	end
+	local myIds, myKeys, myCount = allocated(mySpec)
+	local theirIds, theirKeys, theirCount = allocated(theirSpec)
+	local gained, lost = array({}), array({})
+	for id in pairs(theirIds) do if not myIds[id] then gained[#gained + 1] = id end end
+	for id in pairs(myIds) do if not theirIds[id] then lost[#lost + 1] = id end end
+	table.sort(gained)
+	table.sort(lost)
+	local keyGained, keyLost = strArray({}), strArray({})
+	for k in pairs(theirKeys) do if not myKeys[k] then keyGained[#keyGained + 1] = k end end
+	for k in pairs(myKeys) do if not theirKeys[k] then keyLost[#keyLost + 1] = k end end
+	table.sort(keyGained)
+	table.sort(keyLost)
+	return {
+		mine = { nodes = myCount, title = mySpec.title or "Default", className = mySpec.curClassName },
+		theirs = { nodes = theirCount, title = theirSpec.title or "Default", className = theirSpec.curClassName },
+		gained = gained,
+		lost = lost,
+		keystonesGained = keyGained,
+		keystonesLost = keyLost,
+	}
+end
+
+--- Copy the comparison build's tree into the open build as a new spec, which
+--- the tree tab's compare overlay can then draw against.
+M.compare_copy_tree = function()
+	ensureBuild()
+	local entry = compareEntry()
+	local theirSpec = entry.treeTab.specList[entry.treeTab.activeSpec]
+	if not theirSpec then error("the comparison build has no tree", 0) end
+	local url = theirSpec:EncodeURL("https://www.pathofexile.com/passive-skill-tree/")
+	local spec = new("PassiveSpec"):PassiveSpec(build, theirSpec.treeVersion or build.spec.treeVersion)
+	local err = spec:DecodeURL(url)
+	if err then error("could not copy that tree: " .. tostring(err), 0) end
+	spec.title = (compares[compareActive].label or "Comparison") .. " tree"
+	spec:BuildAllDependsAndPaths()
+	table.insert(build.treeTab.specList, spec)
+	build.treeTab:SetActiveSpec(#build.treeTab.specList)
+	build.modFlag = true
+	refresh()
+	return { ok = true, index = #build.treeTab.specList, title = spec.title }
+end
+
 M.get_party = function()
 	ensureBuild()
 	local pt = build.partyTab
@@ -5306,6 +6795,8 @@ M.party_import = function(p)
 	if dbXML[1].elem ~= rootElem then error("'" .. rootElem .. "' root element missing", 0) end
 	local pt = build.partyTab
 	local append = p and p.append and true or false
+	local only = p and p.only
+	if only == "" or only == "all" then only = nil end
 	if not append then
 		for _, def in pairs(partyKinds) do
 			pt.controls[def.ctl]:SetText("")
@@ -5324,7 +6815,7 @@ M.party_import = function(p)
 	for _, tabNode in ipairs(dbXML[1]) do
 		if type(tabNode) == "table" and tabNode.elem == "Party" then
 			for _, node in ipairs(tabNode) do
-				if node.elem == "ExportedBuffs" and node.attrib.name and names[node.attrib.name] then
+				if node.elem == "ExportedBuffs" and node.attrib.name and names[node.attrib.name] and (not only or names[node.attrib.name] == only) then
 					found = true
 					local ctl = pt.controls[names[node.attrib.name]]
 					local text = node[1] or ""
@@ -5355,6 +6846,16 @@ M.party_clear = function()
 		if def.simple then pt.controls[def.simple].label = "" end
 	end
 	partyWipeActor(pt)
+	build.buildFlag = true
+	refresh()
+	return M.get_party()
+end
+
+-- Turns the party's effects off without losing the pasted data; party_rebuild
+-- puts them back. PoB calls this "Disable Party Effects".
+M.party_disable = function()
+	ensureBuild()
+	partyWipeActor(build.partyTab)
 	build.buildFlag = true
 	refresh()
 	return M.get_party()

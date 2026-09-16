@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type PowerStat, type SocketedJewel, type Tooltip, type TreePower } from "$lib/engine.svelte";
+  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type NodeTattoos, type PowerStat, type SocketedJewel, type Tooltip, type TreePower } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
+  import { game } from "$lib/state/game.svelte";
   import { parseTree, withDynamicNodes, NodeIndex, type TEdge, type TreeModel, type TNode } from "$lib/tree/model";
   import { AssetStore } from "$lib/tree/assets";
   import PobText from "$lib/components/PobText.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
+  import TimelessSearch from "$lib/components/TimelessSearch.svelte";
 
+  let timelessOpen = $state(false);
   let canvas = $state<HTMLCanvasElement | null>(null);
   let wrap = $state<HTMLDivElement | null>(null);
   let searchEl = $state<HTMLInputElement | null>(null);
@@ -72,6 +75,25 @@
   // follow-ups requested by the engine's click handler
   let attrMenu = $state<{ id: number; x: number; y: number } | null>(null);
   let masteryMenu = $state<{ id: number; name: string; x: number; y: number; effects: MasteryEffect[]; selected: number | null } | null>(null);
+  // PoE1 tattoos replace a node's modifier; reached by right-clicking the node.
+  let tattooMenu = $state<{ id: number; x: number; y: number; info: NodeTattoos } | null>(null);
+  let tattooLegacy = $state(false);
+
+  async function openTattoos(id: number, x: number, y: number) {
+    try {
+      const info = await engine.nodeTattoos(id, tattooLegacy);
+      if (info.available) tattooMenu = { id, x, y, info };
+    } catch {
+      /* the node takes none */
+    }
+  }
+
+  async function pickTattoo(tattoo: string | null) {
+    if (!tattooMenu) return;
+    const id = tattooMenu.id;
+    tattooMenu = null;
+    await build.run(() => engine.setNodeTattoo(id, tattoo === null ? { remove: true } : { tattoo, legacy: tattooLegacy }));
+  }
   let classConfirm = $state<{ id: number; className: string; ascendClassName: string | null } | null>(null);
   let urlPanel = $state<"import" | "export" | null>(null);
   let urlDraft = $state("");
@@ -1162,6 +1184,7 @@
   function onPointerDown(e: PointerEvent) {
     attrMenu = null;
     masteryMenu = null;
+    tattooMenu = null;
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     canvas!.setPointerCapture(e.pointerId);
     drag = { sx: e.clientX, sy: e.clientY, cx0: cx, cy0: cy, moved: false, button: e.button };
@@ -1287,6 +1310,8 @@
         // PoB: right-click an allocated mastery to change its effect
         const info = await engine.nodeInfo(n.id).catch(() => null);
         if (info) masteryMenu = { id: n.id, name: n.name, x: mouse.x, y: mouse.y, effects: info.masteryEffects, selected: info.masterySelected };
+      } else {
+        await openTattoos(n.id, mouse.x, mouse.y);
       }
       return;
     }
@@ -1578,6 +1603,9 @@
       <span class="vr"></span>
       <button class="btn sm ghost" onclick={() => { urlPanel = urlPanel === "import" ? null : "import"; urlDraft = ""; }} title="Import a pathofexile.com tree link">Import link</button>
       <button class="btn sm ghost" onclick={exportUrl} title="Copy a pathofexile.com tree link">Export link</button>
+      {#if game.isPoe1}
+        <button class="btn sm ghost" onclick={() => (timelessOpen = true)} title="Find a timeless jewel seed that makes the passives you want">Timeless</button>
+      {/if}
       <span class="vr"></span>
       <button class="btn sm" class:on={powerOn} onclick={() => (powerOn = !powerOn)} title="Show node power (p): estimated value of each unallocated node">
         Power
@@ -1703,6 +1731,44 @@
         {/each}
         <button class="mi dim" onclick={() => (masteryMenu = null)}>Cancel</button>
       </div>
+    {/if}
+
+    {#if tattooMenu}
+      <div class="menu mastery" style:left={`${Math.min(tattooMenu.x, w - 380)}px`} style:top={`${Math.min(tattooMenu.y, Math.max(h - 320, 10))}px`}>
+        <div class="label">
+          {tattooMenu.info.nodeName}
+          <span class="dim num">{tattooMenu.info.count}/{tattooMenu.info.limit}</span>
+        </div>
+        <label class="mi chk">
+          <input
+            type="checkbox"
+            checked={tattooLegacy}
+            onchange={async (e) => {
+              tattooLegacy = (e.target as HTMLInputElement).checked;
+              const id = tattooMenu!.id;
+              const info = await engine.nodeTattoos(id, tattooLegacy).catch(() => null);
+              if (info && tattooMenu) tattooMenu = { ...tattooMenu, info };
+            }}
+          />
+          Legacy tattoos
+        </label>
+        <div class="tatlist">
+          {#each tattooMenu.info.options as t (t.id)}
+            <button class="mi effect" class:on={t.name === tattooMenu.info.applied?.name} onclick={() => pickTattoo(t.id)}>
+              <span class="tatname">{t.name}</span>
+              {#each t.stats as s}<span class="dim small">{s}</span>{/each}
+            </button>
+          {/each}
+        </div>
+        {#if tattooMenu.info.applied}
+          <button class="mi danger" onclick={() => pickTattoo(null)}>Reset node</button>
+        {/if}
+        <button class="mi dim" onclick={() => (tattooMenu = null)}>Cancel</button>
+      </div>
+    {/if}
+
+    {#if timelessOpen}
+      <TimelessSearch onclose={() => (timelessOpen = false)} />
     {/if}
 
     {#if classConfirm}
@@ -1973,6 +2039,8 @@
   }
   .menu {
     position: absolute;
+    /* Above the hover tooltip, which would otherwise cover the menu. */
+    z-index: 3;
     min-width: 150px;
     padding: 6px;
     background: var(--bg-1);
@@ -2014,6 +2082,21 @@
     gap: 1px;
     font-size: var(--fs-xs);
     white-space: normal;
+  }
+  .tatlist {
+    max-height: 260px;
+    overflow: auto;
+  }
+  .tatname {
+    color: var(--fg-0);
+  }
+  .mi.chk {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mi.danger {
+    color: var(--bad);
   }
   .mi.effect.on {
     color: var(--ok);

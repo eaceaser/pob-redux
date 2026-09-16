@@ -8,6 +8,29 @@
   let mode = $state<"sections" | "raw">("sections");
   let actor = $state<"player" | "minion">("player");
 
+  // Which buffs these numbers assume. PoB keeps the sidebar on EFFECTIVE whatever this says.
+  let calcMode = $state("EFFECTIVE");
+  let calcModes = $state<string[]>(["UNBUFFED", "BUFFED", "COMBAT", "EFFECTIVE"]);
+  const BUFF_LABELS: Record<string, string> = { UNBUFFED: "Unbuffed", BUFFED: "Buffed", COMBAT: "In combat", EFFECTIVE: "Effective DPS" };
+  const BUFF_HELP =
+    "What these numbers assume. Unbuffed is standing in town. Buffed adds your auras. In combat adds charges. Effective DPS adds the enemy. The sidebar always shows Effective DPS.";
+
+  $effect(() => {
+    build.rev;
+    engine
+      .calcMode()
+      .then((r) => {
+        calcMode = r.mode;
+        calcModes = r.modes;
+      })
+      .catch(() => {});
+  });
+
+  function setCalcMode(next: string) {
+    calcMode = next;
+    build.run(() => engine.calcMode(next));
+  }
+
   let sections = $state<CalcSection[]>([]);
   let bd = $state<{ sections: BreakdownSection[]; title: string } | null>(null);
 
@@ -76,6 +99,15 @@
         <button class="t2" class:on={actor === "player"} onclick={() => (actor = "player")}>Player</button>
         <button class="t2" class:on={actor === "minion"} onclick={() => (actor = "minion")}>Minion</button>
       </span>
+      <span class="vr"></span>
+      <label class="fld-inline" title={BUFF_HELP}>
+        <span class="label">Assuming</span>
+        <select class="select sm" value={calcMode} disabled={build.busy > 0} onchange={(e) => setCalcMode((e.target as HTMLSelectElement).value)}>
+          {#each calcModes as m}
+            <option value={m}>{BUFF_LABELS[m] ?? m}</option>
+          {/each}
+        </select>
+      </label>
     {:else}
       <input class="input rawfilter" placeholder="Filter output keys…" bind:value={filter} />
       <span class="dim num">{rows.length} / {Object.keys(stats).length}</span>

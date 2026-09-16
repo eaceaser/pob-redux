@@ -11,6 +11,7 @@
   import NotesView from "$lib/views/NotesView.svelte";
   import PartyView from "$lib/views/PartyView.svelte";
   import OptimiseView from "$lib/views/OptimiseView.svelte";
+  import CompareView from "$lib/views/CompareView.svelte";
   import ImportView from "$lib/views/ImportView.svelte";
   import OptionsModal from "$lib/components/OptionsModal.svelte";
   import ConfirmModal from "$lib/components/ConfirmModal.svelte";
@@ -91,6 +92,8 @@
         <PartyView />
       {:else if build.view === "optimise"}
         <OptimiseView />
+      {:else if build.view === "compare"}
+        <CompareView />
       {:else}
         <ImportView {paths} />
       {/if}

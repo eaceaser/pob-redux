@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import {
     engine,
     type AnointInfo,
@@ -11,17 +10,20 @@
     type ItemInfo,
     type ItemRunes,
     type ItemSetInfo,
-    type PowerStat,
+    type ItemCrucible,
+    type ItemShape,
+    type ItemSocket,
     type SharedItem,
     type SlotsResponse,
     type Tooltip,
     type TooltipLine,
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
-  import { game } from "$lib/state/game.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import EnchantDialog from "$lib/components/EnchantDialog.svelte";
   import ItemFrame from "$lib/components/ItemFrame.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
+  import TraderWindow from "$lib/components/TraderWindow.svelte";
 
   let slotsResp = $state<SlotsResponse | null>(null);
   let items = $state<ItemInfo[]>([]);
@@ -57,6 +59,54 @@
   let anointFlags = $state<AnointInfo | null>(null);
   let corruptInfo = $state<CorruptionInfo | null>(null);
   let catInfo = $state<{ usable: boolean; names: string[]; catalyst: number; quality: number } | null>(null);
+  let shape = $state<ItemShape | null>(null);
+  let enchantOpen = $state(false);
+  let crucible = $state<ItemCrucible | null>(null);
+
+  function setCrucible(node: number, id: string) {
+    if (selectedItem == null || !crucible) return;
+    const next = crucible.selected.map((s, i) => (i === node ? id : s));
+    build.run(() => engine.setItemCrucible(selectedItem!, next).then((r) => (crucible = r)));
+  }
+  let enchantable = $state(false);
+
+  const SOCKET_NAMES: Record<string, string> = { R: "Red", G: "Green", B: "Blue", W: "White", A: "Abyssal" };
+
+  /** PoB allows two influences, so picking a third drops the oldest. */
+  function toggleInfluence(key: string) {
+    if (selectedItem == null || !shape) return;
+    const on = shape.influences.filter((i) => i.on).map((i) => i.key);
+    const next = on.includes(key) ? on.filter((k) => k !== key) : [...on, key].slice(-2);
+    build.run(() => engine.setItemShape(selectedItem!, { influences: next }).then((r) => (shape = r)));
+  }
+
+  function setSocket(index: number, patch: Partial<ItemSocket>) {
+    if (selectedItem == null || !shape) return;
+    const next = shape.sockets.map((s, i) => (i === index ? { ...s, ...patch } : s));
+    build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
+  }
+
+  function addSocket() {
+    if (selectedItem == null || !shape) return;
+    const next = [...shape.sockets, { colour: "W", group: shape.sockets.length ? shape.sockets[shape.sockets.length - 1].group : 0 }];
+    build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
+  }
+
+  function removeSocket(index: number) {
+    if (selectedItem == null || !shape) return;
+    const next = shape.sockets.filter((_, i) => i !== index);
+    build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
+  }
+
+  /** A link joins a socket to the one before it, which PoB stores as a shared group. */
+  function toggleLink(index: number) {
+    if (!shape || index === 0) return;
+    const prev = shape.sockets[index - 1];
+    const cur = shape.sockets[index];
+    const linked = prev.group === cur.group;
+    const next = shape.sockets.map((s, i) => (i >= index ? { ...s, group: linked ? s.group + 1 : prev.group } : s));
+    if (selectedItem != null) build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
+  }
 
   $effect(() => {
     const id = selectedItem;
@@ -75,6 +125,18 @@
           detail = null;
           selectedItem = null;
         });
+      engine
+        .itemShape(id)
+        .then((r) => (shape = r))
+        .catch(() => (shape = null));
+      engine
+        .itemEnchants(id)
+        .then((r) => (enchantable = r.available))
+        .catch(() => (enchantable = false));
+      engine
+        .itemCrucible(id)
+        .then((r) => (crucible = r.available ? r : null))
+        .catch(() => (crucible = null));
       Promise.all([engine.itemAnoints(id), engine.itemCorruptions(id), engine.catalystInfo(id)])
         .then(([an, co, ca]) => {
           if (selectedItem === id) {
@@ -173,63 +235,12 @@
     await build.run(() => engine.corruptItem(p));
   }
 
-  // trade search ("find upgrades") modal
-  let tradeOpen = $state<string | null>(null);
-  let tradeLeagues = $state<{ id: string; text: string }[] | null>(null);
-  let tradeLeague = $state("Standard");
-  try {
-    tradeLeague = localStorage.getItem("pob-redux:trade-league") ?? "Standard";
-  } catch {}
-  let tradeWeights = $state<{ stat: string; weightMult: number }[]>([{ stat: "FullDPS", weightMult: 1 }]);
-  let tradeCorrupted = $state(false);
-  let tradeRunes = $state(true);
-  let tradeMaxLevel = $state(0);
-  let tradeBusy = $state(false);
-  let tradeErr = $state<string | null>(null);
-  let tradePowerStats = $state<PowerStat[]>([]);
-  async function openTrade(slotName: string) {
-    tradeErr = null;
-    tradeOpen = slotName;
-    if (!tradePowerStats.length) engine.powerStats().then((r) => (tradePowerStats = r.stats)).catch(() => {});
-    if (!tradeLeagues) {
-      engine
-        .tradeLeagues()
-        .then((r) => {
-          tradeLeagues = r.leagues;
-          if (!r.leagues.some((l) => l.id === tradeLeague) && r.leagues.length) tradeLeague = r.leagues[0].id;
-        })
-        .catch(() => (tradeLeagues = null));
-    }
-  }
-  async function runTrade() {
-    if (!tradeOpen) return;
-    tradeBusy = true;
-    tradeErr = null;
-    try {
-      localStorage.setItem("pob-redux:trade-league", tradeLeague);
-    } catch {}
-    try {
-      await engine.tradeSearchStart({
-        slotName: tradeOpen,
-        statWeights: tradeWeights.filter((w) => w.weightMult > 0),
-        includeCorrupted: tradeCorrupted,
-        includeRunes: tradeRunes,
-        maxLevel: tradeMaxLevel > 0 ? tradeMaxLevel : undefined,
-      });
-      for (let i = 0; i < 600; i++) {
-        const r = await engine.tradeSearchStep(150);
-        if (r.done) break;
-      }
-      const { query } = await engine.tradeSearchResult();
-      const base = game.isPoe2 ? "https://www.pathofexile.com/trade2/search/poe2" : "https://www.pathofexile.com/trade/search";
-      const url = `${base}/${encodeURIComponent(tradeLeague)}?q=${encodeURIComponent(query)}`;
-      await openUrl(url);
-      tradeOpen = null;
-    } catch (e) {
-      tradeErr = String(e);
-    } finally {
-      tradeBusy = false;
-    }
+  // The Trader window: a weighted trade search per slot, opened in the browser.
+  let traderOpen = $state(false);
+  let traderFocus = $state<string | null>(null);
+  function openTrader(slotName: string | null) {
+    traderFocus = slotName;
+    traderOpen = true;
   }
 
   async function openCraft() {
@@ -434,6 +445,7 @@
     <span class="vr"></span>
     <button class="btn sm" onclick={openCraft}>Craft item…</button>
     <button class="btn sm" onclick={() => openEdit(null)}>New item from text</button>
+    <button class="btn sm ghost" title="A weighted trade search for every slot at once" onclick={() => openTrader(null)}>Trader…</button>
     {#if statDiff !== null}
       <span class="vr"></span>
       <label class="chk small" title="Show what removing or swapping an item changes, in its tooltip (Ctrl+D)">
@@ -606,14 +618,100 @@
                   {anointFlags.current.length ? `Anoint: ${anointFlags.current.join(", ")}` : "Anoint…"}
                 </button>
               {/if}
+              {#if enchantable}
+                <button class="btn sm" onclick={() => (enchantOpen = true)}>Enchant…</button>
+              {/if}
               {#if corruptInfo?.corruptible || corruptInfo?.corrupted}
                 <button class="btn sm" onclick={openCorrupt}>{corruptInfo.corrupted ? "Corrupted — modify…" : "Corrupt…"}</button>
               {/if}
               <button class="btn sm ghost" onclick={() => selectedItem != null && addShared(selectedItem)}>Add to shared</button>
               {#if selectedEquippedSlot}
-                <button class="btn sm ghost" title="Generate a weighted trade-site search for upgrades in this slot" onclick={() => openTrade(selectedEquippedSlot!)}>Find upgrades on trade…</button>
+                <button class="btn sm ghost" title="Open the Trader with this slot highlighted" onclick={() => openTrader(selectedEquippedSlot!)}>Find upgrades on trade…</button>
               {/if}
             </div>
+            {#if shape && (shape.canBeInfluenced || shape.socketLimit > 0 || shape.cluster)}
+              <div class="shape">
+                {#if shape.canBeInfluenced}
+                  <div class="srow">
+                    <span class="label">Influence</span>
+                    <span class="chips">
+                      {#each shape.influences as inf (inf.key)}
+                        <button class="chip" class:on={inf.on} title="PoB allows two" onclick={() => toggleInfluence(inf.key)}>{inf.name}</button>
+                      {/each}
+                    </span>
+                  </div>
+                {/if}
+                {#if shape.socketLimit > 0}
+                  <div class="srow">
+                    <span class="label">Sockets</span>
+                    <span class="socks">
+                      {#each shape.sockets as sock, i (i)}
+                        {#if i > 0}
+                          <button
+                            class="link"
+                            class:on={shape.sockets[i - 1].group === sock.group}
+                            title={shape.sockets[i - 1].group === sock.group ? "Linked; click to break" : "Not linked; click to link"}
+                            onclick={() => toggleLink(i)}>—</button
+                          >
+                        {/if}
+                        <span class="sock">
+                          <select class="select xs sockc" value={sock.colour} onchange={(e) => setSocket(i, { colour: (e.target as HTMLSelectElement).value })}>
+                            {#each shape.colours as c}
+                              <option value={c}>{SOCKET_NAMES[c] ?? c}</option>
+                            {/each}
+                          </select>
+                          <button class="mini x" title="Remove this socket" onclick={() => removeSocket(i)}>✕</button>
+                        </span>
+                      {/each}
+                      {#if shape.sockets.length < shape.socketLimit}
+                        <button class="btn sm ghost" onclick={addSocket}>+ socket</button>
+                      {/if}
+                    </span>
+                  </div>
+                {/if}
+                {#if crucible}
+                  <div class="srow cruc">
+                    <span class="label">Crucible</span>
+                    <div class="crucnodes">
+                      {#each crucible.nodes as options, i (i)}
+                        <select class="select xs crucsel" title={`Node ${i + 1}`} value={crucible.selected[i] ?? ""} onchange={(e) => setCrucible(i, (e.target as HTMLSelectElement).value)}>
+                          <option value="">Node {i + 1}: empty</option>
+                          {#each options as o (o.id)}
+                            <option value={o.id}>T{o.tier} · {o.label}</option>
+                          {/each}
+                        </select>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+                {#if shape.cluster}
+                  <div class="srow">
+                    <span class="label">Cluster jewel</span>
+                    <select
+                      class="select xs"
+                      value={shape.cluster.skill ?? ""}
+                      onchange={(e) => selectedItem != null && build.run(() => engine.setItemShape(selectedItem!, { clusterSkill: (e.target as HTMLSelectElement).value }).then((r) => (shape = r)))}
+                    >
+                      <option value="">— default —</option>
+                      {#each shape.cluster.skills as sk (sk.id)}
+                        <option value={sk.id}>{sk.name}</option>
+                      {/each}
+                    </select>
+                    <label class="fld-inline" title="How many passives the jewel adds">
+                      <span class="label">Passives</span>
+                      <input
+                        class="input xs num"
+                        type="number"
+                        min={shape.cluster.minNodes}
+                        max={shape.cluster.maxNodes}
+                        value={shape.cluster.nodeCount}
+                        onchange={(e) => selectedItem != null && build.run(() => engine.setItemShape(selectedItem!, { clusterNodeCount: Number((e.target as HTMLInputElement).value) }).then((r) => (shape = r)))}
+                      />
+                    </label>
+                  </div>
+                {/if}
+              </div>
+            {/if}
             {#if catInfo?.usable}
               <div class="affix">
                 <select
@@ -684,6 +782,10 @@
       {/if}
     </section>
   </div>
+
+  {#if enchantOpen && selectedItem != null}
+    <EnchantDialog itemId={selectedItem} onclose={() => (enchantOpen = false)} />
+  {/if}
 
   {#if craftOpen}
     <div class="modal">
@@ -827,66 +929,8 @@
     </div>
   {/if}
 
-  {#if tradeOpen}
-    <div class="modal">
-      <div class="panel dialog">
-        <div class="label">Find upgrades — {tradeOpen}</div>
-        <div class="crow">
-          <span class="clabel">League</span>
-          {#if tradeLeagues}
-            <select class="select grow2" bind:value={tradeLeague}>
-              {#each tradeLeagues as l (l.id)}
-                <option value={l.id}>{l.text}</option>
-              {/each}
-            </select>
-          {:else}
-            <input class="input grow2" bind:value={tradeLeague} placeholder="League name" />
-          {/if}
-        </div>
-        {#each tradeWeights as w, i}
-          <div class="crow">
-            <span class="clabel">{i === 0 ? "Weigh by" : ""}</span>
-            <select class="select grow2" value={w.stat} onchange={(e) => (tradeWeights[i] = { ...w, stat: (e.target as HTMLSelectElement).value })}>
-              <option value="FullDPS">Full DPS</option>
-              {#each tradePowerStats as s (s.stat)}
-                <option value={s.stat}>{s.label}</option>
-              {/each}
-            </select>
-            <input
-              class="input catq num"
-              type="number"
-              min="0"
-              max="10"
-              step="0.1"
-              value={w.weightMult}
-              title="Weight multiplier"
-              onchange={(e) => (tradeWeights[i] = { ...w, weightMult: Number((e.target as HTMLInputElement).value) })}
-            />
-            {#if tradeWeights.length > 1}
-              <button class="mini x" onclick={() => (tradeWeights = tradeWeights.filter((_, j) => j !== i))}>✕</button>
-            {/if}
-          </div>
-        {/each}
-        <div class="crow">
-          <span class="clabel"></span>
-          <button class="btn sm ghost" onclick={() => (tradeWeights = [...tradeWeights, { stat: "TotalEHP", weightMult: 0.5 }])}>Add stat</button>
-        </div>
-        <div class="crow">
-          <span class="clabel"></span>
-          <label class="chk small"><input type="checkbox" bind:checked={tradeCorrupted} /> Include corrupted implicits</label>
-          <label class="chk small"><input type="checkbox" bind:checked={tradeRunes} /> Include runes</label>
-        </div>
-        <div class="crow">
-          <span class="clabel">Max level</span>
-          <input class="input catq num" type="number" min="0" max="100" bind:value={tradeMaxLevel} title="Required-level cap; 0 = no cap" />
-        </div>
-        {#if tradeErr}<div class="err small">{tradeErr}</div>{/if}
-        <div class="actions">
-          <button class="btn primary" onclick={runTrade} disabled={tradeBusy}>{tradeBusy ? "Scoring mods…" : "Generate & open"}</button>
-          <button class="btn ghost" onclick={() => (tradeOpen = null)} disabled={tradeBusy}>Cancel</button>
-        </div>
-      </div>
-    </div>
+  {#if traderOpen}
+    <TraderWindow focusSlot={traderFocus} onclose={() => (traderOpen = false)} />
   {/if}
 
   {#if tip}
@@ -1195,6 +1239,74 @@
     height: 1px;
     background: var(--line-1);
     margin: 6px 0;
+  }
+  .shape {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .srow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .chip {
+    padding: 2px 8px;
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
+    background: none;
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-2);
+    cursor: pointer;
+  }
+  .chip.on {
+    color: var(--fg-0);
+    border-color: var(--fg-2);
+    background: var(--bg-active);
+  }
+  .cruc {
+    align-items: flex-start;
+  }
+  .crucnodes {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+  }
+  .crucsel {
+    width: 100%;
+    max-width: 440px;
+  }
+  .socks {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+  .sock {
+    display: inline-flex;
+    align-items: center;
+  }
+  .sockc {
+    width: 78px;
+  }
+  .link {
+    padding: 0 2px;
+    background: none;
+    border: 0;
+    color: var(--fg-4);
+    cursor: pointer;
+  }
+  .link.on {
+    color: var(--fg-0);
   }
   .craftsec {
     display: flex;

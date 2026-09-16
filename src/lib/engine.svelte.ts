@@ -273,6 +273,9 @@ export interface BuildInfo {
   className: string;
   ascendClassId: number;
   ascendClassName: string | null;
+  /** PoE1's alternate ascendancy; 0 and null on PoE2. */
+  secondaryAscendClassId: number;
+  secondaryAscendClassName: string | null;
   mainSocketGroup: number;
   treeVersion: string;
   rev: number;
@@ -556,6 +559,8 @@ export interface SocketGroup {
   includeInFullDPS: boolean;
   slot: string | null;
   source: string | null;
+  /** How many copies of an item-granted group apply; null when the player socketed it. */
+  groupCount: number | null;
   grantedBy: GrantedBy | null;
   /** On an item's copy of a skill: the socketed group that carries the same skill and its supports. */
   duplicateOf?: number;
@@ -599,7 +604,19 @@ export interface GemSearchRow {
 export interface SkillsOptions {
   defaultGemLevel: string;
   defaultGemQuality: number;
+  sortGemsByDPS: boolean;
   sortGemsByDPSField: string;
+  showSupportGemTypes: string;
+  showLegacyGems: boolean;
+  /** What the two dropdowns may be set to, straight from PoB's own lists. */
+  sortFields: string[];
+  supportTypes: string[];
+}
+
+/** Which buffs the Calcs tab assumes; the sidebar is always EFFECTIVE. */
+export interface CalcMode {
+  mode: string;
+  modes: string[];
 }
 
 export interface TooltipLine {
@@ -975,6 +992,253 @@ export interface PartyBox {
   summary: string;
 }
 
+export interface MinionEntry {
+  id: string;
+  name: string;
+  category: string | null;
+  recommended: boolean;
+}
+
+/** PoB's spectre and beast libraries: the monsters this build owns. */
+export interface MinionLibrary {
+  kind: string;
+  owned: MinionEntry[];
+  available: MinionEntry[];
+  categories: string[];
+  /** PoE1 has no beast library. */
+  hasBeasts: boolean;
+}
+
+/** PoE1 enchantments: what this item can take and what is on it. */
+export interface ItemEnchants {
+  available: boolean;
+  /** Helmets pick a skill first; other slots go straight to a source. */
+  bySkill: boolean;
+  skills: string[];
+  skill: string | null;
+  sources: string[];
+  source: string | null;
+  lines: string[];
+  current: string[];
+  slots: number;
+}
+
+/** PoE1 crucible trees: five nodes, each holding one mod from the pool. */
+export interface Tattoo {
+  id: string;
+  name: string;
+  stats: string[];
+  legacy: boolean;
+}
+
+/** PoE1 tattoos: what a tree node can be replaced with, and what it carries now. */
+export interface NodeTattoos {
+  available: boolean;
+  options: Tattoo[];
+  applied: { id: string | null; name: string | null; stats: string[] } | null;
+  nodeName: string;
+  count: number;
+  limit: number;
+}
+
+export interface TimelessJewel {
+  id: number;
+  label: string;
+  name: string;
+  seedMin: number;
+  seedMax: number;
+  step: number;
+  conquerors: { id: number; label: string }[];
+  /** The stat this jewel pools into one "Total" entry, if it has one. */
+  total: string | null;
+}
+
+export interface TimelessSocket {
+  id: number;
+  keystone: string;
+  label: string;
+  allocated: boolean;
+}
+
+export interface TimelessNode {
+  id: string;
+  name: string;
+  stats: string[];
+  notable: boolean;
+  total: boolean;
+}
+
+export interface TimelessRadiusNode {
+  id: number;
+  name: string;
+  notable: boolean;
+  keystone: boolean;
+  allocated: boolean;
+}
+
+export interface TimelessInfo {
+  available: boolean;
+  jewelType: number;
+  jewels: TimelessJewel[];
+  sockets: TimelessSocket[];
+  nodes: TimelessNode[];
+  radius: TimelessRadiusNode[];
+  devotion: { id: number; label: string }[];
+}
+
+export interface TimelessWant {
+  id: string;
+  weight?: number;
+  weight2?: number;
+  minWeight?: number;
+}
+
+export interface TimelessSearch {
+  jewelType: number;
+  socket: number;
+  desired: TimelessWant[];
+  protect?: string[];
+  socketFilter?: boolean;
+  socketFilterDistance?: number;
+  totalMinWeight?: number;
+}
+
+export interface TimelessProgress {
+  done: boolean;
+  progress: number;
+  checked: number;
+  found: number;
+  total: number;
+}
+
+export interface TimelessResult {
+  results: {
+    seed: number;
+    weight: number;
+    nodes: { id: string; name: string; weight: number; targets: string[] }[];
+  }[];
+  found: number;
+  checked: number;
+  total: number;
+  jewelType: number;
+  jewelName: string;
+  socket: number;
+  desired: { id: string; name: string; order: number }[];
+}
+
+export interface CompareBuild {
+  index: number;
+  label: string;
+  className: string | null;
+  ascendClassName: string | null;
+  level: number;
+  active: boolean;
+}
+
+export interface CompareStatRow {
+  stat: string;
+  label: string;
+  mine: number | null;
+  theirs: number | null;
+  mineText: string | null;
+  theirsText: string | null;
+  delta: number | null;
+  deltaText: string | null;
+  percent: number | null;
+  /** Null when the two sides match. */
+  better: boolean | null;
+  same: boolean;
+}
+
+export interface CompareSummary {
+  rows: CompareStatRow[];
+  mine: { label: string; level: number };
+  theirs: { label: string; className: string | null; ascendClassName: string | null; level: number };
+}
+
+export interface CompareLoadout {
+  specs: { index: number; title: string; nodes: number; active: boolean }[];
+  itemSets: { id: number; title: string; active: boolean }[];
+  skillSets: { id: number; title: string; active: boolean }[];
+  socketGroups: { index: number; label: string; active: boolean }[];
+}
+
+export interface CompareItemRow {
+  slot: string;
+  label: string | null;
+  mine: { name: string; rarity: string | null } | null;
+  theirs: { name: string; rarity: string | null } | null;
+  same: boolean;
+}
+
+export interface CompareGem {
+  name: string;
+  level: number;
+  quality: number;
+  enabled: boolean;
+}
+
+export interface CompareSkillGroup {
+  label: string;
+  slot: string | null;
+  enabled: boolean;
+  gems: CompareGem[];
+}
+
+export interface CompareSkillRow {
+  index: number;
+  mine: CompareSkillGroup | null;
+  theirs: CompareSkillGroup | null;
+  same: boolean;
+}
+
+export interface CompareConfigRow {
+  var: string;
+  label: string;
+  mine: string | number | boolean | null;
+  theirs: string | number | boolean | null;
+  same: boolean;
+}
+
+export interface CompareTree {
+  mine: { nodes: number; title: string; className: string };
+  theirs: { nodes: number; title: string; className: string };
+  gained: number[];
+  lost: number[];
+  keystonesGained: string[];
+  keystonesLost: string[];
+}
+
+export interface ItemCrucible {
+  available: boolean;
+  nodes: { id: string; label: string; tier: number; type: string | null }[][];
+  /** One entry per node; an empty string means the node is clear. */
+  selected: string[];
+  count: number;
+}
+
+export interface ItemSocket {
+  colour: string;
+  group: number;
+}
+
+/** The PoE1-only shape of an item: influence, sockets and cluster jewel settings. */
+export interface ItemShape {
+  canBeInfluenced: boolean;
+  influences: { key: string; name: string; on: boolean }[];
+  sockets: ItemSocket[];
+  socketLimit: number;
+  colours: string[];
+  abyssalSocketCount: number;
+  cluster: {
+    skills: { id: string; name: string }[];
+    skill: string | null;
+    nodeCount: number;
+    minNodes: number;
+    maxNodes: number;
+  } | null;
+}
+
 export interface PartyState {
   partyMemberStats: PartyBox;
   auras: PartyBox;
@@ -1027,8 +1291,9 @@ export const engine = {
   getStats: (fields?: string[]) => call<{ stats: Record<string, number | string | boolean>; rev: number }>("get_stats", fields ? { fields } : undefined),
   setLevel: (level: number) => call<BuildInfo>("set_level", { level }),
   setLevelAuto: (auto: boolean) => call<BuildInfo>("set_level_auto", { auto }),
-  listClasses: () => call<{ classes: ClassInfo[] }>("list_classes"),
-  selectClass: (classId?: number, ascendClassId?: number) => call<BuildInfo>("select_class", { classId, ascendClassId }),
+  listClasses: () => call<{ classes: ClassInfo[]; secondaryAscendancies: { id: number; name: string }[] }>("list_classes"),
+  selectClass: (classId?: number, ascendClassId?: number, secondaryAscendClassId?: number) =>
+    call<BuildInfo>("select_class", { classId, ascendClassId, secondaryAscendClassId }),
   getTreeState: () => call<TreeState>("get_tree_state"),
   allocNode: (id: number) => call<TreeState>("alloc_node", { id }),
   deallocNode: (id: number) => call<TreeState>("dealloc_node", { id }),
@@ -1079,6 +1344,7 @@ export const engine = {
     call<{ gems: GemSearchRow[]; total: number; truncated: boolean; baseDps: number | null }>("gem_search", opts),
   getSkillsOptions: () => call<SkillsOptions>("get_skills_options"),
   setSkillsOptions: (patch: Partial<SkillsOptions>) => call<SkillsOptions>("set_skills_options", patch),
+  calcMode: (mode?: string) => call<CalcMode>("calc_mode", mode ? { mode } : {}),
   copySocketGroup: (index: number) => call<{ text: string }>("copy_socket_group", { index }),
   pasteSocketGroup: (text: string) => call<Skills>("paste_socket_group", { text }),
   gemTooltip: (groupIndex: number, gemIndex: number) => call<Tooltip>("gem_tooltip", { groupIndex, gemIndex }),
@@ -1091,7 +1357,7 @@ export const engine = {
   copySkillSet: (id?: number, title?: string) => call<Skills>("copy_skill_set", { id, title }),
   renameSkillSet: (id: number, title: string) => call<Skills>("rename_skill_set", { id, title }),
   deleteSkillSet: (id: number) => call<Skills>("delete_skill_set", { id }),
-  setSocketGroup: (index: number, patch: Partial<Pick<SocketGroup, "enabled" | "includeInFullDPS" | "label" | "slot" | "mainActiveSkill">>) =>
+  setSocketGroup: (index: number, patch: Partial<Pick<SocketGroup, "enabled" | "includeInFullDPS" | "label" | "slot" | "mainActiveSkill" | "groupCount">>) =>
     call<Skills>("set_socket_group", { index, ...patch }),
   setGem: (groupIndex: number, gemIndex: number, patch: Partial<Pick<GemInfo, "level" | "quality" | "enabled" | "count">>) =>
     call<Skills>("set_gem", { groupIndex, gemIndex, ...patch }),
@@ -1159,17 +1425,58 @@ export const engine = {
     maxLevel?: number;
     sockets?: number;
     jewelType?: string;
+    status?: string;
   }) => call<{ started: boolean }>("trade_search_start", p),
   tradeSearchStep: (steps?: number) => call<{ done: boolean }>("trade_search_step", { steps }),
   tradeSearchResult: () => call<{ query: string }>("trade_search_result"),
-  tradeLeagues: () => call<{ leagues: { id: string; text: string }[] }>("trade_leagues"),
+  tradeStatusOptions: () => call<{ options: { id: string; label: string }[] }>("trade_status_options"),
+  tradeLeagues: () => call<{ leagues: { id: string; text: string; realm: string | null }[] }>("trade_leagues"),
   importGameBuild: (json: string, name?: string) => call<GameBuildImportResult>("import_game_build", { json, name }),
   exportGameBuild: (meta?: { author?: string; link?: string; description?: string }) =>
     call<{ json: string; name: string; passives: number; skills: number; gear: number }>("export_game_build", meta ?? {}),
   getParty: () => call<PartyState>("get_party"),
   setPartyText: (kind: PartyKind, text: string) => call<PartyState>("set_party_text", { kind, text }),
-  partyImport: (p: { code?: string; xml?: string; append?: boolean }) => call<PartyState>("party_import", p),
+  partyImport: (p: { code?: string; xml?: string; append?: boolean; only?: string }) => call<PartyState>("party_import", p),
+  itemEnchants: (itemId: number, skill?: string, source?: string) => call<ItemEnchants>("item_enchants", { itemId, skill, source }),
+  setItemEnchant: (itemId: number, p: { line?: string; remove?: boolean; slot?: number; skill?: string; source?: string }) =>
+    call<ItemEnchants>("set_item_enchant", { itemId, ...p }),
+  compareList: () => call<{ entries: CompareBuild[]; active: number }>("compare_list"),
+  compareAdd: (p: { xml?: string; code?: string; path?: string; label?: string }) =>
+    call<{ entries: CompareBuild[]; active: number }>("compare_add", p),
+  compareSelect: (index: number) => call<{ entries: CompareBuild[]; active: number }>("compare_select", { index }),
+  compareRemove: (index?: number) => call<{ entries: CompareBuild[]; active: number }>("compare_remove", { index }),
+  compareClear: () => call<{ entries: CompareBuild[]; active: number }>("compare_clear"),
+  compareSummary: (onlyDifferences?: boolean) => call<CompareSummary>("compare_summary", { onlyDifferences }),
+  compareLoadouts: () => call<{ mine: CompareLoadout; theirs: CompareLoadout }>("compare_loadouts"),
+  compareSetLoadout: (p: { spec?: number; itemSet?: number; skillSet?: number; socketGroup?: number }) =>
+    call<{ mine: CompareLoadout; theirs: CompareLoadout }>("compare_set_loadout", p),
+  compareItems: (onlyDifferences?: boolean) => call<{ rows: CompareItemRow[] }>("compare_items", { onlyDifferences }),
+  compareItemText: (slot: string, side: "mine" | "theirs") =>
+    call<{ text: string | null; name: string | null }>("compare_item_text", { slot, side }),
+  compareCopyItem: (slot: string) => call<{ ok: boolean; slot: string; itemName: string }>("compare_copy_item", { slot }),
+  compareSkills: (onlyDifferences?: boolean) => call<{ rows: CompareSkillRow[] }>("compare_skills", { onlyDifferences }),
+  compareConfig: (onlyDifferences?: boolean) => call<{ rows: CompareConfigRow[] }>("compare_config", { onlyDifferences }),
+  compareTree: () => call<CompareTree>("compare_tree"),
+  compareCopyTree: () => call<{ ok: boolean; index: number; title: string }>("compare_copy_tree"),
+  timelessInfo: (jewelType?: number, socket?: number) => call<TimelessInfo>("timeless_info", { jewelType, socket }),
+  timelessSearchStart: (p: TimelessSearch) => call<TimelessProgress>("timeless_search_start", p),
+  timelessSearchStep: (budgetMs?: number) => call<TimelessProgress>("timeless_search_step", { budgetMs }),
+  timelessSearchResult: (limit?: number) => call<TimelessResult>("timeless_search_result", { limit }),
+  timelessTradeUrl: (p: { jewelType: number; seeds: number[]; conqueror?: number; devotion?: number[]; league?: string; realm?: string; status?: string }) =>
+    call<{ url: string; seeds: number; jewelType: number }>("timeless_trade_url", p),
+  nodeTattoos: (node: number, legacy?: boolean) => call<NodeTattoos>("node_tattoos", { node, legacy }),
+  setNodeTattoo: (node: number, p: { tattoo?: string; remove?: boolean; legacy?: boolean }) => call<NodeTattoos>("set_node_tattoo", { node, ...p }),
+  itemCrucible: (itemId: number) => call<ItemCrucible>("item_crucible", { itemId }),
+  setItemCrucible: (itemId: number, selected: string[]) => call<ItemCrucible>("set_item_crucible", { itemId, selected }),
+  itemShape: (itemId: number) => call<ItemShape>("item_shape", { itemId }),
+  setItemShape: (
+    itemId: number,
+    patch: { influences?: string[]; sockets?: ItemSocket[]; clusterSkill?: string; clusterNodeCount?: number },
+  ) => call<ItemShape>("set_item_shape", { itemId, ...patch }),
+  minionLibrary: (kind?: string) => call<MinionLibrary>("minion_library", { kind }),
+  setMinionLibrary: (kind: string, ids: string[]) => call<MinionLibrary>("set_minion_library", { kind, ids }),
   partyClear: () => call<PartyState>("party_clear"),
+  partyDisable: () => call<PartyState>("party_disable"),
   partyRebuild: () => call<PartyState>("party_rebuild"),
   partySetExport: (enabled: boolean) => call<PartyState>("party_set_export", { enabled }),
   getAppOptions: () => call<{ options: AppOptions }>("get_app_options"),
