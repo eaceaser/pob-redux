@@ -10,6 +10,7 @@
     moveBuild,
     deleteBuild,
     createBuildFolder,
+    deleteBuildFolder,
     fetchBuildCode,
     isMobalyticsLink,
     resolveMobalytics,
@@ -178,14 +179,34 @@
   }
 
   let newFolder = $state<string | null>(null);
+  let confirmFolder = $state<string | null>(null);
+
+  /** Builds in a folder ignoring the filter, which is what emptiness means here. */
+  function folderCount(folder: string) {
+    return builds.filter((b) => b.folder === folder).length;
+  }
 
   async function commitNewFolder() {
     const name = (newFolder ?? "").trim();
+    if (!name) {
+      newFolder = null;
+      return;
+    }
     newFolder = null;
-    if (!name) return;
     try {
       await createBuildFolder(name);
-      say(`Created folder ${name}`);
+      say(`Created folder ${name}. Use mv on a build to put it there.`);
+      await refresh();
+    } catch (e) {
+      build.error = String(e);
+    }
+  }
+
+  async function commitDeleteFolder(folder: string) {
+    confirmFolder = null;
+    try {
+      await deleteBuildFolder(folder);
+      say(`Deleted folder ${folder}`);
       await refresh();
     } catch (e) {
       build.error = String(e);
@@ -618,20 +639,23 @@
     </div>
     <div class="list">
       {#if newFolder !== null}
-        <div class="pdirrow">
+        <div class="newdir">
+          <span class="label">New folder</span>
           <!-- svelte-ignore a11y_autofocus -->
           <input
             class="input grow"
-            placeholder="Folder name"
+            placeholder="Name it, then Create"
             value={newFolder}
             autofocus
             oninput={(e) => (newFolder = (e.target as HTMLInputElement).value)}
-            onblur={commitNewFolder}
             onkeydown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Enter") commitNewFolder();
               if (e.key === "Escape") (newFolder = null);
             }}
           />
+          <button class="btn sm primary" disabled={!newFolder.trim()} onclick={commitNewFolder}>Create</button>
+          <button class="btn sm ghost" onclick={() => (newFolder = null)}>Cancel</button>
+          <span class="hint">It starts empty. Use <b>mv</b> on a build to move it in or back out.</span>
         </div>
       {/if}
       {#if autosave && autosave.name !== build.info?.name}
@@ -653,11 +677,26 @@
         <div class="dim small pad">No builds yet.</div>
       {/if}
       {#each grouped as [folder, items] (folder)}
-        <button class="ghead toggle" title={paths?.builds_dir ?? ""} onclick={() => toggleFolder(folder)}>
-          <span class="caret" class:open={folderOpen(folder)}>▸</span>
-          <span>{folder === "" ? "Builds" : folder}</span>
-          <span class="dim num">{items.length}</span>
-        </button>
+        <div class="ghead ghrow">
+          <button class="ghtoggle" title={paths?.builds_dir ?? ""} aria-expanded={folderOpen(folder)} onclick={() => toggleFolder(folder)}>
+            <span class="caret" class:open={folderOpen(folder)}>▸</span>
+            <span>{folder === "" ? "Builds" : folder}</span>
+            <span class="dim num">{items.length}</span>
+          </button>
+          {#if folder !== ""}
+            {#if confirmFolder === folder}
+              <button class="act danger" onclick={() => commitDeleteFolder(folder)}>confirm</button>
+              <button class="act" onclick={() => (confirmFolder = null)}>keep</button>
+            {:else}
+              <button
+                class="act"
+                title={folderCount(folder) ? "Move its builds out first, with mv on each" : "Delete this empty folder"}
+                disabled={folderCount(folder) > 0}
+                onclick={() => (confirmFolder = folder)}>del</button
+              >
+            {/if}
+          {/if}
+        </div>
         {#if folderOpen(folder)}
           {#each items as b (b.path)}
             {@render buildRow(b, false)}
@@ -944,22 +983,6 @@
     border-top: 1px solid var(--line-0);
     padding-top: 8px;
   }
-  .ghead.toggle {
-    appearance: none;
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    border: 0;
-    font: inherit;
-    letter-spacing: inherit;
-    text-transform: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .ghead.toggle:hover {
-    color: var(--fg-1);
-  }
   .ghead.gb .act {
     margin-left: auto;
   }
@@ -1027,8 +1050,59 @@
   }
   .caret {
     display: inline-block;
-    color: var(--fg-3);
+    width: 14px;
+    font-size: 15px;
+    line-height: 1;
+    color: var(--fg-2);
     transition: transform 100ms;
+  }
+  .ghrow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ghrow .act {
+    opacity: 0;
+  }
+  .ghrow:hover .act,
+  .ghrow .act:focus-visible {
+    opacity: 1;
+  }
+  .ghtoggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .ghtoggle:hover {
+    color: var(--fg-1);
+  }
+  .ghtoggle:hover .caret {
+    color: var(--fg-0);
+  }
+  .newdir {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line-0);
+    background: var(--bg-1);
+  }
+  .newdir .hint {
+    flex-basis: 100%;
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
   }
   .caret.open {
     transform: rotate(90deg);

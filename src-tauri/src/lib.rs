@@ -603,6 +603,23 @@ fn create_build_folder(state: State<'_, AppState>, folder: String) -> Result<(),
 }
 
 #[tauri::command]
+fn delete_build_folder(state: State<'_, AppState>, folder: String) -> Result<(), String> {
+    let root = state.builds_dir();
+    let dir = safe_folder(&root, &folder)?;
+    if dir == root {
+        return Err("that is the builds folder itself".into());
+    }
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    // Only an empty one goes, so a build is never deleted along with it.
+    if std::fs::read_dir(&dir).map_err(|e| e.to_string())?.next().is_some() {
+        return Err("the folder still has something in it".into());
+    }
+    std::fs::remove_dir(&dir).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn list_build_folders(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let root = state.builds_dir();
     let mut out = Vec::new();
@@ -1064,6 +1081,7 @@ pub fn run() {
             move_build,
             delete_build,
             create_build_folder,
+            delete_build_folder,
             list_build_folders,
             mcp::mcp_status,
             mcp::mcp_start,
