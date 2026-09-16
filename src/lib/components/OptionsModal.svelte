@@ -5,7 +5,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { getVersion } from "@tauri-apps/api/app";
   import { appUpdate } from "$lib/state/update.svelte";
-  import { ui, type Theme, type Contrast } from "$lib/state/ui.svelte";
+  import { ui, type Theme } from "$lib/state/ui.svelte";
 
   const mcpUrl = $derived(mcp.status?.running ? mcp.status.url : null);
   const mcpToken = $derived(mcp.status?.token ?? "");
@@ -30,12 +30,6 @@
     ["system", "System"],
     ["dark", "Dark"],
     ["light", "Light"],
-  ];
-  const contrasts: [Contrast, string][] = [
-    ["system", "System"],
-    ["normal", "Normal"],
-    ["more", "More"],
-    ["most", "Most"],
   ];
   const scalePresets = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
   const scales = $derived(scalePresets.includes(ui.scale) ? scalePresets : [...scalePresets, ui.scale].sort((a, b) => a - b));
@@ -67,12 +61,22 @@
         <div class="opt">
           <span>
             Contrast
-            <span class="hint">Lifts the grey text tones. System follows the OS setting.</span>
+            <span class="hint">Lifts the grey text tones. Auto follows the OS setting.</span>
           </span>
-          <div class="seg" role="radiogroup" aria-label="Contrast">
-            {#each contrasts as [id, label] (id)}
-              <button role="radio" aria-checked={ui.contrast === id} class:on={ui.contrast === id} onclick={() => ui.setContrast(id)}>{label}</button>
-            {/each}
+          <div class="ctrast">
+            <button class="btn sm ghost" class:on={ui.contrastAuto} aria-pressed={ui.contrastAuto} onclick={() => ui.setContrastAuto(!ui.contrastAuto)}>Auto</button>
+            <input
+              class="range"
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={ui.contrastEffective}
+              disabled={ui.contrastAuto}
+              aria-label="Contrast level"
+              oninput={(e) => ui.setContrastLevel(Number((e.target as HTMLInputElement).value))}
+            />
+            <span class="num ctval">{ui.contrastEffective}%</span>
           </div>
         </div>
         <label class="opt">
@@ -274,6 +278,30 @@
     border-bottom: 1px solid var(--line-0);
     font-size: var(--fs-sm);
     color: var(--fg-1);
+  }
+  .ctrast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ctrast .range {
+    width: 150px;
+    height: 14px;
+    accent-color: var(--fg-1);
+  }
+  .ctrast .range:disabled {
+    opacity: var(--fade-off);
+  }
+  .ctrast .btn.on {
+    color: var(--fg-0);
+    border-color: var(--fg-2);
+    background: var(--bg-active);
+  }
+  .ctval {
+    min-width: 34px;
+    text-align: right;
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
   }
   .seg {
     display: inline-flex;

@@ -4,17 +4,21 @@ const KEY = "pob-redux:ui";
 
 export type Dock = "top" | "bottom";
 export type Theme = "system" | "dark" | "light";
-export type Contrast = "system" | "normal" | "more" | "most";
-
 export const SCALE_MIN = 0.75;
 export const SCALE_MAX = 2;
 export const SCALE_STEP = 0.1;
+export const CONTRAST_MAX = 100;
+/** How far each grey may travel toward --fg-0 at full lift, so the ramp keeps its order. */
+const CONTRAST_REACH = [0.8, 0.7, 0.65, 0.6];
+/** What the OS asking for more contrast is worth, matching the old More step. */
+const CONTRAST_SYSTEM = 25;
 
 class UiStore {
   sidebarCollapsed = $state(false);
   treeBarDock = $state<Dock>("top");
   theme = $state<Theme>("system");
-  contrast = $state<Contrast>("system");
+  contrastAuto = $state(true);
+  contrastLevel = $state(0);
   scale = $state(1);
 
   private systemLight = window.matchMedia("(prefers-color-scheme: light)");
@@ -26,11 +30,15 @@ class UiStore {
       if (typeof saved.sidebarCollapsed === "boolean") this.sidebarCollapsed = saved.sidebarCollapsed;
       if (saved.treeBarDock === "top" || saved.treeBarDock === "bottom") this.treeBarDock = saved.treeBarDock;
       if (saved.theme === "system" || saved.theme === "dark" || saved.theme === "light") this.theme = saved.theme;
-      if (["system", "normal", "more", "most"].includes(saved.contrast)) this.contrast = saved.contrast;
+      const named = typeof saved.contrast === "string" ? saved.contrast : null;
+      if (typeof saved.contrastAuto === "boolean") this.contrastAuto = saved.contrastAuto;
+      else if (named) this.contrastAuto = named === "system";
+      if (typeof saved.contrastLevel === "number") this.contrastLevel = clampContrast(saved.contrastLevel);
+      // The three steps this replaced, at the levels that reproduce them.
+      else if (named) this.contrastLevel = named === "most" ? 40 : named === "more" ? CONTRAST_SYSTEM : 0;
       if (typeof saved.scale === "number") this.scale = clampScale(saved.scale);
     } catch {}
     this.applyTheme();
-    this.applyContrast();
     this.systemLight.addEventListener("change", () => this.applyTheme());
     this.systemContrast.addEventListener("change", () => this.applyContrast());
     if (this.scale !== 1) this.applyScale();
@@ -52,8 +60,19 @@ class UiStore {
     this.save();
   }
 
-  setContrast(contrast: Contrast) {
-    this.contrast = contrast;
+  /** The lift actually in force, which Auto takes from the OS. */
+  get contrastEffective() {
+    return this.contrastAuto ? (this.systemContrast.matches ? CONTRAST_SYSTEM : 0) : this.contrastLevel;
+  }
+
+  setContrastAuto(auto: boolean) {
+    this.contrastAuto = auto;
+    this.applyContrast();
+    this.save();
+  }
+
+  setContrastLevel(level: number) {
+    this.contrastLevel = clampContrast(level);
     this.applyContrast();
     this.save();
   }
@@ -71,12 +90,23 @@ class UiStore {
   private applyTheme() {
     const effective = this.theme === "system" ? (this.systemLight.matches ? "light" : "dark") : this.theme;
     document.documentElement.dataset.theme = effective;
+    // Each theme has its own ramp, so the lift has to be recomputed with it.
+    this.applyContrast();
   }
 
   private applyContrast() {
-    const effective = this.contrast === "system" ? (this.systemContrast.matches ? "more" : "normal") : this.contrast;
-    if (effective === "normal") delete document.documentElement.dataset.contrast;
-    else document.documentElement.dataset.contrast = effective;
+    const el = document.documentElement;
+    const level = this.contrastEffective;
+    if (level <= 0) {
+      for (let i = 1; i <= 4; i++) el.style.removeProperty(`--fg-${i}`);
+      return;
+    }
+    const cs = getComputedStyle(el);
+    const target = cs.getPropertyValue("--fg-0");
+    for (let i = 1; i <= 4; i++) {
+      const lifted = mixHex(cs.getPropertyValue(`--ramp-${i}`), target, (level / 100) * CONTRAST_REACH[i - 1]);
+      if (lifted) el.style.setProperty(`--fg-${i}`, lifted);
+    }
   }
 
   private applyScale() {
@@ -93,12 +123,29 @@ class UiStore {
           sidebarCollapsed: this.sidebarCollapsed,
           treeBarDock: this.treeBarDock,
           theme: this.theme,
-          contrast: this.contrast,
+          contrastAuto: this.contrastAuto,
+          contrastLevel: this.contrastLevel,
           scale: this.scale,
         }),
       );
     } catch {}
   }
+}
+
+function clampContrast(n: number) {
+  return Math.min(CONTRAST_MAX, Math.max(0, Math.round(n / 5) * 5));
+}
+
+function parseHex(s: string): number[] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(s.trim());
+  return m ? [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)) : null;
+}
+
+function mixHex(from: string, to: string, t: number): string | null {
+  const a = parseHex(from);
+  const b = parseHex(to);
+  if (!a || !b) return null;
+  return "#" + a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, "0")).join("");
 }
 
 function clampScale(s: number) {

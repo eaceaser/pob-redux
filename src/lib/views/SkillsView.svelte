@@ -535,7 +535,7 @@
     appearance: none;
     border: 1px solid transparent;
     background: none;
-    color: var(--fg-3);
+    color: var(--fg-2);
     font-size: 10px;
     width: 18px;
     height: 18px;
@@ -547,7 +547,7 @@
     border-color: var(--line-1);
   }
   .mini:disabled {
-    opacity: 0.3;
+    opacity: var(--fade-off);
   }
   .mini.x:hover {
     color: var(--bad);

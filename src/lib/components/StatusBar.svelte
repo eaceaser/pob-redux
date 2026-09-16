@@ -1,7 +1,6 @@
 <script lang="ts">
   import { poolStatus, telemetry, type EngineStatus, type AppPaths, type PoolStatus } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
-  import { appOptions } from "$lib/state/options.svelte";
   import { mcp } from "$lib/state/mcp.svelte";
   import { chat } from "$lib/state/chat.svelte";
   import { game } from "$lib/state/game.svelte";
@@ -87,9 +86,6 @@
       <Icon name="chat-text" size={15} />
     </button>
   {/if}
-  <button class="seg iconbtn" onclick={() => (appOptions.open = true)} title="Options (Ctrl+,)" aria-label="Options" disabled={!appOptions.values}>
-    <Icon name="gear" size={17} />
-  </button>
 </footer>
 
 <style>

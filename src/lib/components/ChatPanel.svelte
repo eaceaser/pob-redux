@@ -512,7 +512,7 @@
     color: var(--focus);
   }
   .icon:disabled {
-    opacity: 0.4;
+    opacity: var(--fade-off);
   }
   .setup {
     padding: 14px;

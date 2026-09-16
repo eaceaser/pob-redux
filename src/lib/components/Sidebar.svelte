@@ -476,7 +476,7 @@
     color: var(--bad);
   }
   .loact:disabled {
-    opacity: 0.45;
+    opacity: var(--fade-off);
     cursor: default;
   }
   .lvl .input {

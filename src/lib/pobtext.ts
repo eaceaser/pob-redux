@@ -30,6 +30,7 @@ const HEX_ALIASES: Record<string, string> = {
   "ffff77": "var(--c-rare)",
   "8888ff": "var(--c-magic)",
   "c8c8c8": "var(--c-normal)",
+  ffffff: "var(--fg-0)",
   "1aa29b": "var(--c-gem)",
   "74cabf": "var(--c-gem)",
   "f5d076": "var(--c-spirit)",

@@ -23,10 +23,16 @@
   --line-2: #35353d;
 
   --fg-0: #f2f2f4;
-  --fg-1: #b9b9c1;
-  --fg-2: #8a8a94;
-  --fg-3: #76767f;
-  --fg-4: #484850;
+  /* The contrast control lifts fg-1..4 from the ramp toward fg-0, so the ramp
+     holds the unlifted end and fg-1..4 are whatever the control resolved to. */
+  --ramp-1: #b9b9c1;
+  --ramp-2: #8a8a94;
+  --ramp-3: #76767f;
+  --ramp-4: #484850;
+  --fg-1: var(--ramp-1);
+  --fg-2: var(--ramp-2);
+  --fg-3: var(--ramp-3);
+  --fg-4: var(--ramp-4);
 
   --focus: #7f9dff;
   --ok: #67d38a;
@@ -51,6 +57,7 @@
   --c-currency: #cba64c;
 
   --primary-hover: #ffffff;
+  --fade-off: 0.45;
   --pob-mix: 100%;
   --backdrop: rgb(0 0 0 / 0.55);
   --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.55);
@@ -74,63 +81,40 @@
   --line-2: #c2bcb0;
 
   --fg-0: #1b1b1f;
-  --fg-1: #3f3f47;
-  --fg-2: #5f5f69;
-  --fg-3: #70707a;
-  --fg-4: #b0b0b8;
+  --ramp-1: #3f3f47;
+  --ramp-2: #5f5f69;
+  --ramp-3: #686872;
+  --ramp-4: #8a8a96;
 
   --focus: #3b5bdb;
-  --ok: #1f8f4a;
-  --warn: #b26f0e;
-  --bad: #c92a2a;
+  --ok: #1a783e;
+  --warn: #945c0b;
+  --bad: #c72a2a;
 
-  --c-life: #c92a2a;
+  --c-life: #c72a2a;
   --c-mana: #2f5fd0;
-  --c-es: #0b8aa3;
-  --c-fire: #d9480f;
-  --c-cold: #1c7ed6;
-  --c-lightning: #a37d00;
+  --c-es: #0a7287;
+  --c-fire: #bb3e0d;
+  --c-cold: #186ab6;
+  --c-lightning: #846400;
   --c-chaos: #8b3fc9;
-  --c-physical: #7a6a4a;
-  --c-unique: #b3641c;
-  --c-rare: #9c7f00;
-  --c-magic: #4c5fd6;
+  --c-physical: #766748;
+  --c-unique: #9c5719;
+  --c-rare: #7e6600;
+  --c-magic: #495cd5;
   --c-normal: #3f3f47;
-  --c-gem: #0f8f78;
-  --c-spirit: #9a7412;
-  --c-currency: #8f6c14;
+  --c-gem: #0c7663;
+  --c-spirit: #84640f;
+  --c-currency: #846412;
 
   --primary-hover: #000000;
-  --pob-mix: 62%;
+  /* The same opacity washes text out faster on paper than on near-black. */
+  --fade-off: 0.6;
+  /* PoB emits raw hex for mod text; on paper it needs deepening to stay legible. */
+  --pob-mix: 38%;
   --backdrop: rgb(40 40 50 / 0.35);
   --shadow-pop: 0 8px 30px rgba(30, 30, 40, 0.16);
   --shadow-modal: 0 12px 40px rgba(30, 30, 40, 0.2);
-}
-
-/* Contrast steps remap the grey ramp only; hues and hairlines stay put. */
-:root[data-contrast="more"] {
-  --fg-1: #c4c4cb;
-  --fg-2: #9a9aa4;
-  --fg-3: #8a8a94;
-  --fg-4: #5e5e67;
-}
-:root[data-contrast="most"] {
-  --fg-1: #d4d4da;
-  --fg-2: #a8a8b2;
-  --fg-3: #9a9aa4;
-  --fg-4: #72727c;
-}
-:root[data-theme="light"][data-contrast="more"] {
-  --fg-1: #33333a;
-  --fg-2: #55555f;
-  --fg-3: #6d6d78;
-  --fg-4: #8a8a94;
-}
-:root[data-theme="light"][data-contrast="most"] {
-  --fg-1: #2a2a30;
-  --fg-2: #4a4a54;
-  --fg-3: #55555f;
-  --fg-4: #76767f;
 }
 
 :root {
@@ -264,7 +248,7 @@ label:has(input:disabled) {
   background: var(--bg-active);
 }
 .btn:disabled {
-  opacity: 0.45;
+  opacity: var(--fade-off);
   cursor: default;
 }
 .btn.primary {
