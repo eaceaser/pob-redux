@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { engine } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
@@ -7,7 +8,7 @@
   let loadedFor = -1;
   let timer = 0;
   let area = $state<HTMLTextAreaElement | null>(null);
-  let preview = $state(false);
+  let editing = $state(false);
 
   // PoB's own notes palette, from Data/Global.lua.
   const COLOURS: [string, string][] = [
@@ -45,10 +46,21 @@
     // The engine restarts rev on load, so a drop means another build was opened.
     const rev = build.rev;
     if (loadedFor === -1 || rev < loadedFor) {
-      engine.getNotes().then((r) => (text = r.text));
+      engine.getNotes().then((r) => {
+        text = r.text;
+        editing = !r.text.trim();
+      });
     }
     loadedFor = rev;
   });
+
+  async function toggleEdit() {
+    editing = !editing;
+    if (editing) {
+      await tick();
+      area?.focus();
+    }
+  }
 
   function onInput() {
     clearTimeout(timer);
@@ -59,17 +71,19 @@
 <div class="page">
   <div class="toolbar">
     {#each COLOURS as [name, code] (name)}
-      <button class="swatch" disabled={preview} title={`Insert ${name} (${code})`} onclick={() => insert(code)}>
+      <button class="swatch" disabled={!editing} title={`Insert ${name} (${code})`} onclick={() => insert(code)}>
         <PobText text={code + name} />
       </button>
     {/each}
     <span class="vr"></span>
-    <button class="btn sm ghost" class:on={preview} aria-pressed={preview} title="Show the notes with the colour codes applied" onclick={() => (preview = !preview)}>Preview</button>
+    <button class="btn sm ghost" class:on={editing} aria-pressed={editing} title="Edit the notes as text, with the colour codes shown" onclick={toggleEdit}>Edit</button>
   </div>
-  {#if preview}
-    <div class="notes preview selectable"><PobText text={text} /></div>
-  {:else}
+  {#if editing}
     <textarea class="notes selectable" bind:this={area} bind:value={text} oninput={onInput} placeholder="Notes are saved with the build."></textarea>
+  {:else}
+    <div class="notes preview selectable">
+      {#if text.trim()}<PobText text={text} />{:else}<span class="dim">No notes. Choose Edit to add some.</span>{/if}
+    </div>
   {/if}
 </div>
 
