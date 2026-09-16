@@ -6,8 +6,10 @@
   <div class="banner" role="status">
     {#if appUpdate.phase === "available"}
       <span class="txt">Version <span class="mono">{appUpdate.version}</span> is available.</span>
-      {#if appUpdate.installable}
+      {#if appUpdate.method === "self"}
         <button class="btn sm" onclick={() => appUpdate.install()}>Update</button>
+      {:else if appUpdate.method === "aur"}
+        <span class="dim">Update <span class="mono">pob-redux-bin</span> with your AUR helper.</span>
       {:else}
         <button class="btn sm" onclick={() => appUpdate.openReleases()} title="A package install is replaced by its package manager, not by the app">Download</button>
       {/if}

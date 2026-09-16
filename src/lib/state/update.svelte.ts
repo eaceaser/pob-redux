@@ -7,6 +7,8 @@ const KEY = "pob-redux:update";
 const RELEASES_URL = "https://github.com/juddisjudd/pob-redux/releases/latest";
 
 export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
+/** `self`: the app installs the update. `aur`: pacman does. `package`: a .deb or .rpm the user downloads. */
+export type UpdateMethod = "self" | "aur" | "package";
 
 /**
  * App auto-update. Checks once shortly after boot, then only when asked.
@@ -23,8 +25,8 @@ class UpdateStore {
   progress = $state<number | null>(null);
   /** Set when the user closes the banner, so it stays closed for that version. */
   dismissed = $state<string | null>(null);
-  /** False on a Linux package install: the updater can only replace an AppImage. */
-  installable = $state(true);
+  /** Linux package installs cannot self-update: the updater only replaces an AppImage. */
+  method = $state<UpdateMethod>("self");
 
   private update: Update | null = null;
   private downloaded = 0;
@@ -41,8 +43,8 @@ class UpdateStore {
     try {
       this.dismissed = localStorage.getItem(KEY);
     } catch {}
-    invoke<boolean>("update_installable")
-      .then((v) => (this.installable = v))
+    invoke<UpdateMethod>("update_method")
+      .then((v) => (this.method = v))
       .catch(() => {});
     // Let the engine finish booting before touching the network.
     setTimeout(() => void this.check(false), 4000);

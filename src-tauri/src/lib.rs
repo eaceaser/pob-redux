@@ -251,14 +251,21 @@ fn open_on_start() -> Option<String> {
         .or_else(|| std::env::var("POB_REDUX_OPEN").ok().filter(|p| Path::new(p).is_file()))
 }
 
-/// The updater replaces the running binary, which on Linux only works for an
-/// AppImage; a .deb or .rpm install has to fetch the package itself.
+/// How this copy gets updates. The updater replaces the running binary, which on
+/// Linux only works for an AppImage. An AUR install updates through pacman, and
+/// a .deb or .rpm install has to fetch the new package.
 #[tauri::command]
-fn update_installable() -> bool {
-    if cfg!(target_os = "linux") {
-        std::env::var_os("APPIMAGE").is_some()
+fn update_method() -> &'static str {
+    if !cfg!(target_os = "linux") || std::env::var_os("APPIMAGE").is_some() {
+        return "self";
+    }
+    let from_aur = std::fs::read_dir("/var/lib/pacman/local")
+        .map(|dir| dir.flatten().any(|e| e.file_name().to_string_lossy().starts_with("pob-redux-bin-")))
+        .unwrap_or(false);
+    if from_aur {
+        "aur"
     } else {
-        true
+        "package"
     }
 }
 
@@ -1074,7 +1081,7 @@ pub fn run() {
             power_scan_parallel,
             gem_dps_parallel,
             app_paths,
-            update_installable,
+            update_method,
             game_status,
             set_game,
             build_file_game,
