@@ -973,31 +973,35 @@
         ctx.restore();
         return ok;
       };
-      // From Nothing's ring sits on the keystones it names, not its socket
-      // (PassiveTreeView.drawJewelRadius); null means an ordinary jewel.
-      const fromNothingCenters = (j: SocketedJewel): { x: number; y: number }[] | null => {
-        if (!j.fromNothing?.length) return null;
+      // From Nothing and Impossible Escape put their ring on the keystones they
+      // name, not on their socket (PassiveTreeView.drawJewelRadius). Null means
+      // an ordinary jewel, or one whose keystones this tree does not carry, and
+      // either way the ring falls back to the socket.
+      const keystoneCenters = (j: SocketedJewel): { x: number; y: number }[] | null => {
+        if (!j.radiusKeystones?.length) return null;
         const out: { x: number; y: number }[] = [];
-        for (const kid of j.fromNothing) {
+        for (const kid of j.radiusKeystones) {
           const k = M.nodes.get(kid);
           if (k) out.push({ x: k.x, y: k.y });
         }
-        return out;
+        return out.length ? out : null;
       };
+      // Their inner edge is a fixed 150 tree units, without the 1.06 stretch
+      // every other jewel's inner ring gets.
+      const KEYSTONE_INNER = 150;
       for (const [nodeId, j] of S.sockets) {
         if (!j.radiusIndex || !S.alloc.has(nodeId) || S.hover?.id === nodeId) continue;
         const rad = S.radii[j.radiusIndex - 1];
         if (!rad) continue;
-        let centers = fromNothingCenters(j);
+        let centers = keystoneCenters(j);
+        const onKeystone = centers !== null;
         if (!centers) {
           const n = model.nodes.get(nodeId);
           if (!n) continue;
           centers = [n];
         }
-        // From Nothing's inner edge is a fixed 150 tree units, without the
-        // 1.06 stretch other jewels' inner rings get.
-        const inner = (j.fromNothing?.length ? 150 : rad.inner * 1.06) * scale;
-        const radius = j.fromNothing?.length ? { ...rad, inner: 150 } : rad;
+        const inner = (onKeystone ? KEYSTONE_INNER : rad.inner * 1.06) * scale;
+        const radius = onKeystone ? { ...rad, inner: KEYSTONE_INNER } : rad;
         const rings = timelessRings(j);
         for (const c of centers) {
           if (!inView(c.x, c.y)) continue;
@@ -1025,8 +1029,9 @@
         const socketed = S.sockets.get(S.hover.id);
         const own = socketed?.radiusIndex ? S.radii[socketed.radiusIndex - 1] : null;
         if (own) {
-          const centers = fromNothingCenters(socketed!) ?? [{ x: S.hover.x, y: S.hover.y }];
-          const rad = socketed!.fromNothing?.length ? { ...own, inner: 150 } : own;
+          const keystones = keystoneCenters(socketed!);
+          const centers = keystones ?? [{ x: S.hover.x, y: S.hover.y }];
+          const rad = keystones ? { ...own, inner: KEYSTONE_INNER } : own;
           for (const c of centers) {
             const [cx, cy] = toScreen(c.x, c.y);
             ring(cx, cy, rad, pobColor(own.color), 0.9, 1.5);

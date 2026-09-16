@@ -1136,6 +1136,34 @@ local function masteryOptions(node)
 	return out
 end
 
+-- Two uniques move their radius onto a keystone they name instead of using
+-- their socket: From Nothing on PoE2, Impossible Escape on PoE1. Item.lua fills
+-- these tables only for those jewels, and PassiveSpec:NodeInKeystoneRadius
+-- branches on the table rather than the item title, so this does too.
+local function radiusKeystoneNames(jewel)
+	local jd = jewel and jewel.jewelData
+	if not jd then return nil end
+	local names = IS_POE2 and jd.fromNothingKeystones or jd.impossibleEscapeKeystones
+	if type(names) ~= "table" or not next(names) then return nil end
+	return names
+end
+
+--- The keystone node ids such a jewel's radius follows, or nil for an ordinary
+--- jewel. keystoneMap is keyed by display name and its lowercase, which is the
+--- form the parsed mod stores.
+local function radiusKeystoneIds(jewel, tree)
+	local names = radiusKeystoneNames(jewel)
+	if not names then return nil end
+	local ids = array({})
+	for name in pairs(names) do
+		local keystone = tree.keystoneMap and tree.keystoneMap[name]
+		if keystone and keystone.x and keystone.y then ids[#ids + 1] = keystone.id end
+	end
+	if #ids == 0 then return nil end
+	table.sort(ids)
+	return ids
+end
+
 M.get_tree_state = function()
 	ensureBuild()
 	local spec = build.spec
@@ -1190,23 +1218,6 @@ M.get_tree_state = function()
 	for _, nodeId in ipairs(socketIds) do
 		local ok, _, jewel = pcall(build.itemsTab.GetSocketAndJewelForNodeID, build.itemsTab, nodeId)
 		if ok and jewel then
-			-- From Nothing's radius ring belongs on the keystones it names, not
-			-- on the socket (PassiveTreeView.drawJewelRadius). keystoneMap is
-			-- keyed by display name and its lowercase, which is the form the
-			-- parsed mod stores.
-			local fromNothing = null
-			local fnk = jewel.title == "From Nothing" and jewel.jewelData and jewel.jewelData.fromNothingKeystones or nil
-			if type(fnk) == "table" and next(fnk) then
-				local keystones = array({})
-				for keystoneName in pairs(fnk) do
-					local keystone = spec.tree.keystoneMap[keystoneName]
-					if keystone and keystone.x and keystone.y then keystones[#keystones + 1] = keystone.id end
-				end
-				if #keystones > 0 then
-					table.sort(keystones)
-					fromNothing = keystones
-				end
-			end
 			sockets[#sockets + 1] = {
 				nodeId = nodeId,
 				itemId = jewel.id,
@@ -1218,7 +1229,8 @@ M.get_tree_state = function()
 				radiusLabel = opt(jewel.jewelRadiusLabel),
 				-- Timeless-style jewels: which legion's ring pair to draw.
 				conqueror = opt(jewel.jewelData and jewel.jewelData.conqueredBy and jewel.jewelData.conqueredBy.conqueror and jewel.jewelData.conqueredBy.conqueror.type),
-				fromNothing = fromNothing,
+				-- Where this jewel's ring really belongs (PassiveTreeView.drawJewelRadius).
+				radiusKeystones = opt(radiusKeystoneIds(jewel, spec.tree)),
 			}
 		end
 	end
@@ -1365,8 +1377,8 @@ M.alloc_trace = function(p)
 end
 
 -- Node ids inside one jewel radius of a socket (tree-space precomputed map).
--- From Nothing reaches nodes in radius of the keystones it names instead of the
--- socket itself (PassiveSpec:NodeInKeystoneRadius).
+-- From Nothing and Impossible Escape reach the nodes in radius of the keystones
+-- they name instead of the socket's own (PassiveSpec:NodeInKeystoneRadius).
 M.socket_nodes = function(p)
 	ensureBuild()
 	local id = tonumber(p and p.id)
@@ -1376,16 +1388,23 @@ M.socket_nodes = function(p)
 	if not socket then error("unknown socket " .. tostring(p and p.id), 0) end
 	local set = {}
 	local ok, _, jewel = pcall(build.itemsTab.GetSocketAndJewelForNodeID, build.itemsTab, id)
-	local fnk = ok and jewel and jewel.title == "From Nothing" and jewel.jewelData and jewel.jewelData.fromNothingKeystones or nil
-	if type(fnk) == "table" and next(fnk) and ri then
-		for keystoneName in pairs(fnk) do
-			local keystone = spec.tree.keystoneMap[keystoneName]
-			local map = keystone and keystone.nodesInRadius and keystone.nodesInRadius[ri]
-			if map then
-				for nid in pairs(map) do set[nid] = true end
+	local names = ok and radiusKeystoneNames(jewel) or nil
+	-- A tree that does not carry the named keystone falls back to the socket,
+	-- so the ring and the highlight never simply vanish.
+	local onKeystone = false
+	if names and ri then
+		for keystoneName in pairs(names) do
+			local keystone = spec.tree.keystoneMap and spec.tree.keystoneMap[keystoneName]
+			if keystone then
+				onKeystone = true
+				local map = keystone.nodesInRadius and keystone.nodesInRadius[ri]
+				if map then
+					for nid in pairs(map) do set[nid] = true end
+				end
 			end
 		end
-	else
+	end
+	if not onKeystone then
 		local map = socket.nodesInRadius and ri and socket.nodesInRadius[ri]
 		if map then
 			for nid in pairs(map) do set[nid] = true end
