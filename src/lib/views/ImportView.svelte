@@ -14,6 +14,8 @@
     fetchBuildCode,
     isMobalyticsLink,
     resolveMobalytics,
+    isMaxrollGuideLink,
+    resolveMaxroll,
     saveGameBuildFiles,
     listGameBuilds,
     setGameBuildMeta,
@@ -27,6 +29,8 @@
     type GameBuildList,
     type MobalyticsBuild,
     type MobalyticsVariant,
+    type MaxrollGuide,
+    type MaxrollPobLink,
   } from "$lib/engine.svelte";
   import { build, autosaveKey } from "$lib/state/build.svelte";
   import { game } from "$lib/state/game.svelte";
@@ -374,6 +378,21 @@
     }
   }
 
+  // A Maxroll guide with more than one PoB link: the user picks which to load.
+  let guide = $state<MaxrollGuide | null>(null);
+  let guideBusy = $state(false);
+
+  async function guideImport(l: MaxrollPobLink) {
+    guideBusy = true;
+    try {
+      if (await loadCodeOrLink(l.url)) guide = null;
+    } catch (e) {
+      build.error = String(e);
+    } finally {
+      guideBusy = false;
+    }
+  }
+
   async function doImport() {
     const text = code.trim();
     if (!text) return;
@@ -381,6 +400,17 @@
       fetching = true;
       try {
         moba = await resolveMobalytics(text);
+      } catch (e) {
+        build.error = String(e);
+      } finally {
+        fetching = false;
+      }
+    } else if (isMaxrollGuideLink(text)) {
+      fetching = true;
+      try {
+        const r = await resolveMaxroll(text);
+        if (r.links.length === 1) await loadCodeOrLink(r.links[0].url);
+        else guide = r;
       } catch (e) {
         build.error = String(e);
       } finally {
@@ -851,6 +881,29 @@
                 {/each}
               </div>
             {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if guide}
+      <div class="overlay" role="presentation" onclick={() => !guideBusy && (guide = null)} onkeydown={(e) => e.key === "Escape" && (guide = null)}>
+        <div class="modal" role="dialog" aria-label="Maxroll guide" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (guide = null)}>
+          <div class="mhead">
+            <span class="label">Maxroll</span>
+            <span class="dim small mtrunc" title={guide.title}>{guide.title}</span>
+            <button class="btn sm ghost" onclick={() => (guide = null)} disabled={guideBusy}>Close</button>
+          </div>
+          <div class="mbody">
+            {#each guide.links as l, i (l.url)}
+              <div class="mrow">
+                <div class="mtext">
+                  <div class="mtitle">{l.name}</div>
+                  <div class="dim small mtrunc" title={l.url}>{l.source} · <span class="mono">{l.url.replace(/^https?:\/\//, "")}</span></div>
+                </div>
+                <button class="btn sm" class:primary={i === 0} onclick={() => guideImport(l)} disabled={guideBusy || build.busy > 0}>Import</button>
+              </div>
+            {/each}
           </div>
         </div>
       </div>
@@ -1348,6 +1401,12 @@
     min-width: 0;
     font-size: var(--fs-sm);
     color: var(--fg-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mtrunc {
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

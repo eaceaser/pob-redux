@@ -184,6 +184,28 @@ export function resolveMobalytics(url: string): Promise<MobalyticsBuild> {
   return invoke<MobalyticsBuild>("mobalytics_resolve", { url });
 }
 
+export interface MaxrollPobLink {
+  name: string;
+  /** The planner the link came from, or the guide text. */
+  source: string;
+  url: string;
+}
+
+export interface MaxrollGuide {
+  title: string;
+  url: string;
+  links: MaxrollPobLink[];
+}
+
+export function isMaxrollGuideLink(url: string): boolean {
+  return /^https?:\/\/(www\.)?maxroll\.gg\/poe2?\/(build-guides|planner)\/[^/?#]+/i.test(url.trim());
+}
+
+/** A Maxroll build guide or planner, resolved to the PoB links it offers. */
+export function resolveMaxroll(url: string): Promise<MaxrollGuide> {
+  return invoke<MaxrollGuide>("maxroll_resolve", { url });
+}
+
 export interface SavedGameBuild {
   name: string;
   path: string;

@@ -7,6 +7,7 @@ mod library;
 mod ai;
 mod sites;
 mod mobalytics;
+mod maxroll;
 mod game;
 
 use std::sync::Arc;
@@ -445,6 +446,12 @@ async fn mobalytics_resolve(url: String) -> Result<mobalytics::Resolved, String>
     mobalytics::resolve(&url).await
 }
 
+/// Resolve a Maxroll build guide or planner to the PoB links it offers.
+#[tauri::command]
+async fn maxroll_resolve(url: String) -> Result<maxroll::Resolved, String> {
+    maxroll::resolve(&url).await
+}
+
 #[derive(Deserialize)]
 struct GameBuildFile {
     name: String,
@@ -509,6 +516,11 @@ pub(crate) async fn fetch_code(url: &str) -> Result<FetchedCode, String> {
             return Box::pin(fetch_code(&code)).await;
         }
         return Ok(FetchedCode { site: "Mobalytics".into(), code });
+    }
+    if maxroll::page(url).is_some() {
+        let r = maxroll::resolve(url).await?;
+        let first = r.links.first().ok_or_else(|| format!("The Maxroll page {} has no Path of Building link", r.url))?;
+        return Box::pin(fetch_code(&first.url)).await;
     }
     let (site, download) =
         sites::download_url(url).ok_or_else(|| format!("Unrecognised build link. Supported sites: {}.", sites::SUPPORTED))?;
@@ -1074,6 +1086,7 @@ pub fn run() {
             write_text_file,
             fetch_build_code,
             mobalytics_resolve,
+            maxroll_resolve,
             save_game_build_files,
             share_build_code,
             set_game_build_meta,
