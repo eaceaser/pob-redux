@@ -63,7 +63,13 @@ else
     import -window "$win" "$out" 2>/dev/null || import -window root "$out" 2>/dev/null || true
     mean=$(convert "$out" -colorspace Gray -format "%[fx:mean]" info: 2>/dev/null || echo 0)
     sd=$(convert "$out" -colorspace Gray -format "%[fx:standard_deviation]" info: 2>/dev/null || echo 0)
-    awk -v m="$mean" -v f="$floor" -v s="$sd" -v p="$spread" 'BEGIN { exit (m > f && s > p) ? 0 : 1 }' && break
+    # A uniform window makes imagemagick report the spread as nan, which awk
+    # will happily compare as if it passed, so anything but a plain number is 0.
+    awk -v m="$mean" -v f="$floor" -v s="$sd" -v p="$spread" 'BEGIN {
+      if (m !~ /^[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/) m = 0
+      if (s !~ /^[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/) s = 0
+      exit (m + 0 > f && s + 0 > p) ? 0 : 1
+    }' && break
     if [ $((SECONDS - started)) -ge "$paint_timeout" ]; then
       status=1
       break
