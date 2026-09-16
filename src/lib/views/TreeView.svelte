@@ -9,6 +9,7 @@
   import { AssetStore } from "$lib/tree/assets";
   import PobText from "$lib/components/PobText.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
+  import { stripPobText } from "$lib/pobtext";
   import TimelessSearch from "$lib/components/TimelessSearch.svelte";
 
   let timelessOpen = $state(false);
@@ -1596,7 +1597,7 @@
       {:else}
         <select class="select spec" value={activeSpec?.index ?? 1} onchange={onSpecChange} disabled={build.busy > 0} title="Passive tree (spec)">
           {#each build.specs as s}
-            <option value={s.index}>{s.title} · {s.allocatedNodeCount}</option>
+            <option value={s.index}>{stripPobText(s.title)} · {s.allocatedNodeCount}</option>
           {/each}
         </select>
       {/if}
@@ -1621,7 +1622,7 @@
       >
         <option value={0}>Compare: off</option>
         {#each build.specs.filter((s) => !s.active) as s}
-          <option value={s.index}>vs {s.title}</option>
+          <option value={s.index}>vs {stripPobText(s.title)}</option>
         {/each}
       </select>
     </div>

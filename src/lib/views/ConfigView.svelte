@@ -2,6 +2,7 @@
   import { engine, type ConfigOption, type ConfigState, type CustomModBlock } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import { stripPobText } from "$lib/pobtext";
 
   let options = $state<ConfigOption[]>([]);
   let config = $state<Record<string, unknown>>({});
@@ -65,6 +66,11 @@
     collapsed = s;
   }
 
+  // PoB pads some list labels with spaces and then search keywords, which its narrow dropdown clips off.
+  function listLabel(label: string | null | undefined): string {
+    return stripPobText(label).split(/ {8,}/)[0].trim();
+  }
+
   function badLines(b: CustomModBlock) {
     return b.lines.filter((l) => l.status === "none" || l.status === "partial");
   }
@@ -124,7 +130,7 @@
         title="Config set"
       >
         {#each sets as s}
-          <option value={s.id}>{s.title ?? "Default"}</option>
+          <option value={s.id}>{stripPobText(s.title ?? "Default")}</option>
         {/each}
       </select>
     {/if}
@@ -190,7 +196,7 @@
                   {#each badLines(b) as l}
                     <div class="bline" class:partial={l.status === "partial"}>
                       <span class="mark">{l.status === "partial" ? "~" : "✕"}</span>
-                      <span class="mono">{l.text.trim()}</span>
+                      <span class="mono"><PobText text={l.text.trim()} /></span>
                       <span class="dim">{l.status === "partial" ? "partially recognised" : "not recognised"}</span>
                     </div>
                   {/each}
@@ -219,9 +225,9 @@
                   <input type="checkbox" checked={v === true} onchange={(e) => set(o, (e.target as HTMLInputElement).checked ? true : null)} />
                 {:else if o.type === "list" && o.list}
                   <select class="select sm" value={v ?? ""} onchange={(e) => { const raw = (e.target as HTMLSelectElement).value; const opt = o.list!.find((x) => String(x.val ?? "") === raw); set(o, opt ? opt.val : null); }}>
-                    <option value="">{placeholder[o.var] != null ? `(${o.list.find((x) => String(x.val) === String(placeholder[o.var]))?.label ?? placeholder[o.var]})` : "—"}</option>
+                    <option value="">{placeholder[o.var] != null ? `(${listLabel(o.list.find((x) => String(x.val) === String(placeholder[o.var]))?.label) || placeholder[o.var]})` : "—"}</option>
                     {#each o.list as e}
-                      <option value={String(e.val ?? "")}>{e.label}</option>
+                      <option value={String(e.val ?? "")}>{listLabel(e.label)}</option>
                     {/each}
                   </select>
                 {:else if o.type === "count" || o.type === "integer" || o.type === "countAllowZero"}

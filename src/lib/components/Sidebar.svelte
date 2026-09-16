@@ -6,6 +6,7 @@
   import { engine, type BreakdownSection } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { groupSidebar } from "$lib/sidebar-groups";
+  import { stripPobText } from "$lib/pobtext";
 
   let libraryOpen = $state(false);
 
@@ -176,7 +177,7 @@
               >
                 {#if !loadouts.active}<option value="">—</option>{/if}
                 {#each loadouts.loadouts as l}
-                  <option value={l}>{l}</option>
+                  <option value={l}>{stripPobText(l)}</option>
                 {/each}
               </select>
               <button class="loact" title="New loadout" aria-label="New loadout" onclick={() => (loEdit = { mode: "new", draft: "" })}>
@@ -283,7 +284,7 @@
             <option value={0}>No skills</option>
           {/if}
           {#each groups as g}
-            <option value={g.index}>{g.grantedBy?.kind === "mechanic" ? "◈ " : g.grantedBy?.kind === "node" ? "✦ " : g.grantedBy ? "⚔ " : ""}{g.displayLabel ?? g.label ?? `Group ${g.index}`}{g.duplicateOf ? ` (item copy of ${g.duplicateOf})` : ""}</option>
+            <option value={g.index}>{g.grantedBy?.kind === "mechanic" ? "◈ " : g.grantedBy?.kind === "node" ? "✦ " : g.grantedBy ? "⚔ " : ""}{stripPobText(g.displayLabel ?? g.label ?? `Group ${g.index}`)}{g.duplicateOf ? ` (item copy of ${g.duplicateOf})` : ""}</option>
           {/each}
         </select>
       </label>

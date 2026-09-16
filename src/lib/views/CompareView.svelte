@@ -13,6 +13,8 @@
     type CompareTree,
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { stripPobText } from "$lib/pobtext";
+  import PobText from "$lib/components/PobText.svelte";
 
   type Pane = "summary" | "tree" | "items" | "skills" | "config";
 
@@ -268,22 +270,22 @@
         <span class="olabel">Their loadout</span>
         <select class="select sm" value={loadouts.theirs.specs.find((s) => s.active)?.index ?? 1} onchange={(e) => setLoadout({ spec: Number((e.target as HTMLSelectElement).value) })} disabled={busy}>
           {#each loadouts.theirs.specs as s (s.index)}
-            <option value={s.index}>{s.title} · {s.nodes}</option>
+            <option value={s.index}>{stripPobText(s.title)} · {s.nodes}</option>
           {/each}
         </select>
         <select class="select sm" value={loadouts.theirs.itemSets.find((s) => s.active)?.id ?? 0} onchange={(e) => setLoadout({ itemSet: Number((e.target as HTMLSelectElement).value) })} disabled={busy}>
           {#each loadouts.theirs.itemSets as s (s.id)}
-            <option value={s.id}>{s.title}</option>
+            <option value={s.id}>{stripPobText(s.title)}</option>
           {/each}
         </select>
         <select class="select sm" value={loadouts.theirs.skillSets.find((s) => s.active)?.id ?? 0} onchange={(e) => setLoadout({ skillSet: Number((e.target as HTMLSelectElement).value) })} disabled={busy}>
           {#each loadouts.theirs.skillSets as s (s.id)}
-            <option value={s.id}>{s.title}</option>
+            <option value={s.id}>{stripPobText(s.title)}</option>
           {/each}
         </select>
         <select class="select sm grow" value={loadouts.theirs.socketGroups.find((s) => s.active)?.index ?? 1} onchange={(e) => setLoadout({ socketGroup: Number((e.target as HTMLSelectElement).value) })} disabled={busy}>
           {#each loadouts.theirs.socketGroups as s (s.index)}
-            <option value={s.index}>{s.label}</option>
+            <option value={s.index}>{stripPobText(s.label)}</option>
           {/each}
         </select>
       </div>
@@ -318,7 +320,7 @@
         {#if tree}
           <div class="treegrid">
             <div class="tcard">
-              <div class="label">{tree.mine.title}</div>
+              <div class="label">{stripPobText(tree.mine.title)}</div>
               <div class="big num">{tree.mine.nodes}</div>
               <div class="dim small">{tree.mine.className} · passives allocated</div>
               {#if tree.keystonesLost.length}
@@ -329,7 +331,7 @@
               {/if}
             </div>
             <div class="tcard">
-              <div class="label">{tree.theirs.title}</div>
+              <div class="label">{stripPobText(tree.theirs.title)}</div>
               <div class="big num">{tree.theirs.nodes}</div>
               <div class="dim small">{tree.theirs.className} · passives allocated</div>
               {#if tree.keystonesGained.length}
@@ -382,7 +384,7 @@
         <div class="scroll">
           {#each skills as r (r.index)}
             <div class="srow tall">
-              <span class="tlabel">{r.mine?.label ?? r.theirs?.label ?? `Group ${r.index}`}</span>
+              <span class="tlabel"><PobText text={r.mine?.label ?? r.theirs?.label ?? `Group ${r.index}`} /></span>
               <span class="tside gems">
                 {#each r.mine?.gems ?? [] as g}
                   <span class="gem" class:off={!g.enabled}>{g.name} <span class="dim num">{g.level}/{g.quality}</span></span>

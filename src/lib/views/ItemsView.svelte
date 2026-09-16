@@ -20,6 +20,7 @@
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import { stripPobText } from "$lib/pobtext";
   import EnchantDialog from "$lib/components/EnchantDialog.svelte";
   import ItemFrame from "$lib/components/ItemFrame.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
@@ -423,7 +424,7 @@
   <div class="toolbar">
     <select class="select setsel" value={activeSet?.id ?? 1} onchange={(e) => build.run(() => engine.selectItemSet(Number((e.target as HTMLSelectElement).value)))} disabled={build.busy > 0} title="Item set">
       {#each itemSets as s}
-        <option value={s.id}>{s.title}</option>
+        <option value={s.id}>{stripPobText(s.title)}</option>
       {/each}
     </select>
     <button class="btn sm ghost" onclick={() => build.run(() => engine.createItemSet())}>New</button>

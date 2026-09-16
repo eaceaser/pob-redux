@@ -5,6 +5,7 @@
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
+  import { stripPobText } from "$lib/pobtext";
 
   const groups = $derived(build.skills?.socketGroups ?? []);
   const skillSets = $derived(build.skills?.skillSets ?? []);
@@ -214,7 +215,7 @@
         title="Skill set"
       >
         {#each skillSets as s}
-          <option value={s.id}>{s.title}</option>
+          <option value={s.id}>{stripPobText(s.title)}</option>
         {/each}
       </select>
     {/if}
