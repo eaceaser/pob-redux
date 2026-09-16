@@ -327,13 +327,21 @@
           </select>
         </label>
       {/if}
-      <button class="btn sm ghost wide" title="Choose which spectres this build owns, so a Raise Spectre gem can use them" onclick={() => (libraryOpen = true)}>
-        Spectre library…
-      </button>
+      {#if mainSkill?.minionLibrary}
+        <button
+          class="btn sm wide"
+          title={mainSkill.minionLibrary === "beast"
+            ? "Choose which beasts this build owns, so a Companion gem can use them"
+            : "Choose which spectres this build owns, so a Raise Spectre gem can use them"}
+          onclick={() => (libraryOpen = true)}
+        >
+          {mainSkill.minionLibrary === "beast" ? "Manage beasts…" : "Manage spectres…"}
+        </button>
+      {/if}
     </section>
 
     {#if libraryOpen}
-      <MinionLibrary onclose={() => (libraryOpen = false)} />
+      <MinionLibrary kind={mainSkill?.minionLibrary ?? "spectre"} onclose={() => (libraryOpen = false)} />
     {/if}
 
     <div class="stats" class:busy={build.busy > 0}>

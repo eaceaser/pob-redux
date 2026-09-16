@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { engine, type MinionLibrary, type MinionEntry } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
 
-  let { onclose }: { onclose: () => void } = $props();
+  let { onclose, kind: initialKind = "spectre" }: { onclose: () => void; kind?: "spectre" | "beast" } = $props();
 
-  let kind = $state<"spectre" | "beast">("spectre");
+  // The dialog is mounted fresh each time it opens, so the caller's choice is
+  // only a starting tab; switching inside it must stick.
+  let kind = $state<"spectre" | "beast">(untrack(() => initialKind));
   let lib = $state<MinionLibrary | null>(null);
   /** Edited here and only written back on Save, as PoB's popup does. */
   let owned = $state<MinionEntry[]>([]);

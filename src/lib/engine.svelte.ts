@@ -549,6 +549,8 @@ export interface SkillEntry {
   mineCount?: number | null;
   minions?: { id: string; name: string }[];
   minion?: string | null;
+  /** Set when this skill picks its minion from the player's library, so the library button belongs here. */
+  minionLibrary?: "spectre" | "beast";
   minionSkills?: string[];
   minionSkill?: number;
 }

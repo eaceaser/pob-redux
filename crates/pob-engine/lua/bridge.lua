@@ -2604,6 +2604,20 @@ local function groupSkills(group)
 					entry.minion = opt(src.skillMinion)
 				end
 			end
+			-- Raise Spectre and Companion take their minion from the player's
+			-- library rather than a fixed list, which upstream spots by the
+			-- granted effect carrying an empty one. Only those skills get the
+			-- library button beside the minion dropdown (Build.lua).
+			if not flags.disable and ge and ge.minionList and not ge.minionList[1] then
+				local name = ge.name or ""
+				if not IS_POE2 then
+					entry.minionLibrary = "spectre"
+				elseif name:match("^Spectre:") then
+					entry.minionLibrary = "spectre"
+				elseif name:match("^Companion:") then
+					entry.minionLibrary = "beast"
+				end
+			end
 			if activeSkill.minion and activeSkill.minion.activeSkillList and activeSkill.minion.activeSkillList[1] then
 				local ms = array({})
 				for _, msk in ipairs(activeSkill.minion.activeSkillList) do
