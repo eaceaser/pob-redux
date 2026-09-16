@@ -233,8 +233,8 @@
       <div class="label">No provider configured</div>
       <p class="dim">
         Add a key for Anthropic, OpenAI, OpenRouter, OpenCode Zen or Ollama Cloud — or run Ollama locally, which
-        needs no key. Keys are held in your operating system's credential manager and never written to disk by
-        this app.
+        needs no key. Keys are held in your operating system's credential manager. If Windows refuses one, it is
+        saved encrypted for your Windows account in this app's settings folder instead.
       </p>
       <button class="btn sm" onclick={() => (chat.settingsOpen = true)}>Open provider settings</button>
     </div>

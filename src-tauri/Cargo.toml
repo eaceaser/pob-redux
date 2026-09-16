@@ -43,5 +43,8 @@ tokio = { version = "1", features = ["net", "rt", "sync", "macros"] }
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
 
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
 [lints]
 workspace = true

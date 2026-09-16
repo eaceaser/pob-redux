@@ -63,8 +63,9 @@
 
 <div class="sheet">
   <p class="dim intro">
-    Keys are held in your operating system's credential manager. They are never written to this app's files and
-    never leave your machine except to the provider you configured.
+    Keys are held in your operating system's credential manager. If Windows refuses one, it is saved encrypted
+    for your Windows account in this app's settings folder instead. Keys never leave your machine except to the
+    provider you configured.
   </p>
 
   {#each chat.providers as p}

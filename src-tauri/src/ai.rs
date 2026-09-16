@@ -1,9 +1,11 @@
 //! Providers, keys, and the request proxy for the in-app chat panel.
 //!
-//! Keys live in the OS credential store and are never sent to the webview. The
-//! webview asks for a stream by provider id and path; this module resolves the
-//! base URL and key, makes the request from Rust, and pushes the response back
-//! in chunks. A compromised frontend can spend a key but cannot read one.
+//! Keys live in the OS credential store and are never sent to the webview. On
+//! Windows, a key that Credential Manager refuses goes to a DPAPI-encrypted file
+//! instead (`key_file`). The webview asks for a stream by provider id and path;
+//! this module resolves the base URL and key, makes the request from Rust, and
+//! pushes the response back in chunks. A compromised frontend can spend a key
+//! but cannot read one.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -93,7 +95,7 @@ fn find(id: &str) -> Result<&'static Provider, String> {
 }
 
 /// Base URL overrides, for self-hosted Ollama or a gateway in front of a
-/// provider. Stored app-side (not secret); keys stay in the credential store.
+/// provider. Stored app-side (not secret); keys are kept apart from it.
 #[derive(Default)]
 pub struct AiState {
     bases: Mutex<HashMap<String, String>>,
@@ -137,8 +139,80 @@ fn entry(id: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, id).map_err(|e| e.to_string())
 }
 
-fn stored_key(id: &str) -> Option<String> {
-    entry(id).ok().and_then(|e| e.get_password().ok())
+/// The fallback file wins: it only exists when the store refused the newer key,
+/// so any copy still in the store is older.
+fn stored_key(app: &AppHandle, id: &str) -> Option<String> {
+    key_file::read(app, id).or_else(|| entry(id).ok().and_then(|e| e.get_password().ok()))
+}
+
+/// Windows Credential Manager can refuse a write outright (error 8 when its
+/// store is full). DPAPI encrypts for the same Windows account that Credential
+/// Manager does, without the store's limits.
+#[cfg(windows)]
+mod key_file {
+    use std::path::PathBuf;
+
+    use tauri::{AppHandle, Manager};
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
+
+    fn path(app: &AppHandle, id: &str) -> Option<PathBuf> {
+        Some(app.path().app_config_dir().ok()?.join("keys").join(format!("{id}.dpapi")))
+    }
+
+    pub fn read(app: &AppHandle, id: &str) -> Option<String> {
+        let data = std::fs::read(path(app, id)?).ok()?;
+        String::from_utf8(dpapi(&data, false).ok()?).ok()
+    }
+
+    pub fn write(app: &AppHandle, id: &str, key: &str) -> Result<(), String> {
+        let path = path(app, id).ok_or("no config dir")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        let data = dpapi(key.as_bytes(), true).map_err(|e| format!("encrypting the key: {e}"))?;
+        std::fs::write(&path, data).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    pub fn remove(app: &AppHandle, id: &str) {
+        if let Some(path) = path(app, id) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    pub(super) fn dpapi(data: &[u8], protect: bool) -> std::io::Result<Vec<u8>> {
+        let blob = |d: &[u8]| CRYPT_INTEGER_BLOB { cbData: d.len() as u32, pbData: d.as_ptr() as *mut u8 };
+        let input = blob(data);
+        let entropy = blob(super::SERVICE.as_bytes());
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: `input` and `entropy` point into slices that outlive the call,
+        // and neither function writes through them. On success Windows allocates
+        // `out`, which is copied and then released with LocalFree.
+        unsafe {
+            let ok = if protect {
+                CryptProtectData(&input, std::ptr::null(), &entropy, std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+            } else {
+                CryptUnprotectData(&input, std::ptr::null_mut(), &entropy, std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+            };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let bytes = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+            LocalFree(out.pbData.cast());
+            Ok(bytes)
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod key_file {
+    use tauri::AppHandle;
+
+    pub fn read(_: &AppHandle, _: &str) -> Option<String> {
+        None
+    }
+
+    pub fn remove(_: &AppHandle, _: &str) {}
 }
 
 #[derive(Serialize)]
@@ -162,7 +236,7 @@ pub fn ai_providers(app: AppHandle) -> Vec<ProviderStatus> {
     PROVIDERS
         .iter()
         .map(|p| {
-            let key = stored_key(p.id);
+            let key = stored_key(&app, p.id);
             ProviderStatus {
                 id: p.id,
                 label: p.label,
@@ -182,26 +256,52 @@ pub fn ai_providers(app: AppHandle) -> Vec<ProviderStatus> {
 }
 
 #[tauri::command]
-pub fn ai_key_set(provider: String, key: String) -> Result<(), String> {
+pub fn ai_key_set(app: AppHandle, provider: String, key: String) -> Result<(), String> {
     let key = key.trim();
     if key.is_empty() {
         return Err("key is empty".into());
     }
-    entry(&provider)?.set_password(key).map_err(keyring_error)
+    let entry = entry(&provider)?;
+    let err = match entry.set_password(key) {
+        Ok(()) => {
+            key_file::remove(&app, &provider);
+            return Ok(());
+        }
+        Err(e) => e,
+    };
+    #[cfg(windows)]
+    if matches!(err, keyring::Error::PlatformFailure(_) | keyring::Error::NoStorageAccess(_)) {
+        let reason = keyring_error(err);
+        key_file::write(&app, &provider, key).map_err(|e| format!("{reason} Saving it to an encrypted file instead also failed: {e}"))?;
+        log::warn!("ai: Credential Manager refused the {provider} key ({reason}); saved it to an encrypted file instead");
+        let _ = entry.delete_credential();
+        return Ok(());
+    }
+    Err(keyring_error(err))
 }
 
-/// On Linux the store is the D-Bus Secret Service, and keyring's own error
-/// does not say that one has to be running.
+/// keyring's own errors leave out the fix: on Linux, that a D-Bus Secret
+/// Service has to be running; on Windows, what error 8 means.
 fn keyring_error(e: keyring::Error) -> String {
     if cfg!(target_os = "linux") {
-        format!("{e}. Storing a key needs a Secret Service (gnome-keyring or KWallet) on the session bus.")
-    } else {
-        e.to_string()
+        return format!("{e}. Storing a key needs a Secret Service (gnome-keyring or KWallet) on the session bus.");
     }
+    #[cfg(windows)]
+    if let keyring::Error::PlatformFailure(inner) = &e {
+        if inner.downcast_ref::<keyring::windows::Error>().is_some_and(|w| w.0 == 8) {
+            return format!(
+                "{e}. Windows Credential Manager refused to save the key, which usually means its store is full. \
+                 Remove entries you no longer need under Credential Manager > Windows Credentials > Generic Credentials, then try again."
+            );
+        }
+    }
+    format!("{e}.")
 }
 
 #[tauri::command]
-pub fn ai_key_clear(provider: String) -> Result<(), String> {
+pub fn ai_key_clear(app: AppHandle, provider: String) -> Result<(), String> {
+    find(&provider)?;
+    key_file::remove(&app, &provider);
     match entry(&provider)?.delete_credential() {
         Ok(()) => Ok(()),
         // Clearing a key that was never stored is a success from the UI's side.
@@ -408,7 +508,7 @@ pub async fn ai_warm_model(app: AppHandle, provider: String, model: String) -> R
 pub async fn ai_models(app: AppHandle, provider: String) -> Result<Vec<ModelInfo>, String> {
     let p = find(&provider)?;
     let base = base_url(&app, p);
-    let key = stored_key(p.id);
+    let key = stored_key(&app, p.id);
     if p.needs_key && key.is_none() {
         return Err(format!("no {} key stored", p.label));
     }
@@ -504,7 +604,7 @@ pub async fn ai_chat_stream(
         return Err(format!("bad path {path}"));
     }
     let base = base_url(&app, p);
-    let key = stored_key(p.id);
+    let key = stored_key(&app, p.id);
     if p.needs_key && key.is_none() {
         return Err(format!("no {} key stored", p.label));
     }
@@ -763,5 +863,22 @@ mod tests {
         assert_eq!(e.get_password().expect("get"), "secret-value-1234");
         e.delete_credential().expect("delete");
         assert!(matches!(e.get_password(), Err(keyring::Error::NoEntry)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn key_file_encryption_round_trips() {
+        let sealed = super::key_file::dpapi(b"sk-or-v1-secret", true).expect("protect");
+        assert!(!sealed.windows(15).any(|w| w == b"sk-or-v1-secret"));
+        assert_eq!(super::key_file::dpapi(&sealed, false).expect("unprotect"), b"sk-or-v1-secret");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn full_credential_store_gets_advice() {
+        let e = keyring::Error::PlatformFailure(Box::new(keyring::windows::Error(8)));
+        assert!(super::keyring_error(e).contains("Generic Credentials"));
+        let e = keyring::Error::PlatformFailure(Box::new(keyring::windows::Error(5)));
+        assert_eq!(super::keyring_error(e), "Platform secure storage failure: Windows error code 5.");
     }
 }

@@ -58,7 +58,8 @@ pool, and ranks passive nodes by what they gain per point. No account or key nee
 
 An optional chat panel that answers questions about the open build and can change it. Bring your own
 key: Anthropic, OpenAI, OpenRouter, OpenCode Zen, or Ollama, local or cloud. Keys go in your operating
-system's credential store, and requests are made from Rust, so a key never reaches the web view.
+system's credential store (on Windows, an encrypted file if Credential Manager refuses one), and requests
+are made from Rust, so a key never reaches the web view.
 
 | Mode | Behaviour |
 |---|---|
