@@ -17,12 +17,14 @@ You need:
   `libappindicator3-dev`, `librsvg2-dev`, `patchelf`, `libssl-dev`. macOS: the Command Line Tools,
   with the licence accepted (`sudo xcodebuild -license accept`); the system WKWebView needs nothing
   installed. See [MACOS.md](MACOS.md).
-- A checkout of [PathOfBuilding-PoE2](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2)
-  next to this repo, or `POB_SOURCE` set to its path.
+- Checkouts of [PathOfBuilding-PoE2](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2)
+  and [PathOfBuilding](https://github.com/PathOfBuildingCommunity/PathOfBuilding) next to this repo.
+  To sync one game from somewhere else, run `bun run sync:poe2` or `bun run sync:poe1` with
+  `POB_SOURCE` set to that checkout.
 
 ```sh
 bun install
-bun run sync          # copy PoB's Lua and data into src-tauri/resources/pob. Run this first.
+bun run sync          # copy both games' PoB Lua and data into src-tauri/resources/pob and pob1. Run this first.
 bun run sync:fast     # same, but keep the decoded tree art from the last sync
 bun run tauri dev     # run the app with hot reload
 bun run tauri build   # installers land in target/release/bundle/

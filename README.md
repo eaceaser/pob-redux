@@ -2,119 +2,165 @@
 
 [![Latest release](https://img.shields.io/github/v/release/juddisjudd/pob-redux?style=flat-square&label=release)](../../releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/juddisjudd/pob-redux/total?style=flat-square&label=downloads)](../../releases)
-[![Latest release downloads](https://img.shields.io/github/downloads/juddisjudd/pob-redux/latest/total?style=flat-square&label=latest%20downloads)](../../releases/latest)
-[![Check](https://img.shields.io/github/actions/workflow/status/juddisjudd/pob-redux/check.yml?branch=main&style=flat-square&label=check)](../../actions/workflows/check.yml)
-[![Release build](https://img.shields.io/github/actions/workflow/status/juddisjudd/pob-redux/release.yml?style=flat-square&label=release%20build)](../../actions/workflows/release.yml)
+[![AUR](https://img.shields.io/aur/version/pob-redux-bin?style=flat-square&label=AUR)](https://aur.archlinux.org/packages/pob-redux-bin)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2a2a30?style=flat-square)](LICENSE)
-[![Last commit](https://img.shields.io/github/last-commit/juddisjudd/pob-redux?style=flat-square)](../../commits/main)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-2a2a30?style=flat-square)
-![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Svelte%205-2a2a30?style=flat-square)
 
-A new interface for Path of Building, for Path of Exile 1 and 2. It runs Path of Building Community's
-own calculation engine, so the numbers match. Pick a game on first start and switch any time from the
-title bar; each game runs its own Path of Building.
+A desktop app for planning Path of Exile 1 and 2 builds. It runs Path of Building Community's own
+calculation code, so every number matches Path of Building, and it opens the same build files.
 
 [![PoB Redux: a new interface for Path of Building, for Path of Exile 1 and 2](https://pobredux.com/assets/og.png)](https://pobredux.com)
 
 ## Download
 
-Download from [pobredux.com](https://pobredux.com), which picks the installer for your system, or get
-`PoB Redux_<version>_x64-setup.exe` from the [Releases](../../releases) page and run it. It installs
-for the current user only, and fetches the WebView2 runtime if Windows does not have it.
+[pobredux.com](https://pobredux.com) picks the right file for your system. Every file is also on the
+[Releases](../../releases/latest) page.
 
-Your builds stay where Path of Building keeps them, in `Documents/Path of Building (PoE2)/Builds` and
-`Documents/Path of Building/Builds`, so both apps can open the same files.
+| System | File | Install |
+|---|---|---|
+| Windows 10 or 11 | `PoB.Redux_<version>_x64-setup.exe` | Run it. It installs for your user only and fetches WebView2 if Windows lacks it. |
+| macOS, Apple Silicon | `PoB.Redux_<version>_aarch64.dmg` | Drag the app to Applications. See [macOS says the app cannot be opened](#macos-says-the-app-cannot-be-opened). |
+| Arch Linux | [`pob-redux-bin`](https://aur.archlinux.org/packages/pob-redux-bin) on the AUR | `yay -S pob-redux-bin` or `paru -S pob-redux-bin` |
+| Fedora, openSUSE | `PoB.Redux-<version>-1.x86_64.rpm` | Install with your package manager. |
+| Debian, Ubuntu | `PoB.Redux_<version>_amd64.deb` | Install with your package manager. |
+| Any other Linux | `PoB.Redux_<version>_amd64.AppImage` | `chmod +x` the file, then run it. |
 
-Windows is the main target. Linux builds come out of CI as an `.rpm`, a `.deb` and an AppImage. Prefer the
-`.rpm` on Fedora and openSUSE and the `.deb` on Debian and Ubuntu: both use the system WebKitGTK. The
-AppImage bundles its own WebKit, which on some Mesa drivers opened to a black window; the app now starts
-with `WEBKIT_DISABLE_DMABUF_RENDERER=1` to avoid that (`POB_REDUX_GPU=1` turns the GPU path back on).
-Make the AppImage executable before running it (`chmod +x`). Saving an assistant API key needs a Secret
-Service (gnome-keyring or KWallet) on the session bus.
+There is no build for Intel Macs.
 
-macOS builds run on Apple Silicon: take the `.dmg` and see [MACOS.md](MACOS.md). The app is not
-signed or notarized yet, so macOS blocks its first launch. Allow it under System Settings → Privacy &
-Security → Open Anyway, or on macOS 14 and earlier, right-click the app and choose Open.
+## Getting started
+
+1. On first start, pick Path of Exile 1 or 2. The toggle in the title bar switches games later.
+2. Open the **Builds** tab. Your saved builds are listed there, and **New build** starts an empty one.
+3. To bring in someone else's build, paste it into the **Import** box and press **Import**.
+
+Import takes:
+
+- a Path of Building share code or build XML
+- a link from pobb.in, Maxroll, Mobalytics, poe.ninja, poe2db, poedb, Pastebin or Rentry
+- a Maxroll build guide link, when the guide's author attached a PoB code
+
+**Open file…** opens a saved `.xml` build, or on Path of Exile 2 a GGG Build Planner file (`.build`).
+
+A build from the other game switches the app to that game first.
+
+Builds are saved in the same folders Path of Building uses, so either app can open them:
+
+- Path of Exile 2: `Documents/Path of Building (PoE2)/Builds`
+- Path of Exile 1: `Documents/Path of Building/Builds`
+
+## Updating
+
+When a new version is out, a banner appears at the top of the window.
+
+- **Windows, macOS and the AppImage:** press **Update**, then **Restart** if the app asks.
+- **AUR:** update `pob-redux-bin` with your AUR helper, for example `yay -Syu`.
+- **.deb and .rpm:** press **Download** and install the new package.
+
+To check by hand, open Options (the gear in the title bar, or Ctrl+,) and press **Check for updates**.
 
 ## Features
 
-Every Path of Building tab is here: tree, skills, items, calcs, config, notes, party and builds, with
-PoB's tooltips and breakdowns. The calculations are Path of Building Community's Lua code, run
-headless, so the results match PoB's.
+### Every Path of Building tab
 
-Builds import from share codes, PoB XML, GGG's `.build` planner files, and links from pobb.in,
-Maxroll, Mobalytics, poe.ninja, poe2db.tw, poedb.tw, Pastebin and Rentry. A build from the other game
-switches the app to it. The assistant, the MCP server and the Build Planner import are PoE2 features
-for now.
-
-Three things are new.
+Tree, skills, items, calcs, config, notes, party and builds are all here, with PoB's tooltips and
+breakdowns.
 
 ### Optimise
 
-A tab that improves a build using PoB's calculation rather than a model. It reviews the build and
-ranks what is wrong, with a fix for each. It designs a rare for any slot by searching the real mod
-pool, and ranks passive nodes by what they gain per point. No account or key needed.
+Reviews the build and lists what is wrong, worst first, with a fix for each. It can
+design a rare for any slot from the real mod pool, and it ranks passive nodes by what each one adds
+per point. Every figure comes from PoB's own calculation, and it needs no account or key.
+
+### Compare
+
+Loads a second build next to yours and shows the differences in stats, tree, items,
+skills and config.
 
 ### Assistant
 
-An optional chat panel that answers questions about the open build and can change it. Bring your own
-key: Anthropic, OpenAI, OpenRouter, OpenCode Zen, or Ollama, local or cloud. Keys go in your operating
-system's credential store (on Windows, an encrypted file if Credential Manager refuses one), and requests
-are made from Rust, so a key never reaches the web view.
+An optional chat panel that answers questions about the open build and can change it. It is
+available in Path of Exile 2 only for now. Open it from the chat icon in the status bar or with Ctrl+K. It works
+with your own key for Anthropic, OpenAI, OpenRouter, OpenCode Zen or Ollama Cloud, or with Ollama on
+your computer and no key.
 
-| Mode | Behaviour |
+| Mode | What it does |
 |---|---|
-| Ask | Reads only. Explains and recommends without changing anything. |
-| Build | Changes the build, asking you before each one. |
-| Try | Checkpoints first, then changes freely. Keep or undo the lot at the end. |
+| Ask | Reads the build and explains. Changes nothing. |
+| Build | Makes changes, asking you before each one. |
+| Try | Saves a checkpoint, then changes freely. At the end you keep the lot or undo it. |
 
-Try is for comparing options. Because every change is reversible in one click, the assistant can try
-each candidate and read its numbers instead of reasoning about which is better.
+Keys are kept in your operating system's credential store. A key leaves your computer only in requests
+to the provider you set up, and the chat panel itself never sees it.
 
 ### MCP server
 
-An optional local server, off by default, so an AI client such as Claude Code, Claude Desktop or
-Cursor can read and edit the build that is open. Turn it on in Options, the gear in the status bar,
-which shows the URL, the access token and ready-made client config.
+Lets an AI client such as Claude Code, Claude Desktop or Cursor read and edit the open build, in
+Path of Exile 2 only for now. It is off until you turn it on in Options, which then shows
+the address, an access token and ready-made client settings. It listens on `127.0.0.1` only, stops
+when the app closes, and refuses any request without the token.
 
-It listens on `127.0.0.1` only, stops when the app closes, and every request needs a bearer token, so
-no other program on your machine can drive your build without it. The tools cover loading builds,
-reading stats, the passive tree, items, gems, config, and saving or exporting.
+## Troubleshooting
+
+### macOS says the app cannot be opened
+
+The app is not signed or notarized yet, so macOS blocks the first launch. On macOS 15 or later, open
+System Settings → Privacy & Security and click **Open Anyway**. On macOS 14 and earlier, right-click
+the app and choose **Open**. [MACOS.md](MACOS.md) has more detail.
+
+### The window is black on Linux
+
+The app starts with WebKit's DMA-BUF renderer turned off, because it showed a black window on some
+Mesa drivers. Setting `POB_REDUX_GPU=1` turns it back on, so start the app without that variable. If
+the window is still black, [open an issue](../../issues) with your distribution and graphics card.
+
+### An API key will not save on Linux
+
+Keys need a Secret Service on the session bus, such as gnome-keyring or KWallet. Install and unlock
+one, then add the key again.
+
+### An API key will not save on Windows
+
+When Credential Manager refuses a key, the app stores it in a file encrypted for your Windows account
+instead. If saving still fails, remove entries you no longer need under Credential Manager → Windows
+Credentials → Generic Credentials and try again.
+
+### A number differs from Path of Building
+
+Both apps run the same calculation code, so a difference is a bug. [Open an issue](../../issues) and
+include the build's share code along with the stat you checked and the value each app shows.
 
 ## Contributing
 
-Issues and pull requests are welcome. You need Rust stable, Bun, and a checkout of
-[PathOfBuilding-PoE2](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2) next to this
-repo.
+Issues and pull requests are welcome. You need Rust stable, Bun, and checkouts of
+[PathOfBuilding-PoE2](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2) and
+[PathOfBuilding](https://github.com/PathOfBuildingCommunity/PathOfBuilding) next to this repo.
 
 ```sh
 bun install
-bun run sync          # copy PoB's Lua and data into src-tauri/resources/pob. Run this first.
+bun run sync          # copy both games' PoB Lua and data into src-tauri/resources. Run this first.
 bun run tauri dev     # run the app with hot reload
 ```
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has the rest: full prerequisites, project layout, updating the
-bundled PoB data, the `pobctl` command line, and the environment variables.
-
-Keep the calculations in PoB's Lua. Do not reimplement them in Rust or TypeScript.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the rest: prerequisites, project layout, updating the bundled
+PoB data, the `pobctl` command line and the environment variables. Keep the calculations in PoB's
+Lua; do not reimplement them in Rust or TypeScript.
 
 ## Credits
 
-PoB Redux is a shell. The hard part, the calculations, belongs to other people.
-
-- **[Path of Building Community](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2)**
-  maintains the Path of Exile 2 fork and the
-  [Path of Exile 1 project](https://github.com/PathOfBuildingCommunity/PathOfBuilding) whose Lua code
-  and game data this app runs and bundles, one per game. Every
-  number PoB Redux shows comes from their work.
+Every number PoB Redux shows comes from
+[Path of Building Community](https://github.com/PathOfBuildingCommunity). This app runs and bundles
+the Lua code and game data of their
+[Path of Exile 1](https://github.com/PathOfBuildingCommunity/PathOfBuilding) and
+[Path of Exile 2](https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2) projects.
 
 Built with [LuaJIT](https://luajit.org) through [mlua](https://github.com/mlua-rs/mlua),
 [Tauri](https://tauri.app), [Svelte](https://svelte.dev), [Rust](https://www.rust-lang.org),
 [rmcp](https://github.com/modelcontextprotocol/rust-sdk) for the MCP server, and the
 [AI SDK](https://ai-sdk.dev) for the assistant.
 
+PoB Redux is not affiliated with Grinding Gear Games.
+
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
-
-Path of Building Community is MIT as well, and its licence file is bundled with the app.
+MIT. See [LICENSE](LICENSE). Path of Building Community is MIT as well, and its licence file is
+bundled with the app.
