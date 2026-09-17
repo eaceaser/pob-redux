@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest something PoB Redux should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search the [open issues](https://github.com/juddisjudd/pob-redux/issues) first. To talk an idea through before you file it, use [Discord](https://discord.pobredux.com/).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task, not only the feature. For example, "I compare two versions of a build and switch tabs for every stat."
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you picture it working.
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - Both
+        - Path of Exile 2
+        - Path of Exile 1
+  - type: textarea
+    id: pob
+    attributes:
+      label: Does Path of Building already do this?
+      description: If it does, say where. A feature Path of Building has is easier to add, because the app can call the same code.

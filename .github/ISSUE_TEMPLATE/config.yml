@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://discord.pobredux.com/
+    about: Ask on the PoB Redux Discord.
+  - name: Security vulnerability
+    url: https://github.com/juddisjudd/pob-redux/security/advisories/new
+    about: Report it privately. Do not open a public issue.
+  - name: Wrong number that Path of Building shows too (Path of Exile 2)
+    url: https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2/issues
+    about: The calculations come from Path of Building, so report it there.
+  - name: Wrong number that Path of Building shows too (Path of Exile 1)
+    url: https://github.com/PathOfBuildingCommunity/PathOfBuilding/issues
+    about: The calculations come from Path of Building, so report it there.

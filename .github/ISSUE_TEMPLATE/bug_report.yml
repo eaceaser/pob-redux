@@ -1,0 +1,88 @@
+name: Bug report
+description: Something in PoB Redux does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search the [open issues](https://github.com/juddisjudd/pob-redux/issues) first. For questions and help, ask on [Discord](https://discord.pobredux.com/).
+  - type: input
+    id: version
+    attributes:
+      label: PoB Redux version
+      description: Open Options (the gear in the title bar). The version is under Updates.
+      placeholder: "0.2.19"
+    validations:
+      required: true
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - Path of Exile 2
+        - Path of Exile 1
+        - Both
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Windows installer (.exe)
+        - macOS (.dmg)
+        - AUR (pob-redux-bin)
+        - Debian or Ubuntu (.deb)
+        - Fedora or openSUSE (.rpm)
+        - AppImage
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11, macOS 15, Arch Linux with KDE on Wayland"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include any error message. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Import the build below
+        2. Open the Items tab
+        3. Click the helmet
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: A share code or a link (pobb.in, poe.ninja, Maxroll) for a build that shows the problem.
+  - type: dropdown
+    id: pob
+    attributes:
+      label: Does Path of Building show the same number?
+      description: >-
+        Only for a wrong number. PoB Redux runs Path of Building's own calculations, so a number that is
+        also wrong in Path of Building needs a report to Path of Building instead.
+      options:
+        - The problem is not a wrong number
+        - No, Path of Building shows the right number
+        - Yes, Path of Building shows the same number
+        - I have not checked
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: In Options, under Diagnostics, press Save report and drag the file here. Paths, tokens and API keys in it are masked.

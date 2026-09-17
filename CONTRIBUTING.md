@@ -2,6 +2,9 @@
 
 Issues and pull requests are welcome.
 
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately, as
+[SECURITY.md](SECURITY.md) describes, not in a public issue.
+
 Before a pull request, run `bun run check` and the headless checks below, then open one of your builds
 in the app and compare the sidebar against Path of Building itself.
 
