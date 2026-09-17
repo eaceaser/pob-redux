@@ -956,6 +956,7 @@
   }
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     padding: 8px 12px;
@@ -963,6 +964,7 @@
     background: var(--bg-1);
   }
   .setsel {
+    flex: none;
     width: 190px;
     height: 24px;
     font-size: var(--fs-xs);
@@ -1061,7 +1063,7 @@
   .cols {
     flex: 1;
     display: grid;
-    grid-template-columns: 340px 1fr 1fr;
+    grid-template-columns: 340px minmax(0, 1fr) minmax(0, 1fr);
     min-height: 0;
   }
   .col {
@@ -1185,10 +1187,12 @@
     border-bottom: 1px solid var(--line-0);
   }
   .dbbar .input {
-    flex: 1;
+    flex: 1 1 120px;
+    min-width: 90px;
   }
   .typesel {
-    width: 170px;
+    flex: 0 1 170px;
+    min-width: 0;
     font-size: var(--fs-xs);
   }
   .modal {

@@ -14,6 +14,13 @@
   const DISCORD_URL = "https://discord.pobredux.com/";
   const win = getCurrentWindow();
   let maximized = $state(false);
+  let tabsEl = $state<HTMLDivElement | null>(null);
+
+  // A narrow window scrolls the tab strip; keep the active tab in sight.
+  $effect(() => {
+    void build.view;
+    tabsEl?.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
 
   const tabs: { id: ViewId; label: string; key: string }[] = [
     { id: "import", label: "Builds", key: "1" },
@@ -84,7 +91,14 @@
       }
     };
     window.addEventListener("keydown", onKey);
+    const onWheel = (e: WheelEvent) => {
+      if (!tabsEl || tabsEl.scrollWidth <= tabsEl.clientWidth || !e.deltaY) return;
+      tabsEl.scrollLeft += e.deltaY;
+      e.preventDefault();
+    };
+    tabsEl?.addEventListener("wheel", onWheel, { passive: false });
     return () => {
+      tabsEl?.removeEventListener("wheel", onWheel);
       un.then((f) => f());
       window.removeEventListener("keydown", onKey);
     };
@@ -125,7 +139,7 @@
     </button>
   </div>
 
-  <div class="tabs" role="tablist">
+  <div class="tabs" role="tablist" bind:this={tabsEl}>
     {#each tabs as t (t.id)}
       <button
         role="tab"
@@ -172,7 +186,7 @@
   .titlebar {
     height: var(--titlebar-h);
     display: grid;
-    grid-template-columns: auto auto auto 1fr auto;
+    grid-template-columns: auto auto minmax(0, auto) minmax(0, 1fr) auto;
     align-items: stretch;
     background: var(--bg-1);
     border-bottom: 1px solid var(--line-0);
@@ -286,9 +300,17 @@
   .tabs {
     display: flex;
     align-items: stretch;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
     -webkit-app-region: no-drag;
   }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
   .tab {
+    flex: none;
+    white-space: nowrap;
     appearance: none;
     border: 0;
     border-right: 1px solid var(--line-0);
@@ -367,5 +389,18 @@
   .wc.close:hover {
     background: #c42b1c;
     color: #fff;
+  }
+  /* Below this width the full title bar no longer fits: the brand gives up its
+     sidebar-wide column and its name, and the tabs tighten. */
+  @media (max-width: 1360px) {
+    .brand.wide {
+      width: auto;
+    }
+    .name {
+      display: none;
+    }
+    .tab {
+      padding: 0 11px;
+    }
   }
 </style>

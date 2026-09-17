@@ -1,6 +1,10 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const KEY = "pob-redux:ui";
+/** The window's minimum size in tauri.conf.json, which every view is laid out to fit. */
+const LAYOUT_MIN_W = 1100;
+const LAYOUT_MIN_H = 680;
 
 export type Dock = "top" | "bottom";
 export type Theme = "system" | "dark" | "wraeclast" | "light";
@@ -20,6 +24,8 @@ class UiStore {
   contrastAuto = $state(true);
   contrastLevel = $state(0);
   scale = $state(1);
+  /** The zoom in force: the chosen scale, lowered so the layout still fits the window. */
+  scaleApplied = $state(1);
 
   private systemLight = window.matchMedia("(prefers-color-scheme: light)");
   private systemContrast = window.matchMedia("(prefers-contrast: more)");
@@ -41,7 +47,19 @@ class UiStore {
     this.applyTheme();
     this.systemLight.addEventListener("change", () => this.applyTheme());
     this.systemContrast.addEventListener("change", () => this.applyContrast());
-    if (this.scale !== 1) this.applyScale();
+    void this.applyScale();
+    let timer = 0;
+    const refit = () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => void this.applyScale(), 120);
+    };
+    const win = getCurrentWindow();
+    win.onResized(refit).catch(() => {});
+    win.onScaleChanged(refit).catch(() => {});
+  }
+
+  get scaleLimited() {
+    return this.scaleApplied < this.scale;
   }
 
   toggleSidebar() {
@@ -79,7 +97,7 @@ class UiStore {
 
   setScale(scale: number) {
     this.scale = clampScale(scale);
-    this.applyScale();
+    void this.applyScale();
     this.save();
   }
 
@@ -109,9 +127,20 @@ class UiStore {
     }
   }
 
-  private applyScale() {
-    getCurrentWebview()
-      .setZoom(this.scale)
+  private async applyScale() {
+    let target = this.scale;
+    if (target > 1) {
+      try {
+        const win = getCurrentWindow();
+        const size = (await win.innerSize()).toLogical(await win.scaleFactor());
+        const fit = Math.min(size.width / LAYOUT_MIN_W, size.height / LAYOUT_MIN_H);
+        target = Math.max(1, Math.min(target, Math.floor(fit * 20) / 20));
+      } catch {}
+    }
+    if (target === this.scaleApplied) return;
+    this.scaleApplied = target;
+    await getCurrentWebview()
+      .setZoom(target)
       .catch(() => {});
   }
 

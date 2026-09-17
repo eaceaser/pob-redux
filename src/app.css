@@ -430,6 +430,12 @@ kbd {
   border: 1px solid var(--line-0);
   border-radius: var(--r-2);
 }
+/* In-view dialogs stay inside their backdrop at any interface scale and scroll instead. */
+.panel.dialog {
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
+  overflow: auto;
+}
 .panel-head {
   display: flex;
   align-items: center;
