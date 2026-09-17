@@ -13,7 +13,7 @@
   import OptimiseView from "$lib/views/OptimiseView.svelte";
   import CompareView from "$lib/views/CompareView.svelte";
   import ImportView from "$lib/views/ImportView.svelte";
-  import OptionsModal from "$lib/components/OptionsModal.svelte";
+  import SettingsView from "$lib/views/SettingsView.svelte";
   import ConfirmModal from "$lib/components/ConfirmModal.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import UpdateBanner from "$lib/components/UpdateBanner.svelte";
@@ -23,6 +23,7 @@
   import { chat } from "$lib/state/chat.svelte";
   import { game, GAMES, GAME_LABEL } from "$lib/state/game.svelte";
   import { ui } from "$lib/state/ui.svelte";
+  import { appOptions } from "$lib/state/options.svelte";
 
   let bootDots = $state(0);
   const status = $derived(app.status);
@@ -56,7 +57,9 @@
   <div class="body">
     {#if !ui.sidebarCollapsed}<Sidebar />{/if}
     <main class="view">
-      {#if !status || status.state === "booting"}
+      {#if appOptions.open}
+        <SettingsView />
+      {:else if !status || status.state === "booting"}
         <div class="center">
           <div class="boot">
             <img class="bootlogo" src={logo} alt="" draggable="false" />
@@ -101,7 +104,6 @@
     {#if chat.open && game.isPoe2 && status?.state === "ready"}<ChatPanel />{/if}
   </div>
   <StatusBar {status} {paths} />
-  <OptionsModal />
   <ConfirmModal />
   {#if game.firstRun}
     <div class="pick-backdrop">

@@ -56,7 +56,7 @@ When a new version is out, a banner appears at the top of the window.
 - **AUR:** update `pob-redux-bin` with your AUR helper, for example `yay -Syu`.
 - **.deb and .rpm:** press **Download** and install the new package.
 
-To check by hand, open Options (the gear in the title bar, or Ctrl+,) and press **Check for updates**.
+To check by hand, open Settings (the gear in the title bar, or Ctrl+,) and press **Check for updates**.
 
 ## Features
 
@@ -95,7 +95,7 @@ to the provider you set up, and the chat panel itself never sees it.
 ### MCP server
 
 Lets an AI client such as Claude Code, Claude Desktop or Cursor read and edit the open build, in
-Path of Exile 2 only for now. It is off until you turn it on in Options, which then shows
+Path of Exile 2 only for now. It is off until you turn it on in Settings, which then shows
 the address, an access token and ready-made client settings. It listens on `127.0.0.1` only, stops
 when the app closes, and refuses any request without the token.
 

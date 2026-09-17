@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: PoB Redux version
-      description: Open Options (the gear in the title bar). The version is under Updates.
+      description: Open Settings (the gear in the title bar). The version is under Updates.
       placeholder: "0.2.19"
     validations:
       required: true
@@ -85,4 +85,4 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics report
-      description: In Options, under Diagnostics, press Save report and drag the file here. Paths, tokens and API keys in it are masked.
+      description: In Settings, under Diagnostics, press Save report and drag the file here. Paths, tokens and API keys in it are masked.

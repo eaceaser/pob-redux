@@ -16,9 +16,15 @@
   let maximized = $state(false);
   let tabsEl = $state<HTMLDivElement | null>(null);
 
+  function openView(id: ViewId) {
+    appOptions.open = false;
+    build.view = id;
+  }
+
   // A narrow window scrolls the tab strip; keep the active tab in sight.
   $effect(() => {
     void build.view;
+    void appOptions.open;
     tabsEl?.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
 
@@ -57,7 +63,7 @@
         }
         const t = tabs.find((t) => t.key === e.key);
         if (t && build.loaded) {
-          build.view = t.id;
+          openView(t.id);
           e.preventDefault();
         }
         if (e.key === "z") {
@@ -73,7 +79,7 @@
           e.preventDefault();
         }
         if (e.key === ",") {
-          appOptions.open = true;
+          appOptions.open = !appOptions.open;
           e.preventDefault();
         }
         if (e.key === "=" || e.key === "+") {
@@ -144,10 +150,10 @@
       <button
         role="tab"
         class="tab"
-        class:active={build.view === t.id}
-        aria-selected={build.view === t.id}
+        class:active={build.view === t.id && !appOptions.open}
+        aria-selected={build.view === t.id && !appOptions.open}
         disabled={!build.loaded && t.id !== "import"}
-        onclick={() => (build.view = t.id)}
+        onclick={() => openView(t.id)}
         title={`Ctrl+${t.key}`}
       >
         {t.label}
@@ -161,7 +167,14 @@
     <button class="wc link" aria-label="Discord" title="PoB Redux Discord" onclick={() => openUrl(DISCORD_URL).catch(() => {})}>
       <Icon name="discord-logo" size={16} />
     </button>
-    <button class="wc opts" aria-label="Options" title="Options (Ctrl+,)" onclick={() => (appOptions.open = true)}>
+    <button
+      class="wc opts"
+      class:on={appOptions.open}
+      aria-label="Settings"
+      aria-pressed={appOptions.open}
+      title="Settings (Ctrl+,)"
+      onclick={() => (appOptions.open = !appOptions.open)}
+    >
       <Icon name="gear" size={15} />
     </button>
     <button class="wc" aria-label="Minimize" onclick={() => win.minimize()}>
@@ -379,6 +392,10 @@
   .wc.link {
     width: 40px;
     cursor: pointer;
+  }
+  .wc.opts.on {
+    color: var(--fg-0);
+    background: var(--bg-active);
   }
   .wc.opts {
     width: 40px;
