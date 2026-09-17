@@ -64,17 +64,20 @@ fn session_marker(app: &tauri::AppHandle) -> Option<PathBuf> {
 
 /// A marker file lives for as long as the app runs, so one found at start means
 /// the last run crashed or was killed. A running instance holds one too, so it
-/// only counts when no other instance answers.
+/// only counts when no other instance answers. The Windows updater ends the
+/// process without an exit event, so a marker from another version means an
+/// update.
 fn begin_session(app: &tauri::AppHandle) -> SessionInfo {
     let safe_mode = std::env::args().any(|a| a == "--safe-mode") || std::env::var_os("POB_REDUX_SAFE_MODE").is_some();
     let Some(marker) = session_marker(app) else {
         return SessionInfo { unclean_exit: false, safe_mode };
     };
-    let unclean_exit = marker.exists() && !links::instance_running();
+    let version = app.package_info().version.to_string();
+    let unclean_exit = std::fs::read_to_string(&marker).is_ok_and(|m| m.lines().next() == Some(version.as_str())) && !links::instance_running();
     if let Some(dir) = marker.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&marker, std::process::id().to_string());
+    let _ = std::fs::write(&marker, format!("{version}\n{}", std::process::id()));
     if unclean_exit {
         log::warn!("session: the last run did not exit cleanly");
     }
