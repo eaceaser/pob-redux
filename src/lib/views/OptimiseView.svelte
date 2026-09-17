@@ -2,6 +2,8 @@
   import {
     engine,
     powerScanParallel,
+    planPointsParallel,
+    type PointPlan,
     type PowerReportRow,
     type BuildSummary,
     type GearOptParams,
@@ -201,11 +203,43 @@
   let treeStale = $state(false);
   async function allocate(id: number) {
     await build.allocNode(id);
-    treeStale = true;
+    treeStale = planStale = true;
   }
   async function remove(id: number) {
     await build.deallocNode(id);
-    treeStale = true;
+    treeStale = planStale = true;
+  }
+
+  // Plan: the best way to spend a number of points, pick by pick.
+  let planBudget = $state<number | null>(null);
+  let planRunning = $state(false);
+  let plan = $state<PointPlan | null>(null);
+  let planError = $state<string | null>(null);
+  let planStale = $state(false);
+  const unspent = $derived(summary ? Math.max(0, summary.pointsAvailableMax - summary.mainTreePointsUsed) : 0);
+
+  async function planTree() {
+    if (planRunning || !build.loaded) return;
+    const budget = Math.round(planBudget ?? (unspent || 10));
+    if (!(budget >= 1)) return;
+    planRunning = true;
+    planError = null;
+    try {
+      plan = (await planPointsParallel(treeStat, Math.min(budget, 120))).result;
+      planStale = false;
+    } catch (e) {
+      planError = String(e);
+    } finally {
+      planRunning = false;
+    }
+  }
+
+  async function applyPlan() {
+    if (!plan) return;
+    for (const p of plan.picks) {
+      if (!(await build.allocNode(p.id))) break;
+    }
+    planStale = treeStale = true;
   }
   const fmtGain = (v: number) => (Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : (Math.round(v * 10) / 10).toString());
 </script>
@@ -359,19 +393,57 @@
         <span class="label">Stat</span>
         <div class="seg" role="radiogroup">
           {#each TREE_STATS as [id, label]}
-            <button class:on={treeStat === id} onclick={() => (treeStat = id)} disabled={treeRunning}>{label}</button>
+            <button class:on={treeStat === id} onclick={() => (treeStat = id)} disabled={treeRunning || planRunning}>{label}</button>
           {/each}
         </div>
       </div>
       <div class="ctl run">
-        <button class="btn sm primary" onclick={scanTree} disabled={treeRunning || !build.loaded}>{treeRunning ? "Scanning…" : "Scan"}</button>
+        <button class="btn sm primary" onclick={scanTree} disabled={treeRunning || planRunning || !build.loaded}>{treeRunning ? "Scanning…" : "Scan"}</button>
         <label class="chk small"><input type="checkbox" bind:checked={notablesOnly} disabled={treeRunning} /> notables only</label>
         {#if summary}
           <span class="dim small"><span class="mono">{Math.max(0, summary.pointsAvailableMax - summary.mainTreePointsUsed)}</span> points unspent</span>
         {/if}
       </div>
+      <div class="ctl run">
+        <span class="label">Plan</span>
+        <input
+          class="input sm num budget"
+          type="number"
+          min="1"
+          max="120"
+          placeholder={String(unspent || 10)}
+          bind:value={planBudget}
+          disabled={planRunning}
+          title="How many passive points to spend"
+        />
+        <span class="dim small">points</span>
+        <button class="btn sm" onclick={planTree} disabled={planRunning || treeRunning || !build.loaded}>{planRunning ? "Planning…" : "Plan"}</button>
+      </div>
       {#if treeError}<div class="err small">{treeError}</div>{/if}
+      {#if planError}<div class="err small">{planError}</div>{/if}
     </div>
+    {#if plan}
+      <div class="results">
+        <div class="ghead">
+          <span>Plan · <span class="mono">{plan.spent}</span> points · <span class="mono up">+{fmtGain(plan.total)}</span> {plan.label}</span>
+          <span class="dim">{Math.round(plan.ms / 100) / 10}s</span>
+          {#if planStale}<span class="warn">tree changed, plan again</span>{/if}
+          <button class="btn sm primary" onclick={applyPlan} disabled={build.busy > 0 || planStale || plan.picks.length === 0}>Allocate all</button>
+        </div>
+        {#if plan.picks.length === 0}
+          <div class="dim small pad">No node within {plan.budget} points raises {plan.label}.</div>
+        {/if}
+        {#each plan.picks as p, i (p.id)}
+          <div class="node">
+            <span class="nname" title={p.name ?? ""}><span class="dim mono">{i + 1}</span> {p.name}</span>
+            <span class="ntype dim small">{p.type}</span>
+            <span class="ngain mono up">+{fmtGain(p.gain)}</span>
+            <span class="nnote dim small"><span class="mono">{p.cost}</span> {p.cost === 1 ? "point" : "points"}</span>
+            <span></span>
+          </div>
+        {/each}
+      </div>
+    {/if}
     {#if treeRows}
       <div class="results">
         <div class="ghead"><span>Best to add · {treeRows.stat} per point</span><span class="dim">{Math.round(treeRows.ms / 100) / 10}s</span>{#if treeStale}<span class="warn">tree changed, scan again</span>{/if}</div>
@@ -541,7 +613,8 @@
     color: var(--fg-0);
     background: var(--bg-3);
   }
-  .ilvl {
+  .ilvl,
+  .budget {
     width: 64px;
   }
   .chips {

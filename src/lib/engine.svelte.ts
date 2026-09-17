@@ -150,6 +150,32 @@ export function powerScanParallel(stat: string | null, maxDepth: number | null):
   return invoke<{ result: TreePower; elapsed_ms: number }>("power_scan_parallel", { stat, maxDepth });
 }
 
+export interface PointPlanPick {
+  id: number;
+  name: string | null;
+  type: string | null;
+  /** Points this pick allocates, travel nodes included. */
+  cost: number;
+  /** Gain measured from the tree the earlier picks leave. */
+  gain: number;
+  path: number[];
+}
+
+export interface PointPlan {
+  stat: string;
+  label: string;
+  budget: number;
+  spent: number;
+  total: number;
+  picks: PointPlanPick[];
+  ms: number;
+}
+
+/** Plan how to spend `budget` passive points for one stat. Leaves the build unchanged. */
+export function planPointsParallel(stat: string, budget: number): Promise<{ result: PointPlan; elapsed_ms: number }> {
+  return invoke<{ result: PointPlan; elapsed_ms: number }>("plan_points_parallel", { stat, budget });
+}
+
 /** Warm the gem DPS cache for a group across the pool; best effort. */
 export function gemDpsParallel(groupIndex: number): Promise<{ result: unknown; elapsed_ms: number }> {
   return invoke<{ result: unknown; elapsed_ms: number }>("gem_dps_parallel", { groupIndex });

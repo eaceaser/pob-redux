@@ -131,6 +131,28 @@ impl EnginePool {
         self.workers()?.0.iter().map(|w| w.eval(code)).collect()
     }
 
+    /// Call `method` on every worker at once, for a change all of them must
+    /// make. Results come back in worker order.
+    pub fn call_all(&self, method: &str, params: Value) -> Result<Vec<Value>> {
+        let (ws, _) = self.workers()?;
+        std::thread::scope(|s| {
+            let handles: Vec<_> = ws
+                .iter()
+                .map(|w| {
+                    let params = params.clone();
+                    s.spawn(move || w.call(method, params).map(|o| o.result))
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(Error::NotRunning("worker panicked".into())))).collect()
+        })
+    }
+
+    /// Mark the workers as holding an unknown build, after a caller changed
+    /// them directly, so the next sync loads the build in full.
+    pub fn forget_sync(&self) {
+        *self.synced_xml.lock().unwrap() = None;
+    }
+
     /// Full garbage collection on every booted worker, for the idle moment
     /// after a scan. Each worker's garbage is what keeps the process large
     /// once the optimiser stops, and the allocator only returns memory that
@@ -337,4 +359,105 @@ pub fn jewel_scan(engine: &EngineHandle, pool: &EnginePool, params: Value) -> Re
         results = pool.scatter("score_jewel_variants", chunks)?;
     }
     Ok(engine.call("jewel_finish", serde_json::json!({ "results": results }))?.result)
+}
+
+/// Candidates the planner re-scores each round, taken from the power scan.
+const PLAN_CANDIDATES: usize = 48;
+
+/// Spend `budget` passive points on the main engine's build for one stat.
+///
+/// A node power scan picks the candidates: notables and small passives, since a
+/// keystone changes how a build works rather than adding to one stat. Each
+/// round every worker holds the picks made so far, scores the candidates from
+/// that state (PoB re-paths them, so shared travel nodes stop counting), and
+/// the best gain per point is allocated on every worker. Each gain is measured against the real tree
+/// at that point, so the total is exact rather than a sum of independent
+/// estimates. The workers end up holding the planned tree, so the pool
+/// reloads the build on its next sync.
+pub fn plan_points(engine: &EngineHandle, pool: &EnginePool, stat: &str, budget: u32) -> Result<Value> {
+    let t0 = Instant::now();
+    let scan = power_scan(engine, pool, Some(stat), Some(budget as f64))?;
+    let label = scan.get("label").cloned().unwrap_or(Value::Null);
+    let report = scan.get("report").and_then(Value::as_array).cloned().unwrap_or_default();
+
+    let mut rows: Vec<&Value> = report
+        .iter()
+        .filter(|r| {
+            let ty = r.get("type").and_then(Value::as_str).unwrap_or("");
+            r.get("allocated").and_then(Value::as_bool) != Some(true)
+                && r.get("pathPower").and_then(Value::as_f64).unwrap_or(0.0) > 0.0
+                && r.get("pathDist").and_then(Value::as_f64).unwrap_or(f64::MAX) <= budget as f64
+                && !matches!(ty, "Keystone" | "Mastery" | "ClassStart" | "AscendClassStart")
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        let pa = a.get("pathPower").and_then(Value::as_f64).unwrap_or(0.0);
+        let pb = b.get("pathPower").and_then(Value::as_f64).unwrap_or(0.0);
+        pb.partial_cmp(&pa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    rows.truncate(PLAN_CANDIDATES);
+    // Lua numbers can arrive as floats; node ids are compared as integers.
+    let node_id = |v: Option<&Value>| v.and_then(Value::as_f64).map(|f| f as i64);
+    let mut candidates: Vec<i64> = rows.iter().filter_map(|r| node_id(r.get("id"))).collect();
+    let describe = |id: i64| report.iter().find(|r| node_id(r.get("id")) == Some(id));
+
+    let planned = (|| -> Result<(Vec<Value>, f64, i64)> {
+        let mut remaining = budget as i64;
+        let mut picks = Vec::new();
+        let mut total = 0.0;
+        while remaining > 0 && !candidates.is_empty() {
+            let chunks: Vec<Value> = chunk_ranges(candidates.len(), 6)
+                .into_iter()
+                .map(|(a, b)| serde_json::json!({ "ids": &candidates[a..b], "stat": stat }))
+                .collect();
+            let mut best: Option<(i64, f64, i64)> = None;
+            for r in pool.scatter("score_nodes", chunks)? {
+                for n in r.get("nodes").and_then(Value::as_array).into_iter().flatten() {
+                    let (Some(id), Some(gain), Some(dist)) = (node_id(n.get("id")), n.get("p").and_then(Value::as_f64), node_id(n.get("dist"))) else { continue };
+                    if n.get("rank").and_then(Value::as_bool) != Some(true) || gain <= 0.0 || dist < 1 || dist > remaining {
+                        continue;
+                    }
+                    let better = match &best {
+                        Some((_, g, d)) => gain / dist as f64 > g / *d as f64,
+                        None => true,
+                    };
+                    if better {
+                        best = Some((id, gain, dist));
+                    }
+                }
+            }
+            let Some((id, gain, dist)) = best else { break };
+            let added = pool.call_all("plan_alloc", serde_json::json!({ "id": id }))?;
+            let added: Vec<i64> = added
+                .first()
+                .and_then(|a| a.get("added"))
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|v| node_id(Some(v))).collect())
+                .unwrap_or_default();
+            candidates.retain(|c| !added.contains(c) && *c != id);
+            let row = describe(id);
+            picks.push(serde_json::json!({
+                "id": id,
+                "name": row.and_then(|r| r.get("name")).cloned().unwrap_or(Value::Null),
+                "type": row.and_then(|r| r.get("type")).cloned().unwrap_or(Value::Null),
+                "cost": dist,
+                "gain": gain,
+                "path": added,
+            }));
+            total += gain;
+            remaining -= dist;
+        }
+        Ok((picks, total, remaining))
+    })();
+    pool.forget_sync();
+    let (picks, total, remaining) = planned?;
+    Ok(serde_json::json!({
+        "stat": stat,
+        "label": label,
+        "budget": budget,
+        "spent": budget as i64 - remaining,
+        "total": total,
+        "picks": picks,
+        "ms": t0.elapsed().as_secs_f64() * 1000.0,
+    }))
 }

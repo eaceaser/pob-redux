@@ -173,6 +173,21 @@ async fn power_scan_parallel(
     .map_err(|e| e.to_string())?
 }
 
+/// Spend a passive point budget for one stat, each pick scored across the pool
+/// from the tree the earlier picks leave. The build itself is not changed.
+#[tauri::command]
+async fn plan_points_parallel(state: State<'_, AppState>, stat: String, budget: u32) -> Result<CallResult, String> {
+    let engine = state.engine();
+    let pool = state.pool();
+    tauri::async_runtime::spawn_blocking(move || {
+        let t0 = std::time::Instant::now();
+        let result = pob_engine::pool::plan_points(&engine, &pool, &stat, budget.clamp(1, 120)).map_err(|e| e.to_string())?;
+        Ok(CallResult { result, elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0 })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Fill the gem DPS cache for a socket group across the pool so the next
 /// DPS-sorted gem search is instant. Best effort: errors leave the
 /// sequential path in place.
@@ -1079,6 +1094,7 @@ pub fn run() {
             pool_trim,
             pool_release,
             power_scan_parallel,
+            plan_points_parallel,
             gem_dps_parallel,
             app_paths,
             update_method,

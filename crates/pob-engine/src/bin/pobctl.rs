@@ -76,6 +76,17 @@ enum Cmd {
         #[arg(long, default_value_t = 4)]
         pool: usize,
     },
+    /// Point planner: spend a budget on the tree across the pool, then check the
+    /// summed round gains against one calc that adds every planned node at once.
+    Plan {
+        file: PathBuf,
+        #[arg(long, default_value = "Life")]
+        stat: String,
+        #[arg(long, default_value_t = 10)]
+        budget: u32,
+        #[arg(long, default_value_t = 4)]
+        pool: usize,
+    },
     /// Unique jewel suggestions: one engine vs the worker pool, with an equality check.
     Jewels {
         file: PathBuf,
@@ -88,6 +99,44 @@ enum Cmd {
         #[arg(long)]
         no_sequential: bool,
     },
+}
+
+fn plan_cmd(cfg: EngineConfig, file: PathBuf, stat: String, budget: u32, pool_size: usize) -> Result<Value, pob_engine::Error> {
+    use pob_engine::{EngineHandle, EnginePool};
+    let engine = EngineHandle::spawn(cfg.clone());
+    let pool = EnginePool::new(cfg, pool_size);
+    pool.warm();
+    engine.wait_ready()?;
+    engine.call("load_build_file", json!({ "path": file.to_string_lossy() }))?;
+    let plan = pob_engine::pool::plan_points(&engine, &pool, &stat, budget)?;
+    let ids: Vec<String> = plan
+        .get("picks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|p| p.get("path").and_then(Value::as_array).cloned().unwrap_or_default())
+        .filter_map(|v| v.as_f64().map(|f| (f as i64).to_string()))
+        .collect();
+    let code = format!(
+        r#"local build = main.modes["BUILD"]
+local calcsTab = build.calcsTab
+local ps
+for _, s in ipairs(data.powerStatList) do if s.stat == "{stat}" then ps = s end end
+local mode = build.viewMode
+build.viewMode = "CALCS"
+local calcFunc, calcBase = calcsTab:GetMiscCalculator()
+local set = {{}}
+for _, id in ipairs({{ {ids} }}) do set[build.spec.nodes[id]] = true end
+local v = calcsTab:CalculatePowerStat(ps, calcFunc({{ addNodes = set }}), calcBase)
+build.viewMode = mode
+return {{ combined = v }}"#,
+        ids = ids.join(", ")
+    );
+    let check = engine.eval(&code)?;
+    let total = plan.get("total").and_then(Value::as_f64).unwrap_or(0.0);
+    let combined = check.get("combined").and_then(Value::as_f64).unwrap_or(f64::NAN);
+    eprintln!("plan: {:.0} ms, total {total:.3}, one-calc check {combined:.3}", plan.get("ms").and_then(Value::as_f64).unwrap_or(0.0));
+    Ok(json!({ "plan": plan, "combined_check": combined, "difference": combined - total }))
 }
 
 fn jewels_cmd(cfg: EngineConfig, file: PathBuf, aim: Option<String>, pool_size: usize, no_sequential: bool) -> Result<Value, pob_engine::Error> {
@@ -338,6 +387,10 @@ fn main() {
             let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
             Some(jewels_cmd(cfg, file.clone(), aim.clone(), *pool, *no_sequential))
         }
+        Cmd::Plan { file, stat, budget, pool } => {
+            let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
+            Some(plan_cmd(cfg, file.clone(), stat.clone(), *budget, *pool))
+        }
         _ => None,
     };
     if let Some(out) = pooled {
@@ -409,7 +462,7 @@ fn main() {
                 Ok(json!({ "iterations": iterations, "avg_ms": avg, "min_ms": min, "boot_ms": engine.boot_ms }))
             }),
         Cmd::Eval { code } => engine.eval(&code),
-        Cmd::Power { .. } | Cmd::Gems { .. } | Cmd::Jewels { .. } => unreachable!("handled above"),
+        Cmd::Power { .. } | Cmd::Gems { .. } | Cmd::Jewels { .. } | Cmd::Plan { .. } => unreachable!("handled above"),
     };
 
     match out {

@@ -1855,6 +1855,23 @@ M.score_nodes = function(p)
 	return withoutFullDPS(scoreNodes, p)
 end
 
+-- Point planner, worker side: allocate one node along PoB's own path and
+-- recalculate, so the next scoring round starts from the new tree. Never
+-- called on the main engine, whose tree stays the user's.
+M.plan_alloc = function(p)
+	ensureBuild()
+	local node = requireNode(p)
+	local before = {}
+	for id in pairs(build.spec.allocNodes) do before[id] = true end
+	build.spec:AllocNode(node)
+	refresh()
+	local added = array({})
+	for id in pairs(build.spec.allocNodes) do
+		if not before[id] then added[#added + 1] = id end
+	end
+	return { added = added }
+end
+
 M.tree_power_apply = function(p)
 	ensureBuild()
 	local calcsTab = build.calcsTab
