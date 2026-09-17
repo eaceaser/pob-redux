@@ -1,5 +1,6 @@
-import { engine, status as engineStatus, appPaths, type EngineStatus, type AppPaths } from "$lib/engine.svelte";
-import { build } from "$lib/state/build.svelte";
+import { engine, status as engineStatus, appPaths, sessionInfo, writeTextFile, type EngineStatus, type AppPaths } from "$lib/engine.svelte";
+import { build, autosaveKey } from "$lib/state/build.svelte";
+import { confirm } from "$lib/state/confirm.svelte";
 import { appOptions } from "$lib/state/options.svelte";
 import { mcp } from "$lib/state/mcp.svelte";
 import { chat, type Mode } from "$lib/state/chat.svelte";
@@ -62,11 +63,17 @@ class AppStore {
       const raws: string[] = JSON.parse(localStorage.getItem("pob-redux:shared-items") ?? "[]");
       for (const raw of raws) await engine.addSharedItem({ raw }).catch(() => {});
     } catch {}
+    const session = first ? await sessionInfo().catch(() => null) : null;
     const linked = first ? await links.init().catch(() => false) : false;
     if (linked) {
       // the build from the link the app was opened with is loaded
     } else if (first && this.paths?.open_on_start) {
       await build.loadFile(this.paths.open_on_start);
+    } else if (session?.safeMode) {
+      await build.run(async () => {}, { sync: true });
+      build.say("Safe mode: the last build was not reopened");
+    } else if (session?.uncleanExit && (await this.declineRecovery())) {
+      await build.run(async () => {}, { sync: true });
     } else if (!(await build.reopenLast())) {
       await build.run(async () => {}, { sync: true });
     }
@@ -81,6 +88,38 @@ class AppStore {
         if (!this.paths.chat_ask.startsWith("/")) void chat.send();
       }
     }
+  }
+
+  /**
+   * After a crash, ask before reopening the build that was open, in case that
+   * build is what brought the app down. Declining keeps a copy in the builds
+   * folder. True when the user declined.
+   */
+  private async declineRecovery(): Promise<boolean> {
+    let saved: { name?: string; xml?: string } | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(autosaveKey()) ?? "null");
+    } catch {}
+    if (!saved?.xml) return false;
+    const name = saved.name || "build";
+    const reopen = await confirm.ask({
+      title: "Reopen the last build?",
+      message: `PoB Redux closed unexpectedly while ${saved.name ? `"${saved.name}"` : "a build"} was open. If reopening it closes the app again, choose Start empty; the build is then saved to your builds folder as a recovered copy.`,
+      ok: "Reopen",
+      cancel: "Start empty",
+    });
+    if (reopen) return false;
+    const dir = this.paths?.builds_dir;
+    if (dir) {
+      const d = new Date();
+      const two = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}-${two(d.getMinutes())}`;
+      const file = `Recovered - ${name.replace(/[\\/:*?"<>|]/g, "")} ${stamp}.xml`;
+      await writeTextFile(`${dir}/${file}`, saved.xml)
+        .then(() => build.say(`Saved the last build as ${file}`))
+        .catch((e) => (build.error = `Could not save the recovered build: ${String(e)}`));
+    }
+    return true;
   }
 }
 

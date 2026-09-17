@@ -210,6 +210,21 @@ export function resolveMobalytics(url: string): Promise<MobalyticsBuild> {
   return invoke<MobalyticsBuild>("mobalytics_resolve", { url });
 }
 
+/** How the last run ended; `safeMode` skips reopening its build. */
+export function sessionInfo(): Promise<{ uncleanExit: boolean; safeMode: boolean }> {
+  return invoke<{ uncleanExit: boolean; safeMode: boolean }>("session_info");
+}
+
+/** Write a diagnostics report (app details and recent logs, secrets masked) to `path`. */
+export function exportDiagnostics(path: string): Promise<void> {
+  return invoke<void>("export_diagnostics", { path });
+}
+
+/** Show the app log folder in the file manager. */
+export function revealLogs(): Promise<string> {
+  return invoke<string>("reveal_logs");
+}
+
 export interface MaxrollPobLink {
   name: string;
   /** The planner the link came from, or the guide text. */

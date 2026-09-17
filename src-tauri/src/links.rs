@@ -71,6 +71,14 @@ fn handoff_file() -> PathBuf {
     std::env::temp_dir().join("pob-redux-links.json")
 }
 
+/// Whether another instance is listening for links, i.e. still running.
+pub fn instance_running() -> bool {
+    let Ok(text) = std::fs::read_to_string(handoff_file()) else { return false };
+    let Ok(info) = serde_json::from_str::<serde_json::Value>(&text) else { return false };
+    let Some(port) = info.get("port").and_then(|v| v.as_u64()) else { return false };
+    TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port as u16)), Duration::from_millis(300)).is_ok()
+}
+
 /// Give `link` to a running instance. True when one accepted it.
 pub fn hand_off(raw: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(handoff_file()) else { return false };

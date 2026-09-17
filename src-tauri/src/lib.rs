@@ -9,6 +9,7 @@ mod sites;
 mod mobalytics;
 mod maxroll;
 mod links;
+mod diagnostics;
 mod game;
 
 use std::sync::Arc;
@@ -40,6 +41,84 @@ pub(crate) struct AppState {
     first_run: std::sync::atomic::AtomicBool,
     /// A pob:// or pob2:// link waiting for the frontend to open.
     pending_link: std::sync::Mutex<Option<links::Link>>,
+    session: SessionInfo,
+    /// Cleared once the page has asked, so a reload does not offer recovery twice.
+    recovery_pending: std::sync::atomic::AtomicBool,
+}
+
+/// How the last run ended and whether to skip reopening its build.
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+struct SessionInfo {
+    /// The last run did not exit cleanly.
+    unclean_exit: bool,
+    /// `--safe-mode` or POB_REDUX_SAFE_MODE: start without reopening the last build.
+    safe_mode: bool,
+}
+
+fn session_marker(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("session.lock"))
+}
+
+/// A marker file lives for as long as the app runs, so one found at start means
+/// the last run crashed or was killed. A running instance holds one too, so it
+/// only counts when no other instance answers.
+fn begin_session(app: &tauri::AppHandle) -> SessionInfo {
+    let safe_mode = std::env::args().any(|a| a == "--safe-mode") || std::env::var_os("POB_REDUX_SAFE_MODE").is_some();
+    let Some(marker) = session_marker(app) else {
+        return SessionInfo { unclean_exit: false, safe_mode };
+    };
+    let unclean_exit = marker.exists() && !links::instance_running();
+    if let Some(dir) = marker.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&marker, std::process::id().to_string());
+    if unclean_exit {
+        log::warn!("session: the last run did not exit cleanly");
+    }
+    SessionInfo { unclean_exit, safe_mode }
+}
+
+/// The crash flag is reported once per launch; safe mode holds for the whole run.
+#[tauri::command]
+fn session_info(state: State<'_, AppState>) -> SessionInfo {
+    SessionInfo {
+        unclean_exit: state.recovery_pending.swap(false, std::sync::atomic::Ordering::Relaxed),
+        safe_mode: state.session.safe_mode,
+    }
+}
+
+/// Write a diagnostics report to `path` for a bug report.
+#[tauri::command]
+async fn export_diagnostics(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let engine = state.engine().status();
+    let pool = state.pool().status();
+    let pob = std::fs::read_to_string(state.pob_root().join("SYNC.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .map(|v| {
+            let field = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("?").to_string();
+            format!("{} ({})", field("upstream_version"), field("upstream_commit").chars().take(12).collect::<String>())
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let mcp = state.mcp.status();
+    let facts: Vec<(&str, String)> = vec![
+        ("Version", app.package_info().version.to_string()),
+        ("System", format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)),
+        ("Game", state.game().id().to_string()),
+        ("Path of Building", pob),
+        ("Engine", format!("{:?}, boot {} ms{}", engine.state, engine.boot_ms.unwrap_or(0), engine.message.map(|m| format!(", {m}")).unwrap_or_default())),
+        ("Worker pool", format!("{} of {} ready", pool.ready, pool.size)),
+        ("Updates", update_method().to_string()),
+        ("MCP server", if mcp.running { format!("on, port {}", mcp.port) } else { "off".into() }),
+        ("Last run ended cleanly", if state.session.unclean_exit { "no".into() } else { "yes".into() }),
+        ("Safe mode", if state.session.safe_mode { "yes".into() } else { "no".into() }),
+    ];
+    let mut secrets = ai::stored_keys(&app);
+    secrets.extend(mcp::saved_token(&app));
+    tauri::async_runtime::spawn_blocking(move || diagnostics::write_report(&app, &path, &facts, &secrets))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 impl AppState {
@@ -1114,15 +1193,16 @@ fn take_open_link(state: State<'_, AppState>) -> Option<links::Link> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,pob=warn")).init();
     // A link clicked while an instance runs goes to that instance, and this process stops.
     if let Some(raw) = std::env::args().skip(1).find(|a| links::parse(a).is_some()) {
         if links::hand_off(&raw) {
             return;
         }
     }
+    diagnostics::install_panic_hook();
 
     tauri::Builder::default()
+        .plugin(diagnostics::log_plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1140,12 +1220,15 @@ pub fn run() {
             log::info!("game: {}", game.id());
             log::info!("user dir: {}", user_dir.display());
             let rt = boot_runtime(handle, game, &user_dir);
+            let session = begin_session(handle);
             app.manage(AppState {
                 rt: std::sync::RwLock::new(rt),
                 user_dir,
                 mcp: mcp::McpState::new(),
                 first_run: std::sync::atomic::AtomicBool::new(first_run),
                 pending_link: std::sync::Mutex::new(link),
+                recovery_pending: std::sync::atomic::AtomicBool::new(session.unclean_exit),
+                session,
             });
             watch_links(app.handle());
             spawn_pool_reaper(app.handle().clone());
@@ -1175,6 +1258,10 @@ pub fn run() {
             app_paths,
             update_method,
             take_open_link,
+            session_info,
+            export_diagnostics,
+            diagnostics::log_frontend,
+            diagnostics::reveal_logs,
             game_status,
             set_game,
             build_file_game,
@@ -1212,6 +1299,13 @@ pub fn run() {
             ai::ai_warm_model,
             ai::ai_chat_stream,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Some(marker) = session_marker(app) {
+                    let _ = std::fs::remove_file(marker);
+                }
+            }
+        });
 }

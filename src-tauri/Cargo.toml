@@ -32,11 +32,12 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
-env_logger.workspace = true
 walkdir.workspace = true
 rmcp = { version = "3.2", default-features = false, features = ["server", "transport-streamable-http-server"] }
 axum = "0.8"
 getrandom = "0.3"
+regex = "1"
+tauri-plugin-log = "2"
 tokio = { version = "1", features = ["net", "rt", "sync", "macros"] }
 
 # The updater has no mobile target, so it is scoped to desktop.

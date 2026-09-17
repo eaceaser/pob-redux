@@ -145,6 +145,11 @@ fn stored_key(app: &AppHandle, id: &str) -> Option<String> {
     key_file::read(app, id).or_else(|| entry(id).ok().and_then(|e| e.get_password().ok()))
 }
 
+/// Every stored provider key, for masking in diagnostics reports.
+pub(crate) fn stored_keys(app: &AppHandle) -> Vec<String> {
+    PROVIDERS.iter().filter_map(|p| stored_key(app, p.id)).collect()
+}
+
 /// Windows Credential Manager can refuse a write outright (error 8 when its
 /// store is full). DPAPI encrypts for the same Windows account that Credential
 /// Manager does, without the store's limits.

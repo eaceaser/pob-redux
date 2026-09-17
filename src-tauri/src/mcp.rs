@@ -66,6 +66,12 @@ fn token_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("mcp-token"))
 }
 
+/// The saved token, if one exists, without creating it (for masking in reports).
+pub(crate) fn saved_token(app: &AppHandle) -> Option<String> {
+    let path = app.path().app_config_dir().ok()?.join("mcp-token");
+    std::fs::read_to_string(path).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
 /// The bearer token every request must carry. Written once and reused, so a
 /// client configured with it keeps working across restarts.
 fn load_or_create_token(app: &AppHandle) -> Result<String, String> {

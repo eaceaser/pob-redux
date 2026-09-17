@@ -6,6 +6,21 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { appUpdate } from "$lib/state/update.svelte";
   import { ui, type Theme } from "$lib/state/ui.svelte";
+  import { save } from "@tauri-apps/plugin-dialog";
+  import { exportDiagnostics, revealLogs } from "$lib/engine.svelte";
+
+  let reportNote = $state("");
+  async function saveReport() {
+    reportNote = "";
+    try {
+      const path = await save({ defaultPath: "pob-redux-diagnostics.txt", filters: [{ name: "Text", extensions: ["txt"] }] });
+      if (!path) return;
+      await exportDiagnostics(path);
+      reportNote = "Saved";
+    } catch (e) {
+      reportNote = `Could not save: ${String(e)}`;
+    }
+  }
 
   const mcpUrl = $derived(mcp.status?.running ? mcp.status.url : null);
   const mcpToken = $derived(mcp.status?.token ?? "");
@@ -232,6 +247,22 @@
             >
               Check for updates
             </button>
+          </div>
+        </div>
+      </div>
+      <div class="shead">
+        <span class="label">Diagnostics</span>
+      </div>
+      <div class="rows">
+        <div class="opt">
+          <span>
+            Bug report file
+            <span class="hint">A text file with app details and recent logs, for attaching to an issue. Paths, tokens and API keys are masked.</span>
+          </span>
+          <div class="row">
+            {#if reportNote}<span class="dim">{reportNote}</span>{/if}
+            <button class="btn sm ghost" onclick={() => revealLogs().catch((e) => (reportNote = String(e)))}>Log folder</button>
+            <button class="btn sm ghost" onclick={saveReport}>Save report…</button>
           </div>
         </div>
       </div>

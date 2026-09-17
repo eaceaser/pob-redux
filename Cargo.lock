@@ -3448,7 +3448,6 @@ name = "pob-redux"
 version = "0.2.17"
 dependencies = [
  "axum",
- "env_logger",
  "getrandom 0.3.4",
  "keyring",
  "libmimalloc-sys",
