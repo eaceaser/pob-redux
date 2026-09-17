@@ -19,7 +19,7 @@
     NORMAL: { art: "white", height: 38, side: 32, textY: 6, color: "var(--c-normal)" },
   };
 
-  const asset = (name: string) => `url("${convertFileSrc(`Assets/${name}`, "pob")}")`;
+  const asset = (name: string) => `url("${convertFileSrc(`Assets/${name}`, "pobasset")}")`;
 
   const gem = $derived(header === "GEM");
   const hdr = $derived(gem ? null : (ITEM_HEADERS[header] ?? ITEM_HEADERS.NORMAL));

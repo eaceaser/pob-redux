@@ -24,7 +24,7 @@ interface Slot {
 }
 
 /**
- * Lazily loads sprite sheets through the app's `pob://` protocol and draws
+ * Lazily loads sprite sheets through the app's `pobasset://` protocol and draws
  * named assets with PoB's `DrawAsset` semantics (centre + half extents).
  */
 export class AssetStore {
@@ -37,7 +37,7 @@ export class AssetStore {
 
   static async load(version: string, onReady: () => void): Promise<AssetStore | null> {
     try {
-      const res = await fetch(convertFileSrc(`TreeData/${version}/web/manifest.json`, "pob"));
+      const res = await fetch(convertFileSrc(`TreeData/${version}/web/manifest.json`, "pobasset"));
       if (!res.ok) return null;
       return new AssetStore((await res.json()) as AssetManifest, onReady);
     } catch {
@@ -67,7 +67,7 @@ export class AssetStore {
       img.onerror = () => {
         s!.failed = true;
       };
-      img.src = convertFileSrc(file, "pob");
+      img.src = convertFileSrc(file, "pobasset");
     }
     return s.ready ? s.img : null;
   }

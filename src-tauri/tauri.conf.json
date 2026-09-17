@@ -10,6 +10,9 @@
     "frontendDist": "../dist"
   },
   "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["pob", "pob2"] }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY1QUM2QjRGNTJDMTFCMjgKUldRb0c4RlNUMnVzWll6M1kycVN6UHhpQ3VmSVo2Z0htc0xYVCtXcUhLM3dtNUtqWGN3OWR0b2sK",
       "endpoints": ["https://github.com/juddisjudd/pob-redux/releases/latest/download/latest.json"],
@@ -30,7 +33,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: pob: http://pob.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost pob: http://pob.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: pobasset: http://pobasset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost pobasset: http://pobasset.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {

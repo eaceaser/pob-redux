@@ -42,6 +42,7 @@ tokio = { version = "1", features = ["net", "rt", "sync", "macros"] }
 # The updater has no mobile target, so it is scoped to desktop.
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
+tauri-plugin-deep-link = "2"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }

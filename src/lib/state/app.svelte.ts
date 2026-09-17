@@ -5,6 +5,7 @@ import { mcp } from "$lib/state/mcp.svelte";
 import { chat, type Mode } from "$lib/state/chat.svelte";
 import { appUpdate } from "$lib/state/update.svelte";
 import { game } from "$lib/state/game.svelte";
+import { links } from "$lib/state/links.svelte";
 
 /**
  * The engine's boot state and the app's boot sequence. `boot()` runs once at
@@ -61,7 +62,10 @@ class AppStore {
       const raws: string[] = JSON.parse(localStorage.getItem("pob-redux:shared-items") ?? "[]");
       for (const raw of raws) await engine.addSharedItem({ raw }).catch(() => {});
     } catch {}
-    if (first && this.paths?.open_on_start) {
+    const linked = first ? await links.init().catch(() => false) : false;
+    if (linked) {
+      // the build from the link the app was opened with is loaded
+    } else if (first && this.paths?.open_on_start) {
       await build.loadFile(this.paths.open_on_start);
     } else if (!(await build.reopenLast())) {
       await build.run(async () => {}, { sync: true });

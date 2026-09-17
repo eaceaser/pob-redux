@@ -8,6 +8,7 @@ mod ai;
 mod sites;
 mod mobalytics;
 mod maxroll;
+mod links;
 mod game;
 
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use libmimalloc_sys as _;
 use pob_engine::{EngineConfig, EngineHandle, EnginePool, EngineStatus, PoolStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use game::Game;
 
@@ -37,6 +38,8 @@ pub(crate) struct AppState {
     pub(crate) mcp: mcp::McpState,
     /// True until a game has been chosen, inferred from a file, or set by env.
     first_run: std::sync::atomic::AtomicBool,
+    /// A pob:// or pob2:// link waiting for the frontend to open.
+    pending_link: std::sync::Mutex<Option<links::Link>>,
 }
 
 impl AppState {
@@ -896,12 +899,15 @@ fn available_games(app: &tauri::AppHandle) -> Vec<Game> {
     Game::ALL.into_iter().filter(|g| find_pob_root(app, *g).is_some()).collect()
 }
 
-/// The game to boot: `POB_REDUX_GAME`, then the build file given on the
-/// command line, then the saved choice. With none of those the app boots
+/// The game to boot: `POB_REDUX_GAME`, then the link or build file the app
+/// was opened with, then the saved choice. With none of those the app boots
 /// PoE2 and asks (`first_run`).
-fn startup_game(app: &tauri::AppHandle) -> (Game, bool) {
+fn startup_game(app: &tauri::AppHandle, link: Option<&links::Link>) -> (Game, bool) {
     if let Some(g) = std::env::var("POB_REDUX_GAME").ok().and_then(|v| Game::from_id(&v)) {
         return (g, false);
+    }
+    if let Some(link) = link {
+        return (link.game, false);
     }
     if let Some(g) = open_on_start().and_then(|p| Game::of_build_xml(&read_head(Path::new(&p), 4096))) {
         return (g, false);
@@ -1012,7 +1018,7 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Serves files from the vendored PoB directory to the webview as
-/// `pob://localhost/<relative path>` (Windows: `http://pob.localhost/...`).
+/// `pobasset://localhost/<relative path>` (Windows: `http://pobasset.localhost/...`).
 /// Used for tree sprite sheets, which are too large to ship over IPC.
 fn serve_pob_asset(
     ctx: tauri::UriSchemeContext<'_, tauri::Wry>,
@@ -1047,22 +1053,90 @@ fn serve_pob_asset(
     }
 }
 
+/// The link this launch was opened with: a command-line argument on Windows and
+/// Linux, the deep-link plugin's launch URL on macOS.
+fn start_link(app: &tauri::AppHandle) -> Option<links::Link> {
+    if let Some(link) = links::from_args() {
+        return Some(link);
+    }
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        if let Ok(Some(urls)) = app.deep_link().get_current() {
+            return urls.iter().find_map(|u| links::parse(u.as_str()));
+        }
+    }
+    None
+}
+
+/// Queue a link for the page, bring the window forward and tell the page.
+fn deliver_link(app: &tauri::AppHandle, link: links::Link) {
+    log::info!("link: {}", link.url);
+    *app.state::<AppState>().pending_link.lock().unwrap() = Some(link);
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    let _ = app.emit("open-link", ());
+}
+
+/// Links that arrive while the app runs: hand-offs from later processes and,
+/// on macOS, the system's open-URL events.
+fn watch_links(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    links::listen(move |link| deliver_link(&handle, link));
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        // An AppImage has no installer to register the schemes.
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("APPIMAGE").is_some() {
+            if let Err(e) = app.deep_link().register_all() {
+                log::warn!("links: could not register the pob schemes: {e}");
+            }
+        }
+        let handle = app.clone();
+        app.deep_link().on_open_url(move |event| {
+            for url in event.urls() {
+                if let Some(link) = links::parse(url.as_str()) {
+                    deliver_link(&handle, link);
+                }
+            }
+        });
+    }
+}
+
+/// The link waiting to be opened, if any. Taking it clears it.
+#[tauri::command]
+fn take_open_link(state: State<'_, AppState>) -> Option<links::Link> {
+    state.pending_link.lock().unwrap().take()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,pob=warn")).init();
+    // A link clicked while an instance runs goes to that instance, and this process stops.
+    if let Some(raw) = std::env::args().skip(1).find(|a| links::parse(a).is_some()) {
+        if links::hand_off(&raw) {
+            return;
+        }
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
-        .register_uri_scheme_protocol("pob", serve_pob_asset)
+        .register_uri_scheme_protocol("pobasset", serve_pob_asset)
         .setup(|app| {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_deep_link::init())?;
             let handle = app.handle();
+            let link = start_link(handle);
             let user_dir = find_user_dir(handle);
-            let (game, first_run) = startup_game(handle);
+            let (game, first_run) = startup_game(handle, link.as_ref());
             log::info!("game: {}", game.id());
             log::info!("user dir: {}", user_dir.display());
             let rt = boot_runtime(handle, game, &user_dir);
@@ -1071,7 +1145,9 @@ pub fn run() {
                 user_dir,
                 mcp: mcp::McpState::new(),
                 first_run: std::sync::atomic::AtomicBool::new(first_run),
+                pending_link: std::sync::Mutex::new(link),
             });
+            watch_links(app.handle());
             spawn_pool_reaper(app.handle().clone());
             app.manage(ai::AiState::new(&app.handle().clone()));
             // POB_REDUX_MCP=<port> brings the MCP server up at launch (scripts, tests)
@@ -1098,6 +1174,7 @@ pub fn run() {
             gem_dps_parallel,
             app_paths,
             update_method,
+            take_open_link,
             game_status,
             set_game,
             build_file_game,
