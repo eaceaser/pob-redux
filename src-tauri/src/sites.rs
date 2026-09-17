@@ -6,7 +6,7 @@
 
 use crate::game::Game;
 
-pub const SUPPORTED: &str = "Maxroll, Mobalytics, pobb.in, poe.ninja, poe2db.tw, poedb.tw, Pastebin.com, PastebinP.com, Rentry.co";
+pub const SUPPORTED: &str = "Maxroll, Mobalytics, pobb.in, pob.codes, poe.ninja, poe2db.tw, poedb.tw, Pastebin.com, PastebinP.com, Rentry.co";
 
 /// Map a share URL to (site label, raw-code download URL).
 pub fn download_url(url: &str) -> Option<(&'static str, String)> {
@@ -28,6 +28,10 @@ pub fn download_url(url: &str) -> Option<(&'static str, String)> {
             Some(("Maxroll", format!("https://maxroll.gg/poe/api/pob/{id}")))
         }
         "pobb.in" => Some(("pobb.in", format!("https://pobb.in/pob/{path}"))),
+        "pob.codes" => {
+            let id = path.strip_prefix("b/").filter(|s| !s.is_empty())?;
+            Some(("pob.codes", format!("https://api.pob.codes/{id}/raw")))
+        }
         "poe.ninja" | "poe2.ninja" => {
             // poe.ninja/poe2/pob/<id>, poe2.ninja/pob/<id>, poe.ninja/poe1/pob/<id>, poe.ninja/pob/<id>
             let poe2 = host == "poe2.ninja" || path.starts_with("poe2/");
@@ -114,6 +118,8 @@ mod tests {
         assert_eq!(download_url("https://poe.ninja/pob/abc").unwrap().1, "https://poe.ninja/poe1/pob/raw/abc");
         assert_eq!(download_url("https://poe.ninja/poe1/pob/abc").unwrap().1, "https://poe.ninja/poe1/pob/raw/abc");
         assert_eq!(download_url("https://poedb.tw/pob/abc").unwrap().1, "https://poedb.tw/pob/abc/raw");
+        assert_eq!(download_url("https://pob.codes/b/abc").unwrap().1, "https://api.pob.codes/abc/raw");
+        assert!(download_url("https://pob.codes/").is_none());
         assert_eq!(download_url("https://pastebin.com/AbC123").unwrap().1, "https://pastebin.com/raw/AbC123");
         assert_eq!(download_url("https://rentry.co/mypaste").unwrap().1, "https://rentry.co/paste/mypaste/raw");
         assert!(download_url("https://example.com/whatever").is_none());
