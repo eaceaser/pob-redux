@@ -44,6 +44,7 @@
   const themes: [Theme, string][] = [
     ["system", "System"],
     ["dark", "Dark"],
+    ["wraeclast", "Wraeclast"],
     ["light", "Light"],
   ];
   const scalePresets = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];

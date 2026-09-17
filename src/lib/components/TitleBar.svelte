@@ -319,7 +319,7 @@
     right: 0;
     top: 0;
     height: 1px;
-    background: var(--fg-0);
+    background: var(--accent);
   }
   .tab:disabled {
     color: var(--fg-4);

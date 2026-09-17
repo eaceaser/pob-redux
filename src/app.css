@@ -56,6 +56,9 @@
   --c-spirit: #f0cf74;
   --c-currency: #cba64c;
 
+  /* Primary buttons and the active tab line; plain ink unless a theme gives it a colour. */
+  --accent: var(--fg-0);
+  --accent-fg: var(--bg-0);
   --primary-hover: #ffffff;
   --fade-off: 0.45;
   --pob-mix: 100%;
@@ -115,6 +118,60 @@
   --backdrop: rgb(40 40 50 / 0.35);
   --shadow-pop: 0 8px 30px rgba(30, 30, 40, 0.16);
   --shadow-modal: 0 12px 40px rgba(30, 30, 40, 0.2);
+}
+
+/* Wraeclast: a dim, warm ground between Dark and Light. Parchment text on
+   grey-brown with crimson for primary actions; the game colours are lifted a
+   little to hold contrast on the lighter ground. */
+:root[data-theme="wraeclast"] {
+  color-scheme: dark;
+
+  --bg-0: #2a2521;
+  --bg-1: #2f2a26;
+  --bg-2: #35302b;
+  --bg-3: #3b3530;
+  --bg-hover: #413a34;
+  --bg-active: #4a423b;
+
+  --line-0: #3f3833;
+  --line-1: #4c443d;
+  --line-2: #5f564c;
+
+  --fg-0: #f2dec4;
+  --ramp-1: #d8c8b2;
+  --ramp-2: #b5a999;
+  --ramp-3: #a1968a;
+  --ramp-4: #72695f;
+
+  --focus: #8fa8f0;
+  --ok: #74d494;
+  --warn: #e9b85c;
+  --bad: #f47a78;
+
+  --c-life: #f47373;
+  --c-mana: #7fa6ff;
+  --c-es: #6fd3e5;
+  --c-fire: #ff8a5a;
+  --c-cold: #6cc4ff;
+  --c-lightning: #ffd94f;
+  --c-chaos: #cf8cff;
+  --c-physical: #dccbab;
+  --c-unique: #d99a45;
+  --c-rare: #e8d25f;
+  --c-magic: #8f9aff;
+  --c-normal: #e0d6c8;
+  --c-gem: #52d9b8;
+  --c-spirit: #f0cf74;
+  --c-currency: #d2ae57;
+
+  --accent: #a60a27;
+  --accent-fg: #f2dec4;
+  --primary-hover: #b8122f;
+  --fade-off: 0.5;
+  --pob-mix: 100%;
+  --backdrop: rgb(13 13 13 / 0.5);
+  --shadow-pop: 0 8px 30px rgba(13, 13, 13, 0.5);
+  --shadow-modal: 0 12px 40px rgba(13, 13, 13, 0.45);
 }
 
 :root {
@@ -252,9 +309,9 @@ label:has(input:disabled) {
   cursor: default;
 }
 .btn.primary {
-  background: var(--fg-0);
-  color: var(--bg-0);
-  border-color: var(--fg-0);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
   font-weight: 500;
 }
 .btn.primary:hover {
