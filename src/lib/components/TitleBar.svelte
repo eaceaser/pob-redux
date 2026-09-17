@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import { build, type ViewId } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
@@ -10,6 +11,7 @@
   const otherGame = $derived(game.isPoe2 ? "poe1" : "poe2");
   import logo from "$lib/assets/logo.png";
 
+  const DISCORD_URL = "https://discord.pobredux.com/";
   const win = getCurrentWindow();
   let maximized = $state(false);
 
@@ -142,6 +144,9 @@
   <div class="spacer" data-tauri-drag-region></div>
 
   <div class="controls">
+    <button class="wc link" aria-label="Discord" title="PoB Redux Discord" onclick={() => openUrl(DISCORD_URL).catch(() => {})}>
+      <Icon name="discord-logo" size={16} />
+    </button>
     <button class="wc opts" aria-label="Options" title="Options (Ctrl+,)" onclick={() => (appOptions.open = true)}>
       <Icon name="gear" size={15} />
     </button>
@@ -348,6 +353,10 @@
   .wc:hover {
     background: var(--bg-hover);
     color: var(--fg-0);
+  }
+  .wc.link {
+    width: 40px;
+    cursor: pointer;
   }
   .wc.opts {
     width: 40px;
