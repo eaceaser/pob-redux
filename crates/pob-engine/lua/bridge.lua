@@ -6712,6 +6712,165 @@ M.compare_copy_item = function(p)
 	return { ok = true, slot = slotName, itemName = item.name }
 end
 
+-- ---------------------------------------------------------------------------
+-- Buy similar: PoB's Compare-tab trade search for one item. The rows come
+-- from CompareBuySimilar.addModEntries; the URL from the module's own
+-- buildURL, read off its popup as an upvalue and given a table shaped like
+-- the popup's controls, so the query matches what PoB would open.
+-- ---------------------------------------------------------------------------
+
+local buySimilar, buySimilarUrl, buySimilarListed, buySimilarHelpers
+
+local function buySimilarModule()
+	if buySimilar then return buySimilar end
+	if IS_POE2 then
+		buySimilar = LoadModule("Classes/CompareBuySimilar")
+		buySimilarHelpers = LoadModule("Classes/TradeHelpers")
+	else
+		buySimilar = require("Classes.CompareBuySimilar")
+		buySimilarHelpers = require("Classes.TradeHelpers")
+	end
+	local i = 1
+	while true do
+		local name, value = debug.getupvalue(buySimilar.openPopup, i)
+		if not name then break end
+		if name == "buildURL" then buySimilarUrl = value end
+		if name == "LISTED_STATUS_LABELS" then buySimilarListed = value end
+		i = i + 1
+	end
+	if not buySimilarUrl then error("this Path of Building version has no Buy Similar search", 0) end
+	return buySimilar
+end
+
+-- Trade categories are keyed by slot; an item that is not equipped borrows
+-- the slot its type would go in.
+local BUY_SIMILAR_TYPE_SLOT = {
+	["Body Armour"] = "Body Armour", Helmet = "Helmet", Gloves = "Gloves", Boots = "Boots",
+	Amulet = "Amulet", Ring = "Ring 1", Belt = "Belt", Jewel = "Jewel", Flask = "Flask 1",
+}
+
+local function buySimilarTarget(p)
+	if p.side == "mine" or p.side == "theirs" then
+		local b = p.side == "mine" and build or compareEntry()
+		local slotName = tostring(p.slot or "")
+		local slot = b.itemsTab.slots[slotName]
+		if not slot then error("unknown slot " .. slotName, 0) end
+		local item = slot.selItemId and slot.selItemId ~= 0 and b.itemsTab.items[slot.selItemId] or nil
+		if not item then error("nothing is equipped in " .. slotName, 0) end
+		return item, slotName
+	end
+	local item = build.itemsTab.items[tonumber(p.itemId) or -1]
+	if not item then error("unknown item " .. tostring(p.itemId), 0) end
+	for name, slot in pairs(build.itemsTab.slots) do
+		if slot.selItemId == item.id then return item, name end
+	end
+	local itemType = item.type or (item.base and item.base.type) or ""
+	return item, BUY_SIMILAR_TYPE_SLOT[itemType] or (itemType:find("Jewel") and "Jewel") or "Weapon 1"
+end
+
+local function buySimilarRows(item)
+	local isUnique = item.rarity == "UNIQUE" or item.rarity == "RELIC"
+	local sources = {
+		{ list = item.enchantModLines, type = "enchant" },
+		{ list = item.implicitModLines, type = "implicit" },
+		{ list = item.explicitModLines, type = "explicit" },
+	}
+	if not IS_POE2 then
+		sources[#sources + 1] = { list = item.scourgeModLines, type = "scourge" }
+	end
+	local mods = buySimilarModule().addModEntries(item, sources)
+	local defences = {}
+	if not isUnique and item.armourData and item.base and item.base.armour then
+		for _, def in ipairs({
+			{ key = "Armour", label = "Armour", tradeKey = "ar" },
+			{ key = "Evasion", label = "Evasion", tradeKey = "ev" },
+			{ key = "EnergyShield", label = "Energy Shield", tradeKey = "es" },
+			{ key = "Ward", label = IS_POE2 and "Runic Ward" or "Ward", tradeKey = "ward" },
+		}) do
+			local val = item.armourData[def.key]
+			if val and val > 0 then
+				defences[#defences + 1] = { label = def.label, value = val, tradeKey = def.tradeKey }
+			end
+		end
+	end
+	return isUnique, mods, defences
+end
+
+--- The rows PoB's Buy Similar popup offers for an item.
+--- params: { itemId } for this build's item, or { slot, side = "mine"|"theirs" } on the Compare tab
+M.buy_similar_info = function(p)
+	ensureBuild()
+	local item, slotName = buySimilarTarget(p or {})
+	local isUnique, mods, defences = buySimilarRows(item)
+	local outMods = array({})
+	for i, m in ipairs(mods) do
+		local lines = array({})
+		for j, l in ipairs(m.formattedLines) do lines[j] = l end
+		outMods[i] = {
+			lines = lines,
+			type = m.type,
+			searchable = #m.tradeIds > 0,
+			value = opt(m.value),
+			ranged = not (m.isOption or m.needsExactValue) and m.value ~= nil,
+		}
+	end
+	local outDefences = array({})
+	for i, d in ipairs(defences) do
+		outDefences[i] = { label = d.label, value = math.floor(d.value) }
+	end
+	local listed = array({})
+	for i, l in ipairs(buySimilarListed or { "Instant Buyout", "Instant Buyout & In Person", "In Person (Online)", "Any" }) do
+		listed[i] = l
+	end
+	return {
+		name = item.name,
+		unique = isUnique,
+		category = buySimilarHelpers.getTradeCategoryLabel(slotName, item),
+		baseName = opt(item.baseName),
+		realms = IS_POE2 and array({ "PoE2" }) or array({ "PC", "PS4", "Xbox" }),
+		listed = listed,
+		defences = outDefences,
+		mods = outMods,
+	}
+end
+
+--- The trade site URL for the choices made against buy_similar_info's rows.
+--- params: the item as for buy_similar_info, plus realm, league, listed (1-based),
+--- baseType, ilvlMin, ilvlMax, defences = [{checked,min,max}], mods = [{checked,min,max}]
+M.buy_similar_url = function(p)
+	ensureBuild()
+	p = p or {}
+	local item, slotName = buySimilarTarget(p)
+	local isUnique, mods, defences = buySimilarRows(item)
+	local function given(v)
+		return v ~= nil and v ~= null and tostring(v) or ""
+	end
+	local function choice(v)
+		return { GetSelValue = function() return v end }
+	end
+	local controls = {
+		realmDrop = choice(given(p.realm) ~= "" and p.realm or (IS_POE2 and "PoE2" or "PC")),
+		leagueDrop = choice(given(p.league) ~= "" and p.league or "Standard"),
+		listedDrop = { selIndex = tonumber(p.listed) or 1 },
+		baseTypeCheck = { state = p.baseType == true },
+		ilvlMin = { buf = given(p.ilvlMin) },
+		ilvlMax = { buf = given(p.ilvlMax) },
+	}
+	for i = 1, #defences do
+		local d = type(p.defences) == "table" and p.defences[i] or {}
+		controls["def" .. i .. "Check"] = { state = d.checked == true }
+		controls["def" .. i .. "Min"] = { buf = given(d.min) }
+		controls["def" .. i .. "Max"] = { buf = given(d.max) }
+	end
+	for i = 1, #mods do
+		local m = type(p.mods) == "table" and p.mods[i] or {}
+		controls["mod" .. i .. "Check"] = { state = m.checked == true }
+		controls["mod" .. i .. "Min"] = { buf = given(m.min) }
+		controls["mod" .. i .. "Max"] = { buf = given(m.max) }
+	end
+	return { url = buySimilarUrl(item, slotName, controls, mods, defences, isUnique) }
+end
+
 --- Socket groups on both sides, matched by the order they appear in.
 M.compare_skills = function(p)
 	ensureBuild()

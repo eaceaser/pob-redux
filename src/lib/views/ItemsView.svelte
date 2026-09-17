@@ -25,11 +25,13 @@
   import ItemFrame from "$lib/components/ItemFrame.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
   import TraderWindow from "$lib/components/TraderWindow.svelte";
+  import BuySimilarDialog from "$lib/components/BuySimilarDialog.svelte";
 
   let slotsResp = $state<SlotsResponse | null>(null);
   let items = $state<ItemInfo[]>([]);
   let itemSets = $state<ItemSetInfo[]>([]);
   let selectedItem = $state<number | null>(null);
+  let buySimilarFor = $state<number | null>(null);
 
   let dbTab = $state<"unique" | "rare">("unique");
   let dbQuery = $state("");
@@ -528,6 +530,7 @@
       {#if selectedItem != null && detail}
         <div class="panel-head">
           <span class="label">Item</span>
+          <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title="Search the trade site for items like this one">Buy similar</button>
           <button class="btn sm ghost" onclick={() => (selectedItem = null)}>Back to database</button>
         </div>
         <div class="scroll detailpane">
@@ -932,6 +935,10 @@
 
   {#if traderOpen}
     <TraderWindow focusSlot={traderFocus} onclose={() => (traderOpen = false)} />
+  {/if}
+
+  {#if buySimilarFor != null}
+    <BuySimilarDialog target={{ itemId: buySimilarFor }} onclose={() => (buySimilarFor = null)} />
   {/if}
 
   {#if tip}

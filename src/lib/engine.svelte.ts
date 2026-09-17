@@ -1215,6 +1215,33 @@ export interface CompareLoadout {
   socketGroups: { index: number; label: string; active: boolean }[];
 }
 
+/** An item in this build by id, or an equipped item on either side of the Compare tab. */
+export type BuySimilarTarget = { itemId: number } | { slot: string; side: "mine" | "theirs" };
+
+export interface BuySimilarInfo {
+  name: string;
+  unique: boolean;
+  category: string;
+  baseName: string | null;
+  realms: string[];
+  listed: string[];
+  defences: { label: string; value: number }[];
+  /** `searchable` is false when the trade site has no filter for the mod; `ranged` rows take min/max. */
+  mods: { lines: string[]; type: string; searchable: boolean; value: number | string | null; ranged: boolean }[];
+}
+
+export interface BuySimilarChoices {
+  realm: string;
+  league: string;
+  /** 1-based index into `listed`. */
+  listed: number;
+  baseType: boolean;
+  ilvlMin: number | null;
+  ilvlMax: number | null;
+  defences: { checked: boolean; min: number | null; max: number | null }[];
+  mods: { checked: boolean; min: number | null; max: number | null }[];
+}
+
 export interface CompareItemRow {
   slot: string;
   label: string | null;
@@ -1506,6 +1533,8 @@ export const engine = {
   compareItemText: (slot: string, side: "mine" | "theirs") =>
     call<{ text: string | null; name: string | null }>("compare_item_text", { slot, side }),
   compareCopyItem: (slot: string) => call<{ ok: boolean; slot: string; itemName: string }>("compare_copy_item", { slot }),
+  buySimilarInfo: (target: BuySimilarTarget) => call<BuySimilarInfo>("buy_similar_info", target),
+  buySimilarUrl: (p: BuySimilarTarget & BuySimilarChoices) => call<{ url: string }>("buy_similar_url", p),
   compareSkills: (onlyDifferences?: boolean) => call<{ rows: CompareSkillRow[] }>("compare_skills", { onlyDifferences }),
   compareConfig: (onlyDifferences?: boolean) => call<{ rows: CompareConfigRow[] }>("compare_config", { onlyDifferences }),
   compareTree: () => call<CompareTree>("compare_tree"),

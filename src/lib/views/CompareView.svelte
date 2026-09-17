@@ -15,6 +15,7 @@
   import { build } from "$lib/state/build.svelte";
   import { stripPobText } from "$lib/pobtext";
   import PobText from "$lib/components/PobText.svelte";
+  import BuySimilarDialog from "$lib/components/BuySimilarDialog.svelte";
 
   type Pane = "summary" | "tree" | "items" | "skills" | "config";
 
@@ -159,6 +160,8 @@
       await refreshPane();
     }
   }
+
+  let buySimilarSlot = $state<string | null>(null);
 
   async function takeItem(slot: string) {
     const r = await guard(() => engine.compareCopyItem(slot));
@@ -367,6 +370,7 @@
               <span class="tside" style:color={rarityColor[r.theirs?.rarity ?? ""] ?? "var(--fg-2)"}>{r.theirs?.name ?? "—"}</span>
               <span class="tact">
                 {#if r.theirs}
+                  <button class="btn sm ghost" onclick={() => (buySimilarSlot = r.slot)} disabled={busy} title="Search the trade site for items like theirs">Buy similar</button>
                   <button class="btn sm ghost" onclick={() => takeItem(r.slot)} disabled={busy} title="Equip their item in this slot">Use theirs</button>
                 {/if}
               </span>
@@ -423,6 +427,9 @@
         </div>
       {/if}
     </div>
+  {/if}
+  {#if buySimilarSlot}
+    <BuySimilarDialog target={{ slot: buySimilarSlot, side: "theirs" }} onclose={() => (buySimilarSlot = null)} />
   {/if}
 </div>
 
@@ -587,7 +594,7 @@
     white-space: nowrap;
   }
   .tact {
-    width: 92px;
+    width: 190px;
     flex: none;
     text-align: right;
   }
