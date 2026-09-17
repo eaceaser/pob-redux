@@ -3,6 +3,7 @@
   import { engine, type BreakdownSection, type CalcSection } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import { stripPobText } from "$lib/pobtext";
   import BreakdownPanel from "$lib/components/BreakdownPanel.svelte";
 
   let mode = $state<"sections" | "raw">("sections");
@@ -123,20 +124,20 @@
               <div class="section" style:border-left-color={sec.colour ?? "var(--line-1)"}>
                 {#each sec.subSections as sub (sub.index)}
                   <div class="subhead">
-                    <span class="sublabel">{sub.label}</span>
+                    <span class="sublabel"><PobText text={sub.label} /></span>
                     {#if sub.extra}<span class="extra num"><PobText text={sub.extra} /></span>{/if}
                   </div>
                   <div class="rows">
                     {#each sub.rows as row (row.index)}
                       <div class="crow">
-                        {#if row.label}<span class="rlabel">{row.label}</span>{/if}
+                        {#if row.label}<span class="rlabel"><PobText text={row.label} /></span>{/if}
                         {#each row.cells as cell (cell.index)}
                           {#if cell.text || cell.hasBreakdown}
                             <button
                               class="cell num"
                               class:link={cell.hasBreakdown}
                               disabled={!cell.hasBreakdown}
-                              onclick={() => openCell(sec, sub.index, row.index, cell.index, `${sub.label} · ${row.label ?? ""}`)}
+                              onclick={() => openCell(sec, sub.index, row.index, cell.index, stripPobText(`${sub.label} · ${row.label ?? ""}`))}
                             >
                               <PobText text={cell.text} />
                             </button>
