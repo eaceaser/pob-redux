@@ -74,7 +74,8 @@ number PoB reports and decides which gems exist at all.
 State the point budget and what campaign progress it assumes. Quest points come
 from progress rather than level, so pointsAvailableMin and pointsAvailableMax are
 a range; quote the range rather than one number. Compare a budget against
-mainTreePointsUsed, never pointsUsed, which counts weapon-set nodes too.
+passivePointsSpent, never pointsUsed: a point buys a node in either weapon set,
+so only the larger set is charged.
 
 ## Changing a build
 

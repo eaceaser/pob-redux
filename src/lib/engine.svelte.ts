@@ -476,8 +476,11 @@ export interface TreeState {
   ascendClassName: string | null;
   allocatedNodes: number[];
   allocatedNodeCount: number;
-  /** Counts weapon-set nodes too; use mainTreePointsUsed against a point budget. */
+  /** Counts weapon-set nodes too; use passivePointsSpent against a point budget. */
   pointsUsed: number;
+  /** What PoB charges the budget: main-tree nodes plus the larger weapon set. */
+  passivePointsSpent: number;
+  /** Main-tree nodes only, without either weapon set. */
   mainTreePointsUsed: number;
   ascendancyPointsUsed: number;
   secondaryAscendancyPointsUsed: number;
@@ -490,6 +493,8 @@ export interface TreeState {
   /** Quest points depend on campaign progress, not level, so the budget is a range. */
   questPointsMin: number;
   questPointsMax: number;
+  /** Points from items and passives, included in pointsAvailableMin and pointsAvailableMax. */
+  extraPoints: number;
   pointsAvailableMin: number;
   pointsAvailableMax: number;
   ascendancyPointsAvailable: number;
@@ -782,7 +787,9 @@ export interface BuildSummary {
   metaSkills: number;
   skills: SkillRow[];
   pointsUsed: number;
-  mainTreePointsUsed: number;
+  /** What PoB charges the budget: main-tree nodes plus the larger weapon set. */
+  passivePointsSpent: number;
+  extraPoints: number;
   pointsAvailableMin: number;
   pointsAvailableMax: number;
   ascendancyPointsUsed: number;

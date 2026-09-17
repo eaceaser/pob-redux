@@ -169,7 +169,7 @@ interface Stage {
   mainSkill: string | null;
   mainSocketGroup: number;
   mainSkillFixed: boolean;
-  mainTreePoints: number;
+  pointsSpent: number;
   pointsAvailableMax: number;
   ascendancyPoints: number;
   activeSkills: number;
@@ -265,7 +265,7 @@ async function clean(sources: Source[]) {
       stageText: labelText,
       leagueType: (src.meta.leagueType as string | null) ?? null,
       gear,
-      mainTreePoints: s.mainTreePoints,
+      pointsSpent: s.pointsSpent,
       pointsAvailableMax: s.pointsAvailableMax,
       stats: s.stats,
       findings: s.findings.map((f) => f.area),

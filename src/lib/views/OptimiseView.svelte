@@ -165,12 +165,18 @@
   // weakest allocated, straight from the scan the tree tab already runs.
   const TREE_STATS: [string, string][] = [
     ["Life", "Life"],
+    ["EnergyShield", "ES"],
     ["TotalEHP", "EHP"],
     ["CombinedDPS", "DPS"],
     ["Armour", "Armour"],
     ["EffectiveMovementSpeedMod", "Speed"],
   ];
   let treeStat = $state("Life");
+  let treeStatChosen = false;
+  // A life scan gives an energy shield build nothing, so those start on ES.
+  $effect(() => {
+    if (!treeStatChosen && summary) treeStat = summary.energyShield > summary.life ? "EnergyShield" : "Life";
+  });
   let notablesOnly = $state(true);
   let treeRunning = $state(false);
   let treeRows = $state<{ best: PowerReportRow[]; weakest: PowerReportRow[]; stat: string; ms: number } | null>(null);
@@ -216,7 +222,7 @@
   let plan = $state<PointPlan | null>(null);
   let planError = $state<string | null>(null);
   let planStale = $state(false);
-  const unspent = $derived(summary ? Math.max(0, summary.pointsAvailableMax - summary.mainTreePointsUsed) : 0);
+  const unspent = $derived(summary ? Math.max(0, summary.pointsAvailableMax - summary.passivePointsSpent) : 0);
 
   async function planTree() {
     if (planRunning || !build.loaded) return;
@@ -260,7 +266,7 @@
       <div class="facts">
         <div class="fact" title="Skills that need a keypress"><span class="k">Active</span><span class="v mono">{summary.activeSkills}</span></div>
         <div class="fact" title="Persistent, trigger and meta gems"><span class="k">Automatic</span><span class="v mono">{summary.persistentSkills + summary.triggerSkills + summary.metaSkills}</span></div>
-        <div class="fact" title="Main tree points, budget at level {summary.characterLevel}"><span class="k">Points</span><span class="v mono">{summary.mainTreePointsUsed}<span class="dim"> / {summary.pointsAvailableMin === summary.pointsAvailableMax ? summary.pointsAvailableMax : `${summary.pointsAvailableMin}–${summary.pointsAvailableMax}`}</span></span></div>
+        <div class="fact" title="Passive points spent (the larger weapon set counts), budget at level {summary.characterLevel}"><span class="k">Points</span><span class="v mono">{summary.passivePointsSpent}<span class="dim"> / {summary.pointsAvailableMin === summary.pointsAvailableMax ? summary.pointsAvailableMax : `${summary.pointsAvailableMin}–${summary.pointsAvailableMax}`}</span></span></div>
         {#if game.isPoe2}
           <div class="fact" title="Spirit reserved"><span class="k">Spirit</span><span class="v mono">{summary.spiritReserved}<span class="dim"> / {summary.spirit}</span></span></div>
           <div class="fact" title="Charms equipped; slots come from the belt"><span class="k">Charms</span><span class="v mono">{summary.charmsEquipped}<span class="dim"> / {summary.charmLimit}</span></span></div>
@@ -393,7 +399,14 @@
         <span class="label">Stat</span>
         <div class="seg" role="radiogroup">
           {#each TREE_STATS as [id, label]}
-            <button class:on={treeStat === id} onclick={() => (treeStat = id)} disabled={treeRunning || planRunning}>{label}</button>
+            <button
+              class:on={treeStat === id}
+              onclick={() => {
+                treeStatChosen = true;
+                treeStat = id;
+              }}
+              disabled={treeRunning || planRunning}>{label}</button
+            >
           {/each}
         </div>
       </div>
@@ -401,7 +414,7 @@
         <button class="btn sm primary" onclick={scanTree} disabled={treeRunning || planRunning || !build.loaded}>{treeRunning ? "Scanning…" : "Scan"}</button>
         <label class="chk small"><input type="checkbox" bind:checked={notablesOnly} disabled={treeRunning} /> notables only</label>
         {#if summary}
-          <span class="dim small"><span class="mono">{Math.max(0, summary.pointsAvailableMax - summary.mainTreePointsUsed)}</span> points unspent</span>
+          <span class="dim small"><span class="mono">{Math.max(0, summary.pointsAvailableMax - summary.passivePointsSpent)}</span> points unspent</span>
         {/if}
       </div>
       <div class="ctl run">

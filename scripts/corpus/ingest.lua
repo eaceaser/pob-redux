@@ -144,7 +144,7 @@ local function stageRecord(src, loadoutName)
 		mainSkill = summary.mainSkill ~= nil and summary.mainSkill or dkjson.null,
 		mainSocketGroup = bd.mainSocketGroup,
 		mainSkillFixed = fixed ~= nil,
-		mainTreePoints = summary.mainTreePointsUsed,
+		pointsSpent = summary.passivePointsSpent,
 		pointsAvailableMax = summary.pointsAvailableMax,
 		ascendancyPoints = summary.ascendancyPointsUsed,
 		activeSkills = summary.activeSkills,

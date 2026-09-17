@@ -1281,6 +1281,7 @@ M.get_tree_state = function()
 	local used, ascUsed, secondaryAscUsed, socketCount, ws1Used, ws2Used = countAllocNodes(spec)
 	local level = build.characterLevel or 1
 	local questLow, questHigh = questPointsForLevel(level)
+	local extra = (build.calcsTab.mainOutput or {}).ExtraPoints or 0
 	return {
 		treeVersion = spec.treeVersion,
 		classId = spec.curClassId,
@@ -1289,10 +1290,12 @@ M.get_tree_state = function()
 		ascendClassName = opt(spec.curAscendClassName),
 		allocatedNodes = alloc,
 		allocatedNodeCount = #alloc,
-		-- PoB's `used` counts every non-ascendancy node, weapon-set nodes included,
-		-- so the main-tree spend is the difference. Compare a point budget against
-		-- mainTreePointsUsed, never pointsUsed.
+		-- PoB's `used` counts every non-ascendancy node, weapon-set nodes included.
+		-- A point buys a node in either weapon set, so PoB charges the budget for
+		-- the larger set only. Compare a point budget against passivePointsSpent,
+		-- never pointsUsed.
 		pointsUsed = used,
+		passivePointsSpent = used - math.min(ws1Used, ws2Used),
 		mainTreePointsUsed = used - ws1Used - ws2Used,
 		ascendancyPointsUsed = ascUsed,
 		secondaryAscendancyPointsUsed = secondaryAscUsed,
@@ -1307,8 +1310,10 @@ M.get_tree_state = function()
 		pointsFromLevels = math.max(0, level - 1),
 		questPointsMin = questLow,
 		questPointsMax = questHigh,
-		pointsAvailableMin = math.max(0, level - 1) + questLow,
-		pointsAvailableMax = math.max(0, level - 1) + questHigh,
+		-- Points granted by items and passives on top of levels and quests.
+		extraPoints = extra,
+		pointsAvailableMin = math.max(0, level - 1) + questLow + extra,
+		pointsAvailableMax = math.max(0, level - 1) + questHigh + extra,
 		ascendancyPointsAvailable = 8,
 		overrides = overrides,
 		sockets = sockets,
@@ -7428,13 +7433,19 @@ local OPT_PRESETS = {
 	defence = { dps = 0.5, life = 1.5, ehp = 1.5 },
 	damage = { dps = 2.0, life = 0.6, ehp = 0.6 },
 }
-local OPT_HEADLINE = { "Life", "TotalEHP", "Armour", "CombinedDPS", "Mana", "FireResist", "ColdResist", "LightningResist", "ChaosResist", "Str", "Dex", "Int", "ReqStr", "ReqDex", "ReqInt", "MovementSpeedMod" }
+local OPT_HEADLINE = { "Life", "EnergyShield", "TotalEHP", "Armour", "CombinedDPS", "MinionDPS", "Mana", "FireResist", "ColdResist", "LightningResist", "ChaosResist", "Str", "Dex", "Int", "ReqStr", "ReqDex", "ReqInt", "MovementSpeedMod" }
 
 local gearOpt = nil
+
+-- A minion skill's damage is on the minion's output, not the player's.
+local function optMinionDps(o)
+	return o.Minion and (o.Minion.CombinedDPS or o.Minion.TotalDPS) or 0
+end
 
 local function optHeadline(o)
 	local out = {}
 	for _, k in ipairs(OPT_HEADLINE) do out[k] = o[k] or 0 end
+	out.MinionDPS = optMinionDps(o)
 	return out
 end
 
@@ -7445,11 +7456,18 @@ end
 local function optScore(o, base, w, cfg)
 	-- +1 keeps a build that starts at zero (no weapon, no DPS) scoring its
 	-- first real number as the large gain it is.
-	local function lr(k)
-		local a, b = math.max(0, o[k] or 0), math.max(0, base[k] or 0)
-		return math.log((a + 1) / (b + 1))
+	local function lr(a, b)
+		return math.log((math.max(0, a or 0) + 1) / (math.max(0, b or 0) + 1))
 	end
-	local s = w.dps * lr("CombinedDPS") + w.life * lr("Life") + w.ehp * lr("TotalEHP")
+	local function dps(x)
+		return math.max(x.CombinedDPS or 0, x.MinionDPS or optMinionDps(x))
+	end
+	-- The life weight covers the whole hit pool, so an energy shield or Chaos
+	-- Inoculation build is scored on the pool it actually stacks.
+	local function pool(x)
+		return (x.Life or 0) + (x.EnergyShield or 0)
+	end
+	local s = w.dps * lr(dps(o), dps(base)) + w.life * lr(pool(o), pool(base)) + w.ehp * lr(o.TotalEHP, base.TotalEHP)
 	for _, r in ipairs({ "FireResist", "ColdResist", "LightningResist" }) do
 		local v = o[r] or 0
 		if v < cfg.resist then s = s - (cfg.resist - v) * 0.02 end
@@ -7764,6 +7782,10 @@ local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
 		bestOutput = bestOut
 	end
 	if #chosen.prefixes + #chosen.suffixes == 0 then return nil, "no affix improved the build" end
+	-- The search starts from an empty base, so it also has to beat the item the slot holds now.
+	if current and bestScore <= optScore(withoutFullDPS(calcFunc, {}), base, w, cfg) + 1e-9 then
+		return nil, "the current item scores higher"
+	end
 	item:Craft()
 	item:BuildAndParseRaw()
 	local lines = array({})
@@ -8758,12 +8780,13 @@ M.build_summary = function()
 		-- Shield): present because of the item, not chosen, not counted above.
 		grantedSkills = granted,
 		skills = skills,
-		-- pointsUsed counts weapon-set nodes too; the budget applies to the
-		-- main-tree figure.
+		-- pointsUsed counts weapon-set nodes too. PoB charges the budget for the
+		-- larger weapon set only, which is passivePointsSpent.
 		pointsUsed = used,
-		mainTreePointsUsed = used - ws1 - ws2,
-		pointsAvailableMin = math.max(0, level - 1) + questLow,
-		pointsAvailableMax = math.max(0, level - 1) + questHigh,
+		passivePointsSpent = used - math.min(ws1, ws2),
+		extraPoints = o.ExtraPoints or 0,
+		pointsAvailableMin = math.max(0, level - 1) + questLow + (o.ExtraPoints or 0),
+		pointsAvailableMax = math.max(0, level - 1) + questHigh + (o.ExtraPoints or 0),
 		ascendancyPointsUsed = ascUsed,
 		jewelSocketsUsed = socketCount,
 		weaponSetPointsUsed = ws1 + ws2,
@@ -8819,11 +8842,12 @@ M.sanity_check = function()
 			"Chaos damage removes twice as much energy shield, and poison bypasses it entirely.")
 	end
 
-	if s.mainTreePointsUsed > s.pointsAvailableMax then
-		add("high", "passive points", string.format("%d main-tree points allocated but at level %d the maximum is %d", s.mainTreePointsUsed, s.characterLevel, s.pointsAvailableMax),
+	-- Most level 90+ ladder characters (Sept 2026) hold one point more than PoB's quest data allows.
+	if s.passivePointsSpent > s.pointsAvailableMax + 1 then
+		add("high", "passive points", string.format("%d passive points spent but at level %d the maximum is %d", s.passivePointsSpent, s.characterLevel, s.pointsAvailableMax),
 			"Either the level is unset or the tree is over budget. Call set_level if the level is wrong.")
-	elseif s.mainTreePointsUsed < s.pointsAvailableMin then
-		add("low", "passive points", string.format("%d of %d available main-tree points allocated", s.mainTreePointsUsed, s.pointsAvailableMin),
+	elseif s.passivePointsSpent < s.pointsAvailableMin then
+		add("low", "passive points", string.format("%d of %d available passive points spent", s.passivePointsSpent, s.pointsAvailableMin),
 			"Unspent points.")
 	end
 	local ascended = s.ascendancyName ~= null and s.ascendancyName ~= "None"
