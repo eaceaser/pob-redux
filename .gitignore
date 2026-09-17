@@ -26,6 +26,7 @@ Thumbs.db
 
 # Local working files, not part of the public repo
 /docs
+/corpus
 /scripts/*.ps1
 CLAUDE.md
 .claude/

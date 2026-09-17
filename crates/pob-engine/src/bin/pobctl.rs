@@ -87,6 +87,31 @@ enum Cmd {
         #[arg(long, default_value_t = 4)]
         pool: usize,
     },
+    /// Corpus bench: run the tree planner and the gear optimiser on each usable
+    /// stage of a corpus index (scripts/corpus/ingest.ts) and append one JSON
+    /// line per stage to --out. Stages already in --out are skipped.
+    Corpus {
+        index: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// Planner budget in passive points.
+        #[arg(long, default_value_t = 10)]
+        budget: u32,
+        /// Stats the planner spends the budget on, one plan each.
+        #[arg(long, value_delimiter = ',', default_value = "Life,CombinedDPS")]
+        stats: Vec<String>,
+        #[arg(long, default_value_t = 4)]
+        pool: usize,
+        /// At most this many stages per ascendancy, mixing ladder, guide and file stages.
+        #[arg(long)]
+        per_ascendancy: Option<usize>,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long)]
+        no_gear: bool,
+        #[arg(long)]
+        no_tree: bool,
+    },
     /// Unique jewel suggestions: one engine vs the worker pool, with an equality check.
     Jewels {
         file: PathBuf,
@@ -137,6 +162,175 @@ return {{ combined = v }}"#,
     let combined = check.get("combined").and_then(Value::as_f64).unwrap_or(f64::NAN);
     eprintln!("plan: {:.0} ms, total {total:.3}, one-calc check {combined:.3}", plan.get("ms").and_then(Value::as_f64).unwrap_or(0.0));
     Ok(json!({ "plan": plan, "combined_check": combined, "difference": combined - total }))
+}
+
+const CORPUS_STATS: &[&str] = &[
+    "Life", "EnergyShield", "TotalEHP", "CombinedDPS", "FireResist", "ColdResist", "LightningResist", "ChaosResist", "Str", "Dex", "Int",
+    "ReqStr", "ReqDex", "ReqInt", "MovementSpeedMod",
+];
+
+struct CorpusOpts {
+    index: PathBuf,
+    out: PathBuf,
+    budget: u32,
+    stats: Vec<String>,
+    pool: usize,
+    per_ascendancy: Option<usize>,
+    limit: Option<usize>,
+    no_gear: bool,
+    no_tree: bool,
+}
+
+/// Usable stages (not a duplicate, no flags), optionally capped per ascendancy
+/// with ladder, guide and file stages taken in turn.
+fn corpus_selection(index: &Value, per_ascendancy: Option<usize>) -> Vec<Value> {
+    let usable: Vec<&Value> = index["stages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["duplicateOf"].is_null() && s["nearDuplicateOf"].is_null() && s["flags"].as_array().is_some_and(|f| f.is_empty()))
+        .collect();
+    let Some(cap) = per_ascendancy else { return usable.into_iter().cloned().collect() };
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::HashMap<String, [Vec<&Value>; 3]> = std::collections::HashMap::new();
+    for s in usable {
+        let asc = s["ascendancy"].as_str().unwrap_or("none").to_string();
+        if !groups.contains_key(&asc) {
+            order.push(asc.clone());
+        }
+        let slot = match s["kind"].as_str() {
+            Some("ladder") => 0,
+            Some("guide") => 1,
+            _ => 2,
+        };
+        groups.entry(asc).or_default()[slot].push(s);
+    }
+    let mut out = Vec::new();
+    for asc in order {
+        let mut buckets = groups.remove(&asc).unwrap_or_default().map(|b| b.into_iter());
+        let mut taken = 0;
+        while taken < cap {
+            let mut any = false;
+            for b in buckets.iter_mut() {
+                if taken < cap {
+                    if let Some(s) = b.next() {
+                        out.push(s.clone());
+                        taken += 1;
+                        any = true;
+                    }
+                }
+            }
+            if !any {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn corpus_cmd(cfg: EngineConfig, o: CorpusOpts) -> Result<Value, pob_engine::Error> {
+    use pob_engine::{EngineHandle, EnginePool, Error};
+    use std::io::Write;
+    let text = std::fs::read_to_string(&o.index).map_err(|e| Error::Other(format!("{}: {e}", o.index.display())))?;
+    let index: Value = serde_json::from_str(&text).map_err(|e| Error::Other(format!("{}: {e}", o.index.display())))?;
+    // PoB resolves a relative build path against its own folders, so hand it absolute ones.
+    let index_path = std::path::absolute(&o.index).map_err(|e| Error::Other(format!("{}: {e}", o.index.display())))?;
+    let xml_dir = index_path.parent().map(|p| p.join("xml")).unwrap_or_else(|| PathBuf::from("xml"));
+    let done: std::collections::HashSet<String> = std::fs::read_to_string(&o.out)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|v| v["id"].as_str().map(str::to_string))
+        .collect();
+    let mut stages = corpus_selection(&index, o.per_ascendancy);
+    stages.retain(|s| s["id"].as_str().is_some_and(|id| !done.contains(id)));
+    if let Some(n) = o.limit {
+        stages.truncate(n);
+    }
+    let engine = EngineHandle::spawn(cfg.clone());
+    let pool = EnginePool::new(cfg, o.pool);
+    pool.warm();
+    engine.wait_ready()?;
+    let mut out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&o.out)
+        .map_err(|e| Error::Other(format!("{}: {e}", o.out.display())))?;
+    let started = Instant::now();
+    let (mut ok, mut failed) = (0usize, 0usize);
+    for (n, stage) in stages.iter().enumerate() {
+        let t = Instant::now();
+        let id = stage["id"].as_str().unwrap_or_default();
+        let mut line = json!({
+            "id": id,
+            "ascendancy": stage["ascendancy"],
+            "kind": stage["kind"],
+            "stage": stage["stage"],
+            "gear": stage["gear"],
+            "level": stage["level"],
+            "mainSkill": stage["mainSkill"],
+        });
+        let mut run = || -> Result<(), Error> {
+            let xml = xml_dir.join(format!("{}.xml", stage["source"].as_str().unwrap_or_default()));
+            engine.call("load_build_file", json!({ "path": xml.to_string_lossy() }))?;
+            if let Some(name) = stage["loadout"].as_str() {
+                engine.call("select_loadout", json!({ "name": name }))?;
+            }
+            // The ingest picked this group when the saved main skill showed no DPS.
+            if let Some(group) = stage["mainSocketGroup"].as_u64() {
+                engine.call("set_main_skill", json!({ "index": group }))?;
+            }
+            line["before"] = engine.call("get_stats", json!({ "fields": CORPUS_STATS }))?.result["stats"].clone();
+            let sanity = engine.call("sanity_check", Value::Null)?.result;
+            line["findings"] = json!(sanity["findings"].as_array().into_iter().flatten().map(|f| f["area"].clone()).collect::<Vec<_>>());
+            if !o.no_tree {
+                let mut plans = serde_json::Map::new();
+                for stat in &o.stats {
+                    let v = match pob_engine::pool::plan_points(&engine, &pool, stat, o.budget) {
+                        Ok(p) => json!({
+                            "total": p["total"],
+                            "spent": p["spent"],
+                            "picks": p["picks"].as_array().map_or(0, Vec::len),
+                            "ms": p["ms"],
+                        }),
+                        Err(e) => json!({ "error": e.to_string() }),
+                    };
+                    plans.insert(stat.clone(), v);
+                }
+                line["plans"] = Value::Object(plans);
+            }
+            if !o.no_gear && stage["gear"].as_str() == Some("full") {
+                let g = engine.call("optimise_gear", json!({ "preset": "balanced" }))?.result;
+                line["gearOpt"] = json!({
+                    "ms": g["ms"],
+                    "before": g["before"],
+                    "after": g["after"],
+                    "proposals": g["proposals"].as_array().map_or(0, Vec::len),
+                    "skipped": g["skipped"].as_array().map_or(0, Vec::len),
+                });
+            }
+            Ok(())
+        };
+        match run() {
+            Ok(()) => ok += 1,
+            Err(e) => {
+                failed += 1;
+                line["error"] = json!(e.to_string());
+            }
+        }
+        line["ms"] = json!(t.elapsed().as_millis() as u64);
+        writeln!(out, "{line}").map_err(|e| Error::Other(e.to_string()))?;
+        out.flush().ok();
+        eprintln!(
+            "[{}/{}] {} {} {:.1}s",
+            n + 1,
+            stages.len(),
+            stage["ascendancy"].as_str().unwrap_or("?"),
+            stage["name"].as_str().unwrap_or(id),
+            t.elapsed().as_secs_f64()
+        );
+    }
+    Ok(json!({ "stages": stages.len(), "ok": ok, "failed": failed, "minutes": started.elapsed().as_secs_f64() / 60.0 }))
 }
 
 fn jewels_cmd(cfg: EngineConfig, file: PathBuf, aim: Option<String>, pool_size: usize, no_sequential: bool) -> Result<Value, pob_engine::Error> {
@@ -391,6 +585,21 @@ fn main() {
             let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
             Some(plan_cmd(cfg, file.clone(), stat.clone(), *budget, *pool))
         }
+        Cmd::Corpus { index, out, budget, stats, pool, per_ascendancy, limit, no_gear, no_tree } => {
+            let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
+            let opts = CorpusOpts {
+                index: index.clone(),
+                out: out.clone(),
+                budget: *budget,
+                stats: stats.clone(),
+                pool: *pool,
+                per_ascendancy: *per_ascendancy,
+                limit: *limit,
+                no_gear: *no_gear,
+                no_tree: *no_tree,
+            };
+            Some(corpus_cmd(cfg, opts))
+        }
         _ => None,
     };
     if let Some(out) = pooled {
@@ -462,7 +671,7 @@ fn main() {
                 Ok(json!({ "iterations": iterations, "avg_ms": avg, "min_ms": min, "boot_ms": engine.boot_ms }))
             }),
         Cmd::Eval { code } => engine.eval(&code),
-        Cmd::Power { .. } | Cmd::Gems { .. } | Cmd::Jewels { .. } | Cmd::Plan { .. } => unreachable!("handled above"),
+        Cmd::Power { .. } | Cmd::Gems { .. } | Cmd::Jewels { .. } | Cmd::Plan { .. } | Cmd::Corpus { .. } => unreachable!("handled above"),
     };
 
     match out {
