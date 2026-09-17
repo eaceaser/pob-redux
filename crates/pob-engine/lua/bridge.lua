@@ -4925,6 +4925,45 @@ M.trade_leagues = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- Character import by account name (PoE1). The host fetches the character's
+-- passive tree and items from pathofexile.com; PoB's own ImportTab turns them
+-- into a new build, as its account-name import does.
+-- params: { character = <entry from get-characters>, passives = <JSON text>,
+--           items = <JSON text>, name }
+-- ---------------------------------------------------------------------------
+
+M.import_character = function(p)
+	if IS_POE2 then error("importing a character by account name works for Path of Exile 1 only", 0) end
+	if not p or type(p.character) ~= "table" or type(p.passives) ~= "string" or type(p.items) ~= "string" then
+		error("params.character, params.passives and params.items are required", 0)
+	end
+	local passives = dkjson.decode(p.passives)
+	local items = dkjson.decode(p.items)
+	if type(passives) ~= "table" or type(items) ~= "table" then
+		error("the character data from pathofexile.com could not be read", 0)
+	end
+	main:SetMode("BUILD", false, (type(p.name) == "string" and p.name) or p.character.name or "Imported character")
+	frame()
+	build = main.modes["BUILD"]
+	ensureBuild()
+	local importTab = build.importTab
+	-- account-name imports carry no quest choices; keep the new build's
+	passives.bandit_choice = passives.bandit_choice or build.configTab.input.bandit
+	passives.pantheon_major = passives.pantheon_major or build.configTab.input.pantheonMajorGod
+	passives.pantheon_minor = passives.pantheon_minor or build.configTab.input.pantheonMinorGod
+	local treeData = copyTable(p.character)
+	treeData.passives = passives
+	treeData.jewels = passives.items
+	importTab:ImportPassiveTreeAndJewels(treeData, true)
+	local gearData = copyTable(p.character)
+	gearData.equipment = items.items
+	gearData.guardian = items.guardian
+	importTab:ImportItemsAndSkills(gearData, true, true, false)
+	refresh()
+	return M.get_build()
+end
+
+-- ---------------------------------------------------------------------------
 -- GGG Build Planner (*.build) import: JSON with passive stringIds, gem
 -- metadata ids and gear hint text. Tree goes through PoB's own
 -- ImportFromNodeList (weapon-set allocations included); gear hints land in

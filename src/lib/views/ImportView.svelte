@@ -16,6 +16,11 @@
     resolveMobalytics,
     isMaxrollGuideLink,
     resolveMaxroll,
+    characterList,
+    characterData,
+    ninjaCharacters,
+    ninjaCharacterCode,
+    type GameCharacter,
     saveGameBuildFiles,
     listGameBuilds,
     setGameBuildMeta,
@@ -375,6 +380,153 @@
       say(`Save failed: ${String(e)}`);
     } finally {
       mobaBusy = false;
+    }
+  }
+
+  // Character import by account name: PoE1 from pathofexile.com through PoB's
+  // own Import tab code, or either game from the build poe.ninja keeps.
+  type CharSource = "ggg" | "ninja";
+  interface CharRow {
+    key: string;
+    name: string;
+    className: string;
+    level: number;
+    league: string;
+    when: number;
+    status: string;
+    minLevel: number | null;
+    leagueUrl: string;
+    updated: string | null;
+    ggg?: GameCharacter;
+  }
+  const CHAR_KEY = "pob-redux:character-import";
+  let charAccount = $state("");
+  let charRealm = $state("pc");
+  let charSource = $state<CharSource>("ggg");
+  let charList = $state<{ source: CharSource; game: string; account: string; rows: CharRow[] } | null>(null);
+  let charLeague = $state("");
+  let charBusy = $state<string | null>(null);
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHAR_KEY) ?? "{}");
+    charAccount = saved.account ?? "";
+    charRealm = saved.realm ?? "pc";
+    charSource = saved.source === "ninja" ? "ninja" : "ggg";
+  } catch {}
+
+  // PoE2 has no public character endpoint on pathofexile.com.
+  const source = $derived<CharSource>(game.isPoe2 ? "ninja" : charSource);
+  const shownList = $derived(charList && charList.source === source && charList.game === game.current ? charList : null);
+  const charLeagues = $derived.by(() => {
+    const seen = new Map<string, number>();
+    for (const c of shownList?.rows ?? []) seen.set(c.league, Math.max(seen.get(c.league) ?? 0, c.when));
+    return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([l]) => l);
+  });
+  const shownCharacters = $derived(
+    (shownList?.rows ?? []).filter((c) => !charLeague || c.league === charLeague).sort((a, b) => b.when - a.when),
+  );
+
+  function ninjaReason(c: CharRow): string {
+    switch (c.status) {
+      case "belowCutoff":
+        return `under level ${c.minLevel ?? 80}`;
+      case "leagueEnded":
+        return "league ended";
+      case "inactive":
+        return "not played recently";
+      case "notFetched":
+        return "not fetched yet";
+      default:
+        return "no build";
+    }
+  }
+
+  function shortDate(iso: string): string {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  }
+
+  async function findCharacters() {
+    if (!charAccount.trim() || charBusy) return;
+    charBusy = "list";
+    const src = source;
+    const g = game.current;
+    try {
+      if (src === "ninja") {
+        const r = await ninjaCharacters(charAccount);
+        charList = {
+          source: src,
+          game: g,
+          account: r.account,
+          rows: r.characters.map((c) => ({
+            key: `${c.league}/${c.name}`,
+            name: c.name,
+            className: c.className ?? "",
+            level: c.level,
+            league: c.league,
+            when: (c.updated ? Date.parse(c.updated) : 0) || 0,
+            status: c.status,
+            minLevel: c.minLevel,
+            leagueUrl: c.leagueUrl,
+            updated: c.updated,
+          })),
+        };
+      } else {
+        const r = await characterList(charRealm, charAccount);
+        charList = {
+          source: src,
+          game: g,
+          account: r.account,
+          rows: r.characters.map((c) => ({
+            key: `${c.league}/${c.name}`,
+            name: c.name,
+            className: c.class,
+            level: c.level,
+            league: c.league,
+            when: c.lastLoginTime ?? 0,
+            status: "listed",
+            minLevel: null,
+            leagueUrl: "",
+            updated: null,
+            ggg: c,
+          })),
+        };
+      }
+      charAccount = charList.account;
+      charLeague = charLeagues[0] ?? "";
+      try {
+        localStorage.setItem(CHAR_KEY, JSON.stringify({ account: charList.account, realm: charRealm, source: charSource }));
+      } catch {}
+    } catch (e) {
+      charList = null;
+      build.error = String(e);
+    } finally {
+      charBusy = null;
+    }
+  }
+
+  async function importCharacter(c: CharRow) {
+    const list = shownList;
+    if (!list || charBusy) return;
+    charBusy = c.key;
+    try {
+      const name = `${list.account.replace(/[#-]\d+$/, "")} - ${c.name}`;
+      if (list.source === "ninja") {
+        const code = await ninjaCharacterCode(list.account, c.name, c.leagueUrl);
+        const r = await build.loadCode(code, name);
+        if (r) build.say(`Imported ${c.name} from poe.ninja${c.updated ? `, saved ${shortDate(c.updated)}` : ""}`);
+      } else if (c.ggg) {
+        const ggg = c.ggg;
+        const d = await characterData(charRealm, list.account, c.name);
+        const r = await build.run(() => engine.importCharacter({ character: ggg, passives: d.passives, items: d.items, name }));
+        if (r) {
+          build.say(`Imported ${c.name}`);
+          build.view = "tree";
+        }
+      }
+    } catch (e) {
+      build.error = String(e);
+    } finally {
+      charBusy = null;
     }
   }
 
@@ -842,6 +994,66 @@
       </div>
     </div>
 
+    <div class="panel-head">
+      <span class="label">Character</span>
+      {#if !game.isPoe2}
+        <select class="select sm" bind:value={charSource} title="Where to import from">
+          <option value="ggg">pathofexile.com</option>
+          <option value="ninja">poe.ninja</option>
+        </select>
+      {/if}
+    </div>
+    <div class="block">
+      <div class="charform">
+        <input
+          class="input grow"
+          placeholder="Account name, e.g. name#1234"
+          bind:value={charAccount}
+          onkeydown={(e) => e.key === "Enter" && findCharacters()}
+        />
+        {#if source === "ggg"}
+          <select class="select" bind:value={charRealm} title="Realm">
+            <option value="pc">PC</option>
+            <option value="xbox">Xbox</option>
+            <option value="sony">PlayStation</option>
+          </select>
+        {/if}
+        <button class="btn" onclick={findCharacters} disabled={!charAccount.trim() || charBusy !== null}>
+          {charBusy === "list" ? "Finding…" : "Find"}
+        </button>
+      </div>
+      {#if shownList}
+        <div class="charhead">
+          <select class="select sm" bind:value={charLeague}>
+            {#each charLeagues as l}<option value={l}>{l}</option>{/each}
+            <option value="">All leagues</option>
+          </select>
+          <span class="dim small"><span class="num">{shownCharacters.length}</span> characters</span>
+        </div>
+        <div class="charlist">
+          {#each shownCharacters as c (c.key)}
+            <div class="charrow">
+              <span class="cname" title={`${c.name}, ${c.league}${c.updated ? `, saved by poe.ninja ${shortDate(c.updated)}` : ""}`}>
+                {c.name}{#if !charLeague}<span class="dim small cleague">{c.league}</span>{/if}
+              </span>
+              <span class="dim small">{c.className} <span class="num">{c.level}</span></span>
+              {#if c.status === "listed"}
+                <button class="act" onclick={() => importCharacter(c)} disabled={charBusy !== null || build.busy > 0}>
+                  {charBusy === c.key ? "importing…" : "import"}
+                </button>
+              {:else}
+                <span class="dim small nobuild" title="poe.ninja has no build for this character">{ninjaReason(c)}</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {:else if source === "ninja"}
+        <div class="dim small">Imports the build poe.ninja saved for a character. poe.ninja saves builds only for the characters on its ladders, which leaves out low-level and inactive characters.</div>
+      {:else}
+        <div class="dim small">Imports a character's passive tree, items and gems into a new build. The account's profile and Characters tab must be public on pathofexile.com.</div>
+      {/if}
+    </div>
+
     {#if moba}
       <div class="overlay" role="presentation" onclick={() => !mobaBusy && (moba = null)} onkeydown={(e) => e.key === "Escape" && (moba = null)}>
         <div class="modal" role="dialog" aria-label="Mobalytics build" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (moba = null)}>
@@ -1307,6 +1519,50 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+  .charform,
+  .charhead {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .charform .grow {
+    min-width: 0;
+  }
+  .charlist {
+    display: flex;
+    flex-direction: column;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--line-0);
+    border-radius: var(--r-2);
+  }
+  .charrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 8px;
+    font-size: var(--fs-sm);
+  }
+  .charrow + .charrow {
+    border-top: 1px solid var(--line-0);
+  }
+  .charrow:hover {
+    background: var(--bg-2);
+  }
+  .cleague {
+    margin-left: 6px;
+  }
+  .nobuild {
+    flex: none;
+    white-space: nowrap;
+  }
+  .cname {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .flash {
     margin: 0 10px;

@@ -8,6 +8,8 @@ mod ai;
 mod sites;
 mod mobalytics;
 mod maxroll;
+mod character;
+mod ninja;
 mod links;
 mod diagnostics;
 mod game;
@@ -548,6 +550,30 @@ async fn share_build_code(state: State<'_, AppState>, site: String, code: String
 #[tauri::command]
 async fn mobalytics_resolve(url: String) -> Result<mobalytics::Resolved, String> {
     mobalytics::resolve(&url).await
+}
+
+/// Path of Exile 1 characters on a public account.
+#[tauri::command]
+async fn character_list(realm: String, account: String) -> Result<character::CharacterList, String> {
+    character::list(&realm, &account).await
+}
+
+/// One Path of Exile 1 character's passive tree and items, as JSON text for import_character.
+#[tauri::command]
+async fn character_data(realm: String, account: String, character: String) -> Result<character::CharacterData, String> {
+    character::data(&realm, &account, &character).await
+}
+
+/// Characters on a poe.ninja profile, for the current game.
+#[tauri::command]
+async fn ninja_characters(state: State<'_, AppState>, account: String) -> Result<ninja::CharacterList, String> {
+    ninja::list(state.game(), &account).await
+}
+
+/// The PoB code poe.ninja keeps for one character, for load_build_code.
+#[tauri::command]
+async fn ninja_character_code(state: State<'_, AppState>, account: String, character: String, league: String) -> Result<String, String> {
+    ninja::build_code(state.game(), &account, &character, &league).await
 }
 
 /// Resolve a Maxroll build guide or planner to the PoB links it offers.
@@ -1274,6 +1300,10 @@ pub fn run() {
             fetch_build_code,
             mobalytics_resolve,
             maxroll_resolve,
+            character_list,
+            character_data,
+            ninja_characters,
+            ninja_character_code,
             save_game_build_files,
             share_build_code,
             set_game_build_meta,
