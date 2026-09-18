@@ -465,6 +465,8 @@ export interface TreeState {
   ascendClassName: string | null;
   allocatedNodes: number[];
   allocatedNodeCount: number;
+  weaponSet1Nodes: number[];
+  weaponSet2Nodes: number[];
   /** Counts weapon-set nodes too; use passivePointsSpent against a point budget. */
   pointsUsed: number;
   /** What PoB charges the budget: main-tree nodes plus the larger weapon set. */
@@ -532,6 +534,8 @@ export interface TreeClickResult extends Partial<TreeState> {
   className?: string;
   ascendClassName?: string | null;
   id?: number;
+  /** Why the click was refused in this weapon set mode; nothing changed. */
+  blocked?: string;
 }
 
 export interface NodeInfo extends Record<string, unknown> {
@@ -542,12 +546,16 @@ export interface NodeInfo extends Record<string, unknown> {
   masterySelected: number | null;
 }
 
+/** Where a tree click allocates: 0 is the main tree, 1 and 2 are the weapon sets. */
+export type WeaponSetMode = 0 | 1 | 2;
+
 export interface HoverInfo {
   id: number;
   allocated: boolean;
   path: number[];
   depends: number[];
   cost?: number;
+  blocked: string | null;
 }
 
 export interface SpecInfo {
@@ -1433,8 +1441,8 @@ export const engine = {
   nodePath: (id: number) => call<{ id: number; path: number[]; cost: number; allocated: boolean }>("node_path", { id }),
   nodeInfo: (id: number) => call<NodeInfo>("node_info", { id }),
   selectMastery: (id: number, effect: number) => call<TreeState>("select_mastery", { id, effect }),
-  nodeHover: (id: number) => call<HoverInfo>("node_hover", { id }),
-  treeClick: (id: number, opts?: { attribute?: number; confirm?: "reset" | "connect" }) =>
+  nodeHover: (id: number, weaponSet: WeaponSetMode = 0) => call<HoverInfo>("node_hover", { id, weaponSet }),
+  treeClick: (id: number, opts?: { attribute?: number; confirm?: "reset" | "connect"; weaponSet?: WeaponSetMode }) =>
     call<TreeClickResult>("tree_click", { id, ...opts }),
   switchAttribute: (id: number, attribute: number) => call<TreeState>("switch_attribute", { id, attribute }),
   treeUndo: () => call<TreeState>("tree_undo"),
@@ -1443,7 +1451,7 @@ export const engine = {
   importTreeUrl: (url: string) => call<TreeState>("import_tree_url", { url }),
   jewelRadii: () => call<{ radii: JewelRadius[] }>("jewel_radii"),
   specAlloc: (index: number) => call<{ index: number; allocatedNodes: number[] }>("spec_alloc", { index }),
-  allocTrace: (ids: number[]) => call<TreeState>("alloc_trace", { ids }),
+  allocTrace: (ids: number[], weaponSet: WeaponSetMode = 0) => call<TreeState>("alloc_trace", { ids, weaponSet }),
   socketNodes: (id: number, radiusIndex: number) =>
     call<{ id: number; radiusIndex: number | null; nodes: number[] }>("socket_nodes", { id, radiusIndex }),
   powerStats: () => call<{ stats: PowerStat[] }>("power_stats"),

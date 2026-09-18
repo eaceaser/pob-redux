@@ -1,5 +1,6 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { WeaponSetMode } from "$lib/engine.svelte";
 
 const KEY = "pob-redux:ui";
 /** Must match the window's minimum size in tauri.conf.json. */
@@ -25,6 +26,7 @@ class UiStore {
   contrastLevel = $state(0);
   scale = $state(1);
   scaleApplied = $state(1);
+  treeWeaponSet = $state<WeaponSetMode>(0);
 
   private systemLight = window.matchMedia("(prefers-color-scheme: light)");
   private systemContrast = window.matchMedia("(prefers-contrast: more)");

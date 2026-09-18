@@ -29,6 +29,7 @@ interface Slot {
  */
 export class AssetStore {
   private slots = new Map<string, Slot>();
+  private tinted = new Map<string, HTMLCanvasElement>();
 
   constructor(
     readonly manifest: AssetManifest,
@@ -85,6 +86,30 @@ export class AssetStore {
     const img = this.image(r.file);
     if (!img) return false;
     ctx.drawImage(img, r.x, r.y, r.w, r.h, cx - halfW, cy - halfH, halfW * 2, halfH * 2);
+    return true;
+  }
+
+  /** `draw` with the art multiplied by `color`, as PoB's SetDrawColor tints an image. */
+  drawTinted(ctx: CanvasRenderingContext2D, name: string, cx: number, cy: number, halfW: number, halfH: number, color: string): boolean {
+    const key = `${name}|${color}`;
+    let c = this.tinted.get(key);
+    if (!c) {
+      const r = this.rect(name);
+      const img = r && this.image(r.file);
+      if (!r || !img) return false;
+      c = document.createElement("canvas");
+      c.width = r.w;
+      c.height = r.h;
+      const t = c.getContext("2d")!;
+      t.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+      t.globalCompositeOperation = "multiply";
+      t.fillStyle = color;
+      t.fillRect(0, 0, r.w, r.h);
+      t.globalCompositeOperation = "destination-in";
+      t.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+      this.tinted.set(key, c);
+    }
+    ctx.drawImage(c, cx - halfW, cy - halfH, halfW * 2, halfH * 2);
     return true;
   }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type NodeTattoos, type PowerStat, type SocketedJewel, type Tooltip, type TreePower } from "$lib/engine.svelte";
+  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type NodeTattoos, type PowerStat, type SocketedJewel, type Tooltip, type TreePower, type WeaponSetMode } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { game } from "$lib/state/game.svelte";
@@ -69,6 +69,7 @@
   let hoverPath = $state<Set<number>>(new Set());
   let hoverDep = $state<Set<number>>(new Set());
   let hoverCost = $state<number | null>(null);
+  let hoverBlocked = $state<string | null>(null);
   let mouse = $state({ x: 0, y: 0 });
   let search = $state("");
   let matches = $state<Set<number>>(new Set());
@@ -115,6 +116,11 @@
   let powerRerun = false;
 
   const allocated = $derived(new Set(build.tree?.allocatedNodes ?? []));
+  const weaponSets = $derived(
+    new Map<number, number>([...(build.tree?.weaponSet1Nodes ?? []).map((id) => [id, 1] as const), ...(build.tree?.weaponSet2Nodes ?? []).map((id) => [id, 2] as const)]),
+  );
+  const wsMode = $derived<WeaponSetMode>(game.isPoe2 ? ui.treeWeaponSet : 0);
+  const wsMax = $derived(build.info?.points.weaponSetMax ?? 0);
   const overrides = $derived(build.tree?.overrides ?? {});
   const sockets = $derived(new Map((build.tree?.sockets ?? []).map((s) => [s.nodeId, s])));
 
@@ -174,11 +180,17 @@
     Normal: { outer: "#141210", inner: "#3a3122", ow: 12, iw: 3.5 },
     Intermediate: { outer: "#2e2a24", inner: "#9b917c", ow: 13, iw: 5 },
     Active: { outer: "#5d4717", inner: "#d9b256", ow: 14, iw: 7 },
+    Set1Path: { outer: "#270004", inner: "#860010", ow: 13, iw: 5 },
+    Set2Path: { outer: "#092a11", inner: "#1f913a", ow: 13, iw: 5 },
+    Set1: { outer: "#500003", inner: "#bc000b", ow: 14, iw: 7 },
+    Set2: { outer: "#12470a", inner: "#2bb228", ow: 14, iw: 7 },
     CompareGain: { outer: "#173d24", inner: "#67d38a", ow: 13, iw: 6 },
     CompareLoss: { outer: "#4a1616", inner: "#f06a6a", ow: 13, iw: 6 },
     Depend: { outer: "#4a1616", inner: "#f06a6a", ow: 14, iw: 7 },
   } as const;
   type LineState = keyof typeof LINE;
+  // PoB's NEGATIVE and POSITIVE colour codes, which it multiplies into weapon set art.
+  const SET_TINT = ["", "#dd0022", "#33ff77"];
 
   function toScreen(x: number, y: number): [number, number] {
     return [(x - cx) * scale + w / 2, (y - cy) * scale + h / 2];
@@ -316,12 +328,30 @@
       if (ca && cb && !(aa && ab)) return "CompareGain";
       if (aa && ab && !(ca && cb)) return "CompareLoss";
     }
-    if (aa && ab) return "Active";
+    const sa = S.ws.get(a.id) ?? 0;
+    const sb = S.ws.get(b.id) ?? 0;
+    if (promoted(a, S) && promoted(b, S)) return "Intermediate";
+    if (aa && ab && (sa === 0 || sb === 0 || sa === sb)) {
+      const set = a.asc ? 0 : sa || sb;
+      return set === 1 ? "Set1" : set === 2 ? "Set2" : "Active";
+    }
     if (S.path.size) {
-      const q = (n: TNode) => n.id === S.hover?.id || S.path.has(n.id) || S.alloc.has(n.id);
-      if (q(a) && q(b)) return "Intermediate";
+      const q = (n: TNode, s: number) => n.id === S.hover?.id || S.path.has(n.id) || (S.alloc.has(n.id) && (s === 0 || s === S.mode));
+      if (q(a, sa) && q(b, sb)) return a.asc || S.mode === 0 ? "Intermediate" : S.mode === 1 ? "Set1Path" : "Set2Path";
     }
     return "Normal";
+  }
+
+  /** A weapon set node that the hovered main tree allocation would move into the main tree. */
+  function promoted(n: TNode, S: Scene): boolean {
+    return S.mode === 0 && S.hover !== null && !S.alloc.has(S.hover.id) && S.path.has(n.id) && S.alloc.has(n.id) && S.ws.has(n.id);
+  }
+
+  /** The weapon set whose colour a node's frame takes (PassiveTreeView's allocModeColor), or 0. */
+  function tintFor(n: TNode, S: Scene): number {
+    if (S.heat || S.cmp || n.kind === "socket") return 0;
+    if (S.path.has(n.id) && !S.alloc.has(n.id)) return n.asc || n.kind === "keystone" ? 0 : S.mode;
+    return promoted(n, S) ? 0 : (S.ws.get(n.id) ?? 0);
   }
 
   function iconFor(n: TNode, S: Scene, isAlloc = false): string {
@@ -337,6 +367,8 @@
   // per node per frame was a fifth of the frame time.
   interface Scene {
     alloc: Set<number>;
+    ws: Map<number, number>;
+    mode: WeaponSetMode;
     ov: typeof overrides;
     ovAny: boolean;
     sockets: typeof sockets;
@@ -362,6 +394,8 @@
     const ovAny = Object.keys(ov).length > 0;
     return {
       alloc: allocated,
+      ws: weaponSets,
+      mode: wsMode,
       ov: ovAny ? { ...ov } : ov,
       ovAny,
       sockets,
@@ -419,7 +453,7 @@
   // Blitting the layer magnified past this looks soft, so it re-renders.
   const ZOOM_BAND = 1.7;
   function layerKey(S: Scene): unknown[] {
-    return [dpr, w, h, model, assetsGen, S.alloc, overrides, S.sockets, S.asc, S.cls, S.match, S.cmp, S.heat];
+    return [dpr, w, h, model, assetsGen, S.alloc, S.ws, overrides, S.sockets, S.asc, S.cls, S.match, S.cmp, S.heat];
   }
   function layerUsable(S: Scene): boolean {
     const L = layer;
@@ -500,17 +534,18 @@
     drawRings(ctx, S, V);
   }
 
-  const EDGE_ORDER = ["Normal", "Intermediate", "Active", "CompareGain", "CompareLoss", "Depend"] as const;
-  const EDGE_INDEX: Record<LineState, number> = { Normal: 0, Intermediate: 1, Active: 2, CompareGain: 3, CompareLoss: 4, Depend: 5 };
+  const EDGE_ORDER = ["Normal", "Intermediate", "Set1Path", "Set2Path", "Active", "Set1", "Set2", "CompareGain", "CompareLoss", "Depend"] as const;
+  const EDGE_INDEX = Object.fromEntries(EDGE_ORDER.map((s, i) => [s, i])) as Record<LineState, number>;
   const edgeBuckets: TEdge[][] = Array.from({ length: EDGE_ORDER.length * 2 }, () => [] as TEdge[]);
   // Below this many pixels the frame art is a smudge, so the nodes are drawn
   // as rings in one batched stroke per state instead of an image apiece.
   const DOT_PX = 3;
   // The average colour of PoB's frame art at a couple of pixels across, by
   // state and by node size, so a dot reads the same as the art it replaces.
-  const DOT_FILL = ["#caa371", "#806650", "#454139", "#bc9b64", "#a0754d", "#716248"];
-  const dots: number[][] = [[], [], [], [], [], []];
-  function dotBucket(n: TNode, st: "alloc" | "path" | "unalloc"): number {
+  const DOT_FILL = ["#caa371", "#806650", "#454139", "#bc9b64", "#a0754d", "#716248", "#af000f", "#28a335"];
+  const dots: number[][] = DOT_FILL.map(() => []);
+  function dotBucket(n: TNode, st: "alloc" | "path" | "unalloc", tint = 0): number {
+    if (tint) return 5 + tint;
     const big = n.kind === "notable" || n.kind === "keystone" || n.kind === "socket";
     return (big ? 3 : 0) + (st === "alloc" ? 0 : st === "path" ? 1 : 2);
   }
@@ -773,11 +808,15 @@
           ctx.globalAlpha = dimAsc ? 0.6 : 1;
         }
         const half = n.size.overlay * scale;
+        const tint = tintFor(n, S);
         if (half < DOT_PX) {
-          if (n.size.overlay > 0 && (!heat || isAlloc)) dots[dotBucket(n, st)].push(sx, sy, half);
+          if (n.size.overlay > 0 && (!heat || isAlloc)) dots[dotBucket(n, st, tint)].push(sx, sy, half);
         } else {
           const frameName = frameFor(n, S, st);
-          if (frameName && n.size.overlay > 0) A.draw(ctx, frameName, sx, sy, half, half);
+          if (frameName && n.size.overlay > 0) {
+            if (tint) A.drawTinted(ctx, frameName, sx, sy, half, half, SET_TINT[tint]);
+            else A.draw(ctx, frameName, sx, sy, half, half);
+          }
         }
       }
       ctx.globalAlpha = 1;
@@ -905,17 +944,19 @@
       } else if (!heat) {
         const st = nodeState(n, S);
         const half = (n.kind === "socket" ? n.size.base : n.size.overlay) * scale;
-        if (st !== nodeState(n, B) && half > 0) {
+        const tint = tintFor(n, S);
+        if ((st !== nodeState(n, B) || tint !== tintFor(n, B)) && half > 0) {
           ctx.globalAlpha = n.asc !== null && n.asc !== S.asc ? 0.6 : 1;
           if (half < DOT_PX) {
             ctx.beginPath();
             ctx.arc(sx, sy, Math.max(half * 0.75, 0.5), 0, Math.PI * 2);
-            ctx.strokeStyle = DOT_FILL[dotBucket(n, st)];
+            ctx.strokeStyle = DOT_FILL[dotBucket(n, st, tint)];
             ctx.lineWidth = Math.max(half * 0.5, 0.7);
             ctx.stroke();
           } else {
             const frameName = frameFor(n, S, st);
-            if (frameName) A.draw(ctx, frameName, sx, sy, half, half);
+            if (frameName && tint) A.drawTinted(ctx, frameName, sx, sy, half, half, SET_TINT[tint]);
+            else if (frameName) A.draw(ctx, frameName, sx, sy, half, half);
           }
           ctx.globalAlpha = 1;
         }
@@ -1197,6 +1238,10 @@
 
   function onWheel(e: WheelEvent) {
     e.preventDefault();
+    if (e.altKey && game.isPoe2) {
+      if (e.deltaY) setWeaponSet(Math.max(0, Math.min(2, wsMode + (e.deltaY < 0 ? 1 : -1))) as WeaponSetMode);
+      return;
+    }
     const rect = canvas!.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
@@ -1224,9 +1269,21 @@
     drag = { sx: e.clientX, sy: e.clientY, cx0: cx, cy0: cy, moved: false, button: e.button };
   }
 
+  function setWeaponSet(mode: WeaponSetMode) {
+    if (mode === ui.treeWeaponSet) return;
+    ui.treeWeaponSet = mode;
+    const n = hover;
+    if (n && !shiftDown) {
+      hover = null;
+      setHover(n);
+    }
+    invalidate();
+  }
+
   function setHover(n: TNode | null) {
     if (n?.id === hover?.id) return;
     hover = n;
+    hoverBlocked = null;
     if (shiftDown) {
       // Trace mode: extend the custom path instead of previewing the shortest one.
       clearTimeout(hoverTimer);
@@ -1256,11 +1313,12 @@
     if (n) {
       hoverTimer = window.setTimeout(async () => {
         try {
-          const r = await engine.nodeHover(n.id);
+          const r = await engine.nodeHover(n.id, wsMode);
           if (hover?.id === n.id) {
-            hoverPath = new Set(r.path);
-            hoverDep = new Set(r.depends);
+            hoverPath = new Set(r.blocked ? [] : r.path);
+            hoverDep = new Set(r.blocked ? [] : r.depends);
             hoverCost = r.cost ?? null;
+            hoverBlocked = r.blocked;
             invalidate();
           }
         } catch {
@@ -1296,7 +1354,7 @@
     if (!model || allocated.has(n.id)) return;
     if (trace.length === 0) {
       try {
-        const r = await engine.nodeHover(n.id);
+        const r = await engine.nodeHover(n.id, wsMode);
         if (shiftDown && hover?.id === n.id && r.path.length) {
           // node.path runs target → tree; the trace runs tree → target
           trace = r.path.slice().reverse();
@@ -1335,7 +1393,7 @@
       const ids = trace;
       trace = [];
       hoverPath = new Set();
-      await build.run(() => engine.allocTrace(ids));
+      await build.run(() => engine.allocTrace(ids, wsMode));
       return;
     }
     if (button === 2) {
@@ -1352,8 +1410,9 @@
     if (button !== 0) return;
     hoverPath = new Set();
     hoverDep = new Set();
-    const r = await build.clickNode(n.id);
-    if (r?.needsAttribute) attrMenu = { id: n.id, x: mouse.x, y: mouse.y };
+    const r = await build.clickNode(n.id, { weaponSet: wsMode });
+    if (r?.blocked) build.say(r.blocked);
+    else if (r?.needsAttribute) attrMenu = { id: n.id, x: mouse.x, y: mouse.y };
     else if (r?.needsMastery) masteryMenu = { id: n.id, name: r.name ?? n.name, x: mouse.x, y: mouse.y, effects: r.effects ?? [], selected: r.selected ?? null };
     else if (r?.needsConfirm === "class_change") classConfirm = { id: n.id, className: r.className ?? "?", ascendClassName: r.ascendClassName ?? null };
   }
@@ -1370,14 +1429,14 @@
     const id = attrMenu.id;
     attrMenu = null;
     if (allocated.has(id)) await build.switchAttribute(id, attr);
-    else await build.clickNode(id, { attribute: attr });
+    else await build.clickNode(id, { attribute: attr, weaponSet: wsMode });
   }
 
   async function confirmClass(mode: "reset" | "connect") {
     if (!classConfirm) return;
     const id = classConfirm.id;
     classConfirm = null;
-    await build.clickNode(id, { confirm: mode });
+    await build.clickNode(id, { confirm: mode, weaponSet: wsMode });
   }
 
   function onLeave() {
@@ -1431,6 +1490,8 @@
 
   $effect(() => {
     allocated;
+    weaponSets;
+    wsMode;
     overrides;
     sockets;
     currentAsc;
@@ -1626,6 +1687,17 @@
         {/each}
       </select>
     </div>
+    {#if game.isPoe2}
+      <div class="group" role="group" aria-label="Allocate into" title="Where a click allocates passives. Alt + scroll over the tree also changes it.">
+        <button class="btn sm ghost" class:on={wsMode === 0} onclick={() => setWeaponSet(0)}>Tree</button>
+        <button class="btn sm ghost set1" class:on={wsMode === 1} onclick={() => setWeaponSet(1)}>
+          Set I <span class="num">{build.tree?.weaponSet1PointsUsed ?? 0}/{wsMax}</span>
+        </button>
+        <button class="btn sm ghost set2" class:on={wsMode === 2} onclick={() => setWeaponSet(2)}>
+          Set II <span class="num">{build.tree?.weaponSet2PointsUsed ?? 0}/{wsMax}</span>
+        </button>
+      </div>
+    {/if}
     <div class="group">
       <input class="input search" placeholder="Search nodes… (Enter jumps)" bind:value={search} bind:this={searchEl} onkeydown={(e) => e.key === "Enter" && jumpToMatch()} />
       {#if matches.size}<span class="dim num">{matches.size}</span>{/if}
@@ -1695,6 +1767,10 @@
     ></canvas>
   
   
+    {#if wsMode > 0}
+      <div class="wsbadge" class:set2={wsMode === 2}>Allocating into weapon set {wsMode === 1 ? "I" : "II"} · Alt + scroll to change</div>
+    {/if}
+
     {#if assetsMissing}
       <div class="notice">Tree art not found: run <span class="mono">pnpm sync -- --tree-assets</span>. Showing wireframe.</div>
     {/if}
@@ -1847,14 +1923,22 @@
         {#if hover.flavour}
           <div class="tip-flav">{hover.flavour}</div>
         {/if}
+        {#if hoverBlocked}
+          <div class="tip-warn">{hoverBlocked}</div>
+        {/if}
         <div class="tip-foot num">
           {#if allocated.has(hover.id)}
-            <span style:color="var(--ok)">allocated</span>
-            <span class="dim">{hoverDep.size > 1 ? `click removes ${hoverDep.size}` : "click to remove"}{hover.isAttribute ? " · right-click to switch" : hover.kind === "mastery" ? " · right-click to change effect" : ""}</span>
+            {@const set = weaponSets.get(hover.id)}
+            <span style:color={set === 1 ? "var(--bad)" : "var(--ok)"}>{set ? `weapon set ${set === 1 ? "I" : "II"}` : "allocated"}</span>
+            {#if !hoverBlocked}
+              <span class="dim">{hoverDep.size > 1 ? `click removes ${hoverDep.size}` : "click to remove"}{hover.isAttribute ? " · right-click to switch" : hover.kind === "mastery" ? " · right-click to change effect" : ""}</span>
+            {/if}
           {:else if hoverCost != null}
             <span>{hoverCost} point{hoverCost === 1 ? "" : "s"}</span>
-            <span class="dim">{shiftDown && trace.length ? "tracing · click to allocate path" : hover.kind === "mastery" ? "click to choose an effect" : "click to allocate · hold Shift to trace"}</span>
-          {:else}
+            {#if !hoverBlocked}
+              <span class="dim">{shiftDown && trace.length ? "tracing · click to allocate path" : hover.kind === "mastery" ? "click to choose an effect" : "click to allocate · hold Shift to trace"}</span>
+            {/if}
+          {:else if !hoverBlocked}
             <span class="dim">…</span>
           {/if}
           <span class="dim">#{hover.id}</span>
@@ -1952,6 +2036,32 @@
     color: var(--fg-0);
     border-color: var(--fg-2);
     background: var(--bg-active);
+  }
+  .btn.set1.on {
+    border-color: var(--bad);
+  }
+  .btn.set2.on {
+    border-color: var(--ok);
+  }
+  .btn .num {
+    margin-left: 4px;
+    color: var(--fg-3);
+  }
+  .wsbadge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    padding: 5px 10px;
+    font-size: var(--fs-xs);
+    color: var(--fg-1);
+    background: color-mix(in srgb, var(--bg-1) 90%, transparent);
+    border: 1px solid var(--line-1);
+    border-left: 2px solid var(--bad);
+    border-radius: var(--r-1);
+    pointer-events: none;
+  }
+  .wsbadge.set2 {
+    border-left-color: var(--ok);
   }
   .select.sm {
     height: 22px;
@@ -2218,6 +2328,11 @@
     margin-top: 6px;
     color: var(--c-unique);
     font-style: italic;
+    font-size: var(--fs-xs);
+  }
+  .tip-warn {
+    margin-top: 6px;
+    color: var(--warn);
     font-size: var(--fs-xs);
   }
   .tip-foot {

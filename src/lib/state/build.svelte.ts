@@ -13,6 +13,7 @@ import {
   type SpecInfo,
   type TreeClickResult,
   type TreeState,
+  type WeaponSetMode,
 } from "$lib/engine.svelte";
 import { game } from "$lib/state/game.svelte";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -317,7 +318,7 @@ class BuildStore {
   }
 
   /** PoB's click semantics; the result may ask the UI for a follow-up. */
-  clickNode(id: number, opts?: { attribute?: number; confirm?: "reset" | "connect" }): Promise<TreeClickResult | undefined> {
+  clickNode(id: number, opts?: { attribute?: number; confirm?: "reset" | "connect"; weaponSet?: WeaponSetMode }): Promise<TreeClickResult | undefined> {
     return this.run(() => engine.treeClick(id, opts));
   }
 

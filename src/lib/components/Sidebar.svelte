@@ -277,6 +277,19 @@
           </div>
         </div>
       </div>
+      {#if info.points.weaponSet1Used || info.points.weaponSet2Used}
+        {@const wsMax = info.points.weaponSetMax}
+        <div class="row2">
+          <div class="field wide" title="Each weapon set holds up to {wsMax} passives. Only the larger set counts against your passive points.">
+            <span class="label">Weapon set passives</span>
+            <div class="pts num">
+              <span class:over={info.points.weaponSet1Used > wsMax}><span class="set1">I</span> {info.points.weaponSet1Used}<span class="dim">/{wsMax}</span></span>
+              <span class="sep">·</span>
+              <span class:over={info.points.weaponSet2Used > wsMax}><span class="set2">II</span> {info.points.weaponSet2Used}<span class="dim">/{wsMax}</span></span>
+            </div>
+          </div>
+        </div>
+      {/if}
       <label class="field">
         <span class="label">Main skill</span>
         <select class="select" value={info.mainSocketGroup} onchange={onMainSkill} disabled={groups.length === 0 || build.busy > 0}>
@@ -570,6 +583,12 @@
   }
   .over {
     color: var(--bad);
+  }
+  .set1 {
+    color: var(--bad);
+  }
+  .set2 {
+    color: var(--ok);
   }
   .stats {
     flex: 1;

@@ -1168,6 +1168,7 @@ M.get_tree_state = function()
 	ensureBuild()
 	local spec = build.spec
 	local alloc = array({})
+	local weaponSetNodes = { array({}), array({}) }
 	-- Nodes whose content differs from tree.json: attribute nodes switched to
 	-- Str/Dex/Int, and `isSwitchable` ascendancy variants (e.g. Abyssal Lich).
 	-- The renderer overlays these onto its static model.
@@ -1189,6 +1190,8 @@ M.get_tree_state = function()
 		local tnode = spec.tree.nodes[id]
 		if node.alloc then
 			alloc[#alloc + 1] = id
+			local set = weaponSetNodes[node.allocMode or 0]
+			if set then set[#set + 1] = id end
 			if node.isAttribute and node.dn and node.dn ~= "Attribute" then
 				override(id, node)
 			end
@@ -1207,6 +1210,8 @@ M.get_tree_state = function()
 		end
 	end
 	table.sort(alloc)
+	table.sort(weaponSetNodes[1])
+	table.sort(weaponSetNodes[2])
 	local sockets = array({})
 	-- Every socket in the spec, cluster jewel sub-sockets included; tree.sockets
 	-- has only the base tree's.
@@ -1290,6 +1295,8 @@ M.get_tree_state = function()
 		ascendClassName = opt(spec.curAscendClassName),
 		allocatedNodes = alloc,
 		allocatedNodeCount = #alloc,
+		weaponSet1Nodes = weaponSetNodes[1],
+		weaponSet2Nodes = weaponSetNodes[2],
 		-- A point buys a node in either weapon set, so PoB charges only the larger set.
 		pointsUsed = used,
 		passivePointsSpent = used - math.min(ws1Used, ws2Used),
@@ -1332,6 +1339,46 @@ M.spec_alloc = function(p)
 	return { index = tonumber(p.index), allocatedNodes = ids }
 end
 
+-- Only the tree view sends a weapon set, so every other caller allocates into the main tree.
+local function weaponSetParam(p)
+	local mode = IS_POE2 and tonumber(p and p.weaponSet) or 0
+	return (mode == 1 or mode == 2) and mode or 0
+end
+
+local function withAllocMode(mode, fn, ...)
+	if not IS_POE2 then return fn(...) end
+	local spec = build.spec
+	spec.allocMode = mode
+	local ok, res = pcall(fn, ...)
+	spec.allocMode = 0
+	if not ok then error(res, 0) end
+	return res
+end
+
+local function touchesWeaponSet(node)
+	for i = 2, #(node.path or {}) do
+		local other = node.path[i]
+		if other.alloc and (other.allocMode or 0) > 0 then return true end
+	end
+	for _, other in ipairs(node.linked or {}) do
+		if other.alloc and (other.allocMode or 0) > 0 then return true end
+	end
+	return false
+end
+
+-- PassiveTreeView's rule for keystones and jewel sockets: the reason a click is refused, or nil.
+local function weaponSetBlock(node, mode)
+	if not IS_POE2 or not (node.type == "Keystone" or node.type == "Socket" or node.containJewelSocket) then return nil end
+	local kind = node.type == "Keystone" and "keystones" or "jewel sockets"
+	if not node.alloc and node.path then
+		if mode > 0 then return "Cannot allocate " .. kind .. " while weapon set " .. mode .. " is selected" end
+		if touchesWeaponSet(node) then return "Cannot allocate " .. kind .. " connected to weapon set passives" end
+	elseif node.alloc and (node.allocMode or 0) == 0 and mode > 0 then
+		return "Cannot remove main tree " .. kind .. " while weapon set " .. mode .. " is selected"
+	end
+	return nil
+end
+
 -- Allocate a traced path (shift-hover in the tree). `ids` must run from the
 -- tree side to the target; PoB's AllocNode takes it as the alternate path.
 M.alloc_trace = function(p)
@@ -1371,7 +1418,10 @@ M.alloc_trace = function(p)
 
 	local target = nodes[#nodes]
 	if not target.path then error("target node cannot be reached", 0) end
-	spec:AllocNode(target, nodes)
+	local mode = weaponSetParam(p)
+	local blocked = weaponSetBlock(target, mode)
+	if blocked then error(blocked, 0) end
+	withAllocMode(mode, spec.AllocNode, spec, target, nodes)
 	spec:AddUndoState()
 	refresh()
 	return M.get_tree_state()
@@ -1423,11 +1473,17 @@ end
 M.node_hover = function(p)
 	ensureBuild()
 	local node = requireNode(p)
-	local out = { id = node.id, allocated = node.alloc == true, path = array({}), depends = array({}) }
+	local mode = weaponSetParam(p)
+	local blocked = weaponSetBlock(node, mode)
+	local out = { id = node.id, allocated = node.alloc == true, path = array({}), depends = array({}), blocked = opt(blocked) }
 	if node.alloc then
 		for i, n in ipairs(node.depends or {}) do out.depends[i] = n.id end
 	elseif node.path then
-		local ok, path = pcall(build.spec.GetEffectiveAllocationPath, build.spec, node)
+		local ok, path = pcall(withAllocMode, mode, build.spec.GetEffectiveAllocationPath, build.spec, node)
+		if ok and not path then
+			out.blocked = blocked or ("No path reaches this node in weapon set " .. mode)
+			return out
+		end
 		path = (ok and path) or node.path or {}
 		for i, n in ipairs(path) do out.path[i] = n.id end
 		out.cost = #path
@@ -1438,10 +1494,8 @@ end
 -- Left-click on a node, following PassiveTreeView:Draw's click handling:
 -- deallocate, switch attribute, switch ascendancy (same class directly,
 -- cross-class after confirmation), or allocate along the path.
--- params: { id, attribute = 1|2|3 (Str/Dex/Int), confirm = "reset"|"connect" }
-M.tree_click = function(p)
-	ensureBuild()
-	local node = requireNode(p)
+-- params: { id, attribute = 1|2|3 (Str/Dex/Int), confirm = "reset"|"connect", weaponSet = 0|1|2 }
+local function treeClick(p, node)
 	local spec = build.spec
 	local attr = tonumber(p.attribute)
 
@@ -1536,6 +1590,15 @@ M.tree_click = function(p)
 	spec:AddUndoState()
 	refresh()
 	return M.get_tree_state()
+end
+
+M.tree_click = function(p)
+	ensureBuild()
+	local node = requireNode(p)
+	local mode = weaponSetParam(p)
+	local blocked = weaponSetBlock(node, mode)
+	if blocked then return { blocked = blocked, id = node.id } end
+	return withAllocMode(mode, treeClick, p, node)
 end
 
 -- Allocate a PoE1 mastery with an effect, or change an allocated one's
