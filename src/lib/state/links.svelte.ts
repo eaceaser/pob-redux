@@ -7,17 +7,11 @@ import { game } from "$lib/state/game.svelte";
 
 type Link = { game: "poe1" | "poe2"; url: string };
 
-/**
- * pob:// and pob2:// links from build sites' "Open in PoB" buttons. Rust queues
- * each link and fires `open-link`; the page takes it and imports it like a
- * pasted share link, switching game when the link is for the other one.
- */
 class LinkStore {
   private listening = false;
   /** macOS can report the launch link twice; the same link within this window is ignored. */
   private recent = new Map<string, number>();
 
-  /** Listen for links and open one the app was launched with. True when that link opened. */
   async init(): Promise<boolean> {
     if (!this.listening) {
       this.listening = true;

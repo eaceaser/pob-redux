@@ -90,11 +90,7 @@ class AppStore {
     }
   }
 
-  /**
-   * After a crash, ask before reopening the build that was open, in case that
-   * build is what brought the app down. Declining keeps a copy in the builds
-   * folder. True when the user declined.
-   */
+  /** True when the user chose Start empty, after a recovered copy is saved. */
   private async declineRecovery(): Promise<boolean> {
     let saved: { name?: string; xml?: string } | null = null;
     try {

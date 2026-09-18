@@ -1,10 +1,3 @@
-//! Logs on disk and a diagnostics report to attach to bug reports.
-//!
-//! The app log rotates in the app's log folder. The report is plain text: app
-//! and system facts first, then the end of each log. The home folder, bearer
-//! tokens, API keys, the MCP token and similar values are masked before
-//! anything is written.
-
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -14,8 +7,6 @@ use tauri::{AppHandle, Manager, Runtime};
 const LOG_NAME: &str = "pob-redux";
 const LOG_TAIL_LINES: usize = 600;
 
-/// Stderr plus a rotating file, at info with PoB's own output at warn.
-/// POB_REDUX_LOG=debug raises it.
 pub fn log_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
     let level = match std::env::var("POB_REDUX_LOG").ok().as_deref() {
@@ -37,7 +28,6 @@ pub fn log_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
-/// Panics go to the log with a backtrace before the default hook runs.
 pub fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -46,7 +36,6 @@ pub fn install_panic_hook() {
     }));
 }
 
-/// Errors the page could not handle, so they end up in the report too.
 #[tauri::command]
 pub fn log_frontend(level: String, message: String) {
     let message: String = message.chars().take(4000).collect();
@@ -57,7 +46,6 @@ pub fn log_frontend(level: String, message: String) {
     }
 }
 
-/// Show the app log in the file manager.
 #[tauri::command]
 pub fn reveal_logs(app: AppHandle) -> Result<String, String> {
     use tauri_plugin_opener::OpenerExt;
@@ -76,9 +64,6 @@ fn home_dir() -> Option<String> {
     std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok().filter(|h| h.len() > 3)
 }
 
-/// Mask what should not leave the machine: `secrets` verbatim, the home folder,
-/// bearer and basic credentials, API-key-shaped strings, and credential query
-/// parameters.
 pub fn redact(text: &str, secrets: &[String]) -> String {
     static PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
     let patterns = PATTERNS.get_or_init(|| {
@@ -109,8 +94,7 @@ pub fn redact(text: &str, secrets: &[String]) -> String {
     out
 }
 
-/// The assistant log records whole conversations; the report keeps only when
-/// each run happened, the provider and model, and any error.
+/// The assistant log holds whole conversations, so only run metadata goes in the report.
 fn assistant_summary(text: &str) -> String {
     text.lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
@@ -130,7 +114,6 @@ fn tail(path: &Path, lines: usize) -> Option<String> {
     Some(all[all.len().saturating_sub(lines)..].join("\n"))
 }
 
-/// Log files newest first: the current app log, its rotated copies, then the assistant log.
 fn log_files(app: &AppHandle) -> Vec<PathBuf> {
     let mut app_logs: Vec<(std::time::SystemTime, PathBuf)> = app
         .path()
@@ -157,7 +140,6 @@ fn log_files(app: &AppHandle) -> Vec<PathBuf> {
     files
 }
 
-/// Write the report to `path`. `facts` are label/value pairs shown at the top.
 pub fn write_report(app: &AppHandle, path: &str, facts: &[(&str, String)], secrets: &[String]) -> Result<(), String> {
     let mut out = String::from("PoB Redux diagnostics\n\n");
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);

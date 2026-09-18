@@ -1,5 +1,4 @@
--- Passive node names and types for the corpus analysis:
---   pobctl eval "OUT=[[tree-nodes.json]] return dofile([[tree-nodes.lua]])"
+-- pobctl eval "OUT=[[tree-nodes.json]] return dofile([[tree-nodes.lua]])"
 local B = __bridge
 local dkjson = require("dkjson")
 B.new_build({ name = "tree nodes" })

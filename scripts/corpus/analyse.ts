@@ -1,12 +1,5 @@
 #!/usr/bin/env bun
-/**
- * Turn the cleaned corpus into priors and baselines, and summarise a bench run.
- *
- *   bun scripts/corpus/analyse.ts [--bench corpus/bench.jsonl]
- *
- * Reads corpus/index.json and corpus/stages.jsonl (scripts/corpus/ingest.ts).
- * Writes corpus/aggregates.json (machine-readable priors) and corpus/analysis.md.
- */
+// bun scripts/corpus/analyse.ts [--bench corpus/bench.jsonl]
 import { join } from "node:path";
 
 const REPO = join(import.meta.dir, "..", "..");
@@ -65,7 +58,6 @@ function top<T extends string>(counts: Map<T, number>, n: number, total: number)
 const nodeName = (id: number) => tree.nodes[String(id)]?.name ?? String(id);
 const nodeType = (id: number) => tree.nodes[String(id)]?.type ?? "?";
 
-// --- per ascendancy priors -------------------------------------------------
 const byAsc = new Map<string, Entry[]>();
 for (const e of late) {
   const k = e.ascendancy ?? "none";
@@ -96,7 +88,6 @@ for (const [asc, entries] of [...byAsc].sort()) {
   };
 }
 
-// --- supports per main skill -----------------------------------------------
 const supportsBySkill = new Map<string, { builds: number; supports: Map<string, number> }>();
 for (const e of usable) {
   const s = stages.get(e.id);
@@ -115,7 +106,6 @@ const mainSkillSupports = Object.fromEntries(
     .map(([skill, r]) => [skill, { builds: r.builds, supports: top(r.supports, 10, r.builds) }]),
 );
 
-// --- stat baselines ------------------------------------------------------------
 const band = (level: number) => (level < 60 ? "1-59" : level < 80 ? "60-79" : level < 90 ? "80-89" : level < 95 ? "90-94" : "95-100");
 const withGear = usable.filter((e) => e.gear === "full");
 const baselineGroups = new Map<string, Entry[]>();
@@ -138,13 +128,11 @@ const baselines = Object.fromEntries(
   ]),
 );
 
-// --- review rules against real endgame characters -------------------------------
 const ladder = usable.filter((e) => e.kind === "ladder");
 const findingCounts = new Map<string, number>();
 for (const e of ladder) for (const f of new Set(e.findings)) findingCounts.set(f, (findingCounts.get(f) ?? 0) + 1);
 const reviewOnLadder = top(findingCounts, 20, ladder.length);
 
-// --- bench ---------------------------------------------------------------------------
 let bench: any[] = [];
 try {
   bench = (await Bun.file(benchPath).text())
@@ -198,7 +186,6 @@ await Bun.write(
   JSON.stringify({ generatedAt: new Date().toISOString(), usableStages: usable.length, lateStages: late.length, ascendancies, mainSkillSupports, baselines, reviewOnLadder, bench: benchSummary }, null, 2) + "\n",
 );
 
-// --- readable summary ----------------------------------------------------------
 const q = (x: any) => (x ? `${x.median.toLocaleString("en-US")} (${x.p25.toLocaleString("en-US")}–${x.p75.toLocaleString("en-US")})` : "–");
 const lines: string[] = [];
 lines.push("# Corpus analysis", "", `${usable.length} usable stages, ${late.length} of them endgame or ladder.`, "");

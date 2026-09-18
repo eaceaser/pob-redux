@@ -383,8 +383,6 @@
     }
   }
 
-  // Character import by account name: PoE1 from pathofexile.com through PoB's
-  // own Import tab code, or either game from the build poe.ninja keeps.
   type CharSource = "ggg" | "ninja";
   interface CharRow {
     key: string;

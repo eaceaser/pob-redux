@@ -1,17 +1,5 @@
 #!/usr/bin/env bun
-/**
- * Collect the build corpus's raw inputs into corpus/raw (Path of Exile 2).
- *
- *   bun scripts/corpus/fetch.ts                 # guides from corpus/sources.md, then the ladder
- *   bun scripts/corpus/fetch.ts --only guides
- *   bun scripts/corpus/fetch.ts --only ladder --sc 8 --hc 4 --ssf 4
- *
- * Guides: each Mobalytics link in sources.md gives one Build Planner file per
- * variant and, when the author attached one, a PoB code. Ladder: poe.ninja's
- * build search lists a league's characters per ascendancy; each character's
- * PoB export comes from its character endpoint. Files that already exist are
- * kept, so a rerun only fetches what is missing.
- */
+// bun scripts/corpus/fetch.ts [--only guides|ladder] [--sc 8] [--hc 4] [--ssf 4]
 import { mkdir, exists } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -34,10 +22,6 @@ const safe = (s: string) => s.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " "
 async function writeJson(path: string, data: unknown) {
   await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
 }
-
-// ---------------------------------------------------------------------------
-// sources.md
-// ---------------------------------------------------------------------------
 
 interface Source {
   heading: string;
@@ -62,10 +46,6 @@ async function readSources(): Promise<Source[]> {
   }
   return out;
 }
-
-// ---------------------------------------------------------------------------
-// Mobalytics
-// ---------------------------------------------------------------------------
 
 const BY_SLUG =
   "query PobReduxDocumentBySlug($input: Poe2UserGeneratedDocumentInputBySlug!) { poe2 { documents { userGeneratedDocumentBySlug(input: $input) { error errorMessage data { id data { pobCode buildVariants { values { id } } } } } } } }";
@@ -153,10 +133,6 @@ async function fetchGuides() {
   return failed;
 }
 
-// ---------------------------------------------------------------------------
-// poe.ninja: the build search is protobuf, read here without a schema
-// ---------------------------------------------------------------------------
-
 type PbField = { no: number; v: number | Uint8Array };
 
 function readVarint(b: Uint8Array, p: number): [number, number] {
@@ -197,7 +173,6 @@ function pbFields(b: Uint8Array): PbField[] {
 
 const td = new TextDecoder();
 
-/** The string columns of a search page, keyed by column id (field 12 of the result). */
 function searchColumns(body: Uint8Array): Map<string, string[]> {
   const result = pbFields(body).find((f) => f.no === 1)?.v;
   if (!(result instanceof Uint8Array)) throw new Error("poe.ninja search: no result");
@@ -260,7 +235,6 @@ async function fetchLadder() {
   for (const [type, url] of types) {
     const snap = index.snapshotVersions.find((s) => s.url === url);
     if (!snap || perLeague[type] <= 0) continue;
-    // Any class-filtered search names the class dictionary; the unfiltered one is enough.
     const first = await ninja(`api/builds/${snap.version}/search?overview=${encodeURIComponent(snap.snapshotName)}`);
     const firstBody = new Uint8Array(await first.arrayBuffer());
     const dictHash = pbFields(pbFields(firstBody).find((f) => f.no === 1)!.v as Uint8Array)

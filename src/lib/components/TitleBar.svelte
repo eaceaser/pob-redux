@@ -21,7 +21,6 @@
     build.view = id;
   }
 
-  // A narrow window scrolls the tab strip; keep the active tab in sight.
   $effect(() => {
     void build.view;
     void appOptions.open;
@@ -407,8 +406,6 @@
     background: #c42b1c;
     color: #fff;
   }
-  /* Below this width the full title bar no longer fits: the brand gives up its
-     sidebar-wide column and its name, and the tabs tighten. */
   @media (max-width: 1360px) {
     .brand.wide {
       width: auto;

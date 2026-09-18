@@ -56,7 +56,6 @@
   --c-spirit: #f0cf74;
   --c-currency: #cba64c;
 
-  /* Primary buttons and the active tab line; plain ink unless a theme gives it a colour. */
   --accent: var(--fg-0);
   --accent-fg: var(--bg-0);
   --primary-hover: #ffffff;
@@ -120,9 +119,6 @@
   --shadow-modal: 0 12px 40px rgba(30, 30, 40, 0.2);
 }
 
-/* Wraeclast: a dim, warm ground between Dark and Light. Parchment text on
-   grey-brown with crimson for primary actions; the game colours are lifted a
-   little to hold contrast on the lighter ground. */
 :root[data-theme="wraeclast"] {
   color-scheme: dark;
 
@@ -430,7 +426,7 @@ kbd {
   border: 1px solid var(--line-0);
   border-radius: var(--r-2);
 }
-/* In-view dialogs stay inside their backdrop at any interface scale and scroll instead. */
+/* Dialogs scroll instead of spilling out at high interface scales. */
 .panel.dialog {
   max-width: calc(100% - 24px);
   max-height: calc(100% - 24px);

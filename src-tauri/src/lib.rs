@@ -41,20 +41,16 @@ pub(crate) struct AppState {
     pub(crate) mcp: mcp::McpState,
     /// True until a game has been chosen, inferred from a file, or set by env.
     first_run: std::sync::atomic::AtomicBool,
-    /// A pob:// or pob2:// link waiting for the frontend to open.
     pending_link: std::sync::Mutex<Option<links::Link>>,
     session: SessionInfo,
     /// Cleared once the page has asked, so a reload does not offer recovery twice.
     recovery_pending: std::sync::atomic::AtomicBool,
 }
 
-/// How the last run ended and whether to skip reopening its build.
 #[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 struct SessionInfo {
-    /// The last run did not exit cleanly.
     unclean_exit: bool,
-    /// `--safe-mode` or POB_REDUX_SAFE_MODE: start without reopening the last build.
     safe_mode: bool,
 }
 
@@ -62,11 +58,7 @@ fn session_marker(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("session.lock"))
 }
 
-/// A marker file lives for as long as the app runs, so one found at start means
-/// the last run crashed or was killed. A running instance holds one too, so it
-/// only counts when no other instance answers. The Windows updater ends the
-/// process without an exit event, so a marker from another version means an
-/// update.
+/// A leftover marker means a crash, unless another instance runs or another version (an update) wrote it.
 fn begin_session(app: &tauri::AppHandle) -> SessionInfo {
     let safe_mode = std::env::args().any(|a| a == "--safe-mode") || std::env::var_os("POB_REDUX_SAFE_MODE").is_some();
     let Some(marker) = session_marker(app) else {
@@ -84,7 +76,6 @@ fn begin_session(app: &tauri::AppHandle) -> SessionInfo {
     SessionInfo { unclean_exit, safe_mode }
 }
 
-/// The crash flag is reported once per launch; safe mode holds for the whole run.
 #[tauri::command]
 fn session_info(state: State<'_, AppState>) -> SessionInfo {
     SessionInfo {
@@ -93,7 +84,6 @@ fn session_info(state: State<'_, AppState>) -> SessionInfo {
     }
 }
 
-/// Write a diagnostics report to `path` for a bug report.
 #[tauri::command]
 async fn export_diagnostics(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
     let engine = state.engine().status();
@@ -260,8 +250,6 @@ async fn power_scan_parallel(
     .map_err(|e| e.to_string())?
 }
 
-/// Spend a passive point budget for one stat, each pick scored across the pool
-/// from the tree the earlier picks leave. The build itself is not changed.
 #[tauri::command]
 async fn plan_points_parallel(state: State<'_, AppState>, stat: String, budget: u32) -> Result<CallResult, String> {
     let engine = state.engine();
@@ -555,25 +543,21 @@ async fn mobalytics_resolve(url: String) -> Result<mobalytics::Resolved, String>
     mobalytics::resolve(&url).await
 }
 
-/// Path of Exile 1 characters on a public account.
 #[tauri::command]
 async fn character_list(realm: String, account: String) -> Result<character::CharacterList, String> {
     character::list(&realm, &account).await
 }
 
-/// One Path of Exile 1 character's passive tree and items, as JSON text for import_character.
 #[tauri::command]
 async fn character_data(realm: String, account: String, character: String) -> Result<character::CharacterData, String> {
     character::data(&realm, &account, &character).await
 }
 
-/// Characters on a poe.ninja profile, for the current game.
 #[tauri::command]
 async fn ninja_characters(state: State<'_, AppState>, account: String) -> Result<ninja::CharacterList, String> {
     ninja::list(state.game(), &account).await
 }
 
-/// The PoB code poe.ninja keeps for one character, for load_build_code.
 #[tauri::command]
 async fn ninja_character_code(state: State<'_, AppState>, account: String, character: String, league: String) -> Result<String, String> {
     ninja::build_code(state.game(), &account, &character, &league).await
@@ -1161,8 +1145,7 @@ fn serve_pob_asset(
     }
 }
 
-/// The link this launch was opened with: a command-line argument on Windows and
-/// Linux, the deep-link plugin's launch URL on macOS.
+/// Windows and Linux pass the launch link as an argument; macOS through the deep-link plugin.
 fn start_link(app: &tauri::AppHandle) -> Option<links::Link> {
     if let Some(link) = links::from_args() {
         return Some(link);
@@ -1177,7 +1160,6 @@ fn start_link(app: &tauri::AppHandle) -> Option<links::Link> {
     None
 }
 
-/// Queue a link for the page, bring the window forward and tell the page.
 fn deliver_link(app: &tauri::AppHandle, link: links::Link) {
     log::info!("link: {}", link.url);
     *app.state::<AppState>().pending_link.lock().unwrap() = Some(link);
@@ -1188,8 +1170,6 @@ fn deliver_link(app: &tauri::AppHandle, link: links::Link) {
     let _ = app.emit("open-link", ());
 }
 
-/// Links that arrive while the app runs: hand-offs from later processes and,
-/// on macOS, the system's open-URL events.
 fn watch_links(app: &tauri::AppHandle) {
     let handle = app.clone();
     links::listen(move |link| deliver_link(&handle, link));
@@ -1214,7 +1194,6 @@ fn watch_links(app: &tauri::AppHandle) {
     }
 }
 
-/// The link waiting to be opened, if any. Taking it clears it.
 #[tauri::command]
 fn take_open_link(state: State<'_, AppState>) -> Option<links::Link> {
     state.pending_link.lock().unwrap().take()

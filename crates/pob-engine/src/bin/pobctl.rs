@@ -76,8 +76,7 @@ enum Cmd {
         #[arg(long, default_value_t = 4)]
         pool: usize,
     },
-    /// Point planner: spend a budget on the tree across the pool, then check the
-    /// summed round gains against one calc that adds every planned node at once.
+    /// Point planner: spend a budget on the tree and check it against one calc.
     Plan {
         file: PathBuf,
         #[arg(long, default_value = "Life")]
@@ -87,9 +86,7 @@ enum Cmd {
         #[arg(long, default_value_t = 4)]
         pool: usize,
     },
-    /// Corpus bench: run the tree planner and the gear optimiser on each usable
-    /// stage of a corpus index (scripts/corpus/ingest.ts) and append one JSON
-    /// line per stage to --out. Stages already in --out are skipped.
+    /// Run the tree planner and gear optimiser on a corpus index (scripts/corpus).
     Corpus {
         index: PathBuf,
         #[arg(long)]
@@ -97,12 +94,12 @@ enum Cmd {
         /// Planner budget in passive points.
         #[arg(long, default_value_t = 10)]
         budget: u32,
-        /// Stats the planner spends the budget on, one plan each.
+        /// Stats to plan for, one plan each.
         #[arg(long, value_delimiter = ',', default_value = "Life,CombinedDPS")]
         stats: Vec<String>,
         #[arg(long, default_value_t = 4)]
         pool: usize,
-        /// At most this many stages per ascendancy, mixing ladder, guide and file stages.
+        /// At most this many stages per ascendancy.
         #[arg(long)]
         per_ascendancy: Option<usize>,
         #[arg(long)]
@@ -181,8 +178,6 @@ struct CorpusOpts {
     no_tree: bool,
 }
 
-/// Usable stages (not a duplicate, no flags), optionally capped per ascendancy
-/// with ladder, guide and file stages taken in turn.
 fn corpus_selection(index: &Value, per_ascendancy: Option<usize>) -> Vec<Value> {
     let usable: Vec<&Value> = index["stages"]
         .as_array()

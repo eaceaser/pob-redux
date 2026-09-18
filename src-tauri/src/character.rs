@@ -1,22 +1,14 @@
-//! Path of Exile 1 character import by account name, the way PoB's Import tab
-//! does it without signing in: pathofexile.com's public character-window
-//! endpoints list an account's characters and return one character's passive
-//! tree and items. The account's profile and characters tab must be public.
-//! Path of Exile 2 has no public equivalent; its import needs OAuth.
-
 use serde::Serialize;
 use serde_json::Value;
 
 const HOST: &str = "https://www.pathofexile.com/";
-/// pathofexile.com's profile pages answer only user agents that start with
-/// "Path of Building", as PoB itself sends.
+/// pathofexile.com's profile pages only answer user agents starting with "Path of Building".
 const UA: &str = "Path of Building (PoB Redux)";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterList {
-    /// The account name with GGG's own casing, which the passive and item
-    /// endpoints need even though the list endpoint ignores case.
+    /// GGG's casing, which the passive and item endpoints need.
     pub account: String,
     pub characters: Vec<Value>,
 }
@@ -36,8 +28,6 @@ fn realm_code(realm: &str) -> Result<&'static str, String> {
     }
 }
 
-/// PoB's rules: PC names lose every space, console names keep inner spaces as
-/// `+`, and the last `#` or `-` is the discriminator separator `#`.
 fn normalise_account(realm: &str, name: &str) -> String {
     let name = if realm == "pc" {
         name.chars().filter(|c| !c.is_whitespace()).collect::<String>()
@@ -61,8 +51,7 @@ pub(crate) fn query_value(s: &str) -> String {
     out
 }
 
-/// Account names go through as PoB sends them: only `#` is escaped, so a
-/// console name's `+` still reads as a space.
+/// Only `#` is escaped, so a console name's `+` still reads as a space.
 fn account_param(account: &str) -> String {
     account.replace('#', "%23")
 }
@@ -118,8 +107,6 @@ pub async fn list(realm: &str, account: &str) -> Result<CharacterList, String> {
     Ok(CharacterList { account: real, characters })
 }
 
-/// The account name as pathofexile.com spells it, in the `name-1234` form its
-/// profile links use. `account` is in the `name#1234` form.
 async fn profile_name(client: &reqwest::Client, account: &str) -> Option<String> {
     let page = match get(client, &format!("{HOST}account/view-profile/{}", account_param(account))).await {
         Ok(page) => page,
@@ -136,7 +123,6 @@ async fn profile_name(client: &reqwest::Client, account: &str) -> Option<String>
     })
 }
 
-/// [`profile_name`] with its own client, for lookups outside this module.
 pub(crate) async fn account_casing(account: &str) -> Option<String> {
     profile_name(&client().ok()?, account).await
 }

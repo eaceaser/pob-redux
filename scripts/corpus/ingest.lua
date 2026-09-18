@@ -1,7 +1,4 @@
--- Corpus ingest, run inside pobctl's engine by scripts/corpus/ingest.ts:
---   pobctl eval "JOB=[[job.json]] OUT=[[stages.jsonl]] XMLDIR=[[dir]] return dofile([[ingest.lua]])"
--- Loads each source build, walks every loadout, and appends one JSON line per
--- stage to OUT. The build XML is saved once per source to XMLDIR for the bench.
+-- pobctl eval "JOB=[[job.json]] OUT=[[stages.jsonl]] XMLDIR=[[dir]] return dofile([[ingest.lua]])"
 
 local B = __bridge
 local dkjson = require("dkjson")
@@ -35,15 +32,13 @@ local function sanitize(v)
 	return setmetatable(out, getmetatable(v))
 end
 
--- A minion skill's damage lives on the minion's output, not the player's.
 local function effectiveDps(out)
 	local own = out.CombinedDPS or 0
 	local minion = out.Minion and (out.Minion.CombinedDPS or out.Minion.TotalDPS) or 0
 	return math.max(own, minion)
 end
 
--- A ladder export often keeps an aura or companion as the main skill, which
--- shows 0 DPS. Use the enabled group with the highest DPS instead.
+-- Ladder exports often keep an aura or companion as the main skill, which shows 0 DPS.
 local function fixMainSkill(bd)
 	local out = bd.calcsTab.mainOutput or {}
 	if effectiveDps(out) > 0 then return nil end
@@ -80,11 +75,10 @@ local function stageRecord(src, loadoutName)
 
 	local nodes, ascNodes = {}, {}
 	for id, node in pairs(spec.allocNodes) do
-		if node.type == "ClassStart" or node.type == "AscendClassStart" then
-			-- starts come free with the class
-		elseif node.ascendancyName then
+		local start = node.type == "ClassStart" or node.type == "AscendClassStart"
+		if not start and node.ascendancyName then
 			ascNodes[#ascNodes + 1] = id
-		else
+		elseif not start then
 			nodes[#nodes + 1] = id
 		end
 	end

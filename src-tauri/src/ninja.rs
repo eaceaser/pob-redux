@@ -1,7 +1,3 @@
-//! Character import from poe.ninja profiles, for both games. poe.ninja keeps a
-//! PoB export for each character on its build ladders; the profile lists every
-//! character it knows and says why the others have no build.
-
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -47,16 +43,12 @@ pub struct Character {
     pub league_url: String,
     pub updated: Option<String>,
     pub is_current: bool,
-    /// poe.ninja's word for the character: "listed" when it has a build, else
-    /// the reason it has none ("belowCutoff", "leagueEnded", "inactive",
-    /// "notFetched"), or "unlisted" when it gives no reason.
     pub status: String,
     pub min_level: Option<u32>,
 }
 
 #[derive(Serialize)]
 pub struct CharacterList {
-    /// The account name as poe.ninja spells it, in the `name#1234` form.
     pub account: String,
     pub characters: Vec<Character>,
 }
@@ -83,7 +75,6 @@ struct CharacterBuild {
     path_of_building_export: Option<String>,
 }
 
-/// poe.ninja's form of an account name: no spaces, and `-` before the digits.
 fn ninja_account(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_whitespace()).collect();
     match name.rfind(['#', '-']) {
@@ -103,7 +94,6 @@ fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder().user_agent(UA).build().map_err(|e| e.to_string())
 }
 
-/// The body of a GET, or None on 404.
 async fn get(client: &reqwest::Client, url: &str) -> Result<Option<String>, String> {
     let resp = client.get(url).timeout(Duration::from_secs(20)).send().await.map_err(|e| format!("poe.ninja: {e}"))?;
     let status = resp.status().as_u16();
@@ -115,9 +105,7 @@ async fn get(client: &reqwest::Client, url: &str) -> Result<Option<String>, Stri
     }
 }
 
-/// The profile's current character list version, which poe.ninja's site puts
-/// in the list URL; the list response is cached per version. None when poe.ninja
-/// has no profile under that exact name, which is case-sensitive.
+/// poe.ninja caches the character list per version and matches the account name case-sensitively.
 async fn profile_version(client: &reqwest::Client, game: Game, account: &str) -> Result<Option<u64>, String> {
     let url = format!("{HOST}{}/api/events/characters/{account}", game.id());
     let mut resp = client
@@ -167,7 +155,6 @@ pub async fn list(game: Game, account: &str) -> Result<CharacterList, String> {
     let client = client()?;
     let mut version = profile_version(&client, game, &account).await?;
     if version.is_none() {
-        // poe.ninja matches the name's case exactly; pathofexile.com knows the right case
         if let Some(real) = crate::character::account_casing(&hash_account(&account)).await.filter(|r| *r != account) {
             version = profile_version(&client, game, &real).await?;
             account = real;
@@ -197,7 +184,6 @@ pub async fn list(game: Game, account: &str) -> Result<CharacterList, String> {
     Ok(CharacterList { account, characters })
 }
 
-/// The PoB code poe.ninja keeps for one listed character.
 pub async fn build_code(game: Game, account: &str, character: &str, league_url: &str) -> Result<String, String> {
     const NO_BUILD: &str = "poe.ninja has no build for that character.";
     let client = client()?;

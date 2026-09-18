@@ -131,8 +131,6 @@ impl EnginePool {
         self.workers()?.0.iter().map(|w| w.eval(code)).collect()
     }
 
-    /// Call `method` on every worker at once, for a change all of them must
-    /// make. Results come back in worker order.
     pub fn call_all(&self, method: &str, params: Value) -> Result<Vec<Value>> {
         let (ws, _) = self.workers()?;
         std::thread::scope(|s| {
@@ -147,8 +145,7 @@ impl EnginePool {
         })
     }
 
-    /// Mark the workers as holding an unknown build, after a caller changed
-    /// them directly, so the next sync loads the build in full.
+    /// Call after changing workers directly, so the next sync reloads the build in full.
     pub fn forget_sync(&self) {
         *self.synced_xml.lock().unwrap() = None;
     }
@@ -361,19 +358,8 @@ pub fn jewel_scan(engine: &EngineHandle, pool: &EnginePool, params: Value) -> Re
     Ok(engine.call("jewel_finish", serde_json::json!({ "results": results }))?.result)
 }
 
-/// Candidates the planner re-scores each round, taken from the power scan.
 const PLAN_CANDIDATES: usize = 48;
 
-/// Spend `budget` passive points on the main engine's build for one stat.
-///
-/// A node power scan picks the candidates: notables and small passives, since a
-/// keystone changes how a build works rather than adding to one stat. Each
-/// round every worker holds the picks made so far, scores the candidates from
-/// that state (PoB re-paths them, so shared travel nodes stop counting), and
-/// the best gain per point is allocated on every worker. Each gain is measured against the real tree
-/// at that point, so the total is exact rather than a sum of independent
-/// estimates. The workers end up holding the planned tree, so the pool
-/// reloads the build on its next sync.
 pub fn plan_points(engine: &EngineHandle, pool: &EnginePool, stat: &str, budget: u32) -> Result<Value> {
     let t0 = Instant::now();
     let scan = power_scan(engine, pool, Some(stat), Some(budget as f64))?;

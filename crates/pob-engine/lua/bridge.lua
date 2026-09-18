@@ -1290,10 +1290,7 @@ M.get_tree_state = function()
 		ascendClassName = opt(spec.curAscendClassName),
 		allocatedNodes = alloc,
 		allocatedNodeCount = #alloc,
-		-- PoB's `used` counts every non-ascendancy node, weapon-set nodes included.
-		-- A point buys a node in either weapon set, so PoB charges the budget for
-		-- the larger set only. Compare a point budget against passivePointsSpent,
-		-- never pointsUsed.
+		-- A point buys a node in either weapon set, so PoB charges only the larger set.
 		pointsUsed = used,
 		passivePointsSpent = used - math.min(ws1Used, ws2Used),
 		mainTreePointsUsed = used - ws1Used - ws2Used,
@@ -1310,7 +1307,6 @@ M.get_tree_state = function()
 		pointsFromLevels = math.max(0, level - 1),
 		questPointsMin = questLow,
 		questPointsMax = questHigh,
-		-- Points granted by items and passives on top of levels and quests.
 		extraPoints = extra,
 		pointsAvailableMin = math.max(0, level - 1) + questLow + extra,
 		pointsAvailableMax = math.max(0, level - 1) + questHigh + extra,
@@ -1860,9 +1856,7 @@ M.score_nodes = function(p)
 	return withoutFullDPS(scoreNodes, p)
 end
 
--- Point planner, worker side: allocate one node along PoB's own path and
--- recalculate, so the next scoring round starts from the new tree. Never
--- called on the main engine, whose tree stays the user's.
+-- Worker side of the point planner; the main engine's tree is never changed.
 M.plan_alloc = function(p)
 	ensureBuild()
 	local node = requireNode(p)
@@ -4929,14 +4923,7 @@ M.trade_leagues = function()
 	return { leagues = leagues }
 end
 
--- ---------------------------------------------------------------------------
--- Character import by account name (PoE1). The host fetches the character's
--- passive tree and items from pathofexile.com; PoB's own ImportTab turns them
--- into a new build, as its account-name import does.
--- params: { character = <entry from get-characters>, passives = <JSON text>,
---           items = <JSON text>, name }
--- ---------------------------------------------------------------------------
-
+-- PoE1 only: the host fetches the character from pathofexile.com and PoB's ImportTab builds it.
 M.import_character = function(p)
 	if IS_POE2 then error("importing a character by account name works for Path of Exile 1 only", 0) end
 	if not p or type(p.character) ~= "table" or type(p.passives) ~= "string" or type(p.items) ~= "string" then
@@ -4952,7 +4939,6 @@ M.import_character = function(p)
 	build = main.modes["BUILD"]
 	ensureBuild()
 	local importTab = build.importTab
-	-- account-name imports carry no quest choices; keep the new build's
 	passives.bandit_choice = passives.bandit_choice or build.configTab.input.bandit
 	passives.pantheon_major = passives.pantheon_major or build.configTab.input.pantheonMajorGod
 	passives.pantheon_minor = passives.pantheon_minor or build.configTab.input.pantheonMinorGod
@@ -6756,13 +6742,7 @@ M.compare_copy_item = function(p)
 	return { ok = true, slot = slotName, itemName = item.name }
 end
 
--- ---------------------------------------------------------------------------
--- Buy similar: PoB's Compare-tab trade search for one item. The rows come
--- from CompareBuySimilar.addModEntries; the URL from the module's own
--- buildURL, read off its popup as an upvalue and given a table shaped like
--- the popup's controls, so the query matches what PoB would open.
--- ---------------------------------------------------------------------------
-
+-- The trade URL comes from CompareBuySimilar's own buildURL, read as an upvalue of its popup.
 local buySimilar, buySimilarUrl, buySimilarListed, buySimilarHelpers
 
 local function buySimilarModule()
@@ -6786,8 +6766,7 @@ local function buySimilarModule()
 	return buySimilar
 end
 
--- Trade categories are keyed by slot; an item that is not equipped borrows
--- the slot its type would go in.
+-- An unequipped item borrows the trade category of the slot its type goes in.
 local BUY_SIMILAR_TYPE_SLOT = {
 	["Body Armour"] = "Body Armour", Helmet = "Helmet", Gloves = "Gloves", Boots = "Boots",
 	Amulet = "Amulet", Ring = "Ring 1", Belt = "Belt", Jewel = "Jewel", Flask = "Flask 1",
@@ -7437,7 +7416,6 @@ local OPT_HEADLINE = { "Life", "EnergyShield", "TotalEHP", "Armour", "CombinedDP
 
 local gearOpt = nil
 
--- A minion skill's damage is on the minion's output, not the player's.
 local function optMinionDps(o)
 	return o.Minion and (o.Minion.CombinedDPS or o.Minion.TotalDPS) or 0
 end
@@ -7462,8 +7440,6 @@ local function optScore(o, base, w, cfg)
 	local function dps(x)
 		return math.max(x.CombinedDPS or 0, x.MinionDPS or optMinionDps(x))
 	end
-	-- The life weight covers the whole hit pool, so an energy shield or Chaos
-	-- Inoculation build is scored on the pool it actually stacks.
 	local function pool(x)
 		return (x.Life or 0) + (x.EnergyShield or 0)
 	end
@@ -7782,7 +7758,7 @@ local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
 		bestOutput = bestOut
 	end
 	if #chosen.prefixes + #chosen.suffixes == 0 then return nil, "no affix improved the build" end
-	-- The search starts from an empty base, so it also has to beat the item the slot holds now.
+	-- The search starts from an empty base, so it must also beat the current item.
 	if current and bestScore <= optScore(withoutFullDPS(calcFunc, {}), base, w, cfg) + 1e-9 then
 		return nil, "the current item scores higher"
 	end
@@ -8780,8 +8756,7 @@ M.build_summary = function()
 		-- Shield): present because of the item, not chosen, not counted above.
 		grantedSkills = granted,
 		skills = skills,
-		-- pointsUsed counts weapon-set nodes too. PoB charges the budget for the
-		-- larger weapon set only, which is passivePointsSpent.
+		-- A point buys a node in either weapon set, so PoB charges only the larger set.
 		pointsUsed = used,
 		passivePointsSpent = used - math.min(ws1, ws2),
 		extraPoints = o.ExtraPoints or 0,
@@ -8842,7 +8817,7 @@ M.sanity_check = function()
 			"Chaos damage removes twice as much energy shield, and poison bypasses it entirely.")
 	end
 
-	-- Most level 90+ ladder characters (Sept 2026) hold one point more than PoB's quest data allows.
+	-- Live characters hold one point more than PoB's quest data allows.
 	if s.passivePointsSpent > s.pointsAvailableMax + 1 then
 		add("high", "passive points", string.format("%d passive points spent but at level %d the maximum is %d", s.passivePointsSpent, s.characterLevel, s.pointsAvailableMax),
 			"Either the level is unset or the tree is over budget. Call set_level if the level is wrong.")

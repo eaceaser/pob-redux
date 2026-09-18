@@ -173,7 +173,6 @@
   ];
   let treeStat = $state("Life");
   let treeStatChosen = false;
-  // A life scan gives an energy shield build nothing, so those start on ES.
   $effect(() => {
     if (!treeStatChosen && summary) treeStat = summary.energyShield > summary.life ? "EnergyShield" : "Life";
   });
@@ -216,7 +215,6 @@
     treeStale = planStale = true;
   }
 
-  // Plan: the best way to spend a number of points, pick by pick.
   let planBudget = $state<number | null>(null);
   let planRunning = $state(false);
   let plan = $state<PointPlan | null>(null);

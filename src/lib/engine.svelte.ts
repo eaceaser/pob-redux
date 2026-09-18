@@ -156,7 +156,6 @@ export interface PointPlanPick {
   type: string | null;
   /** Points this pick allocates, travel nodes included. */
   cost: number;
-  /** Gain measured from the tree the earlier picks leave. */
   gain: number;
   path: number[];
 }
@@ -171,7 +170,6 @@ export interface PointPlan {
   ms: number;
 }
 
-/** Plan how to spend `budget` passive points for one stat. Leaves the build unchanged. */
 export function planPointsParallel(stat: string, budget: number): Promise<{ result: PointPlan; elapsed_ms: number }> {
   return invoke<{ result: PointPlan; elapsed_ms: number }>("plan_points_parallel", { stat, budget });
 }
@@ -210,22 +208,18 @@ export function resolveMobalytics(url: string): Promise<MobalyticsBuild> {
   return invoke<MobalyticsBuild>("mobalytics_resolve", { url });
 }
 
-/** How the last run ended; `safeMode` skips reopening its build. */
 export function sessionInfo(): Promise<{ uncleanExit: boolean; safeMode: boolean }> {
   return invoke<{ uncleanExit: boolean; safeMode: boolean }>("session_info");
 }
 
-/** Write a diagnostics report (app details and recent logs, secrets masked) to `path`. */
 export function exportDiagnostics(path: string): Promise<void> {
   return invoke<void>("export_diagnostics", { path });
 }
 
-/** Show the app log folder in the file manager. */
 export function revealLogs(): Promise<string> {
   return invoke<string>("reveal_logs");
 }
 
-/** One entry of pathofexile.com's character list. */
 export interface GameCharacter {
   name: string;
   realm: string;
@@ -235,25 +229,21 @@ export interface GameCharacter {
   lastLoginTime?: number;
 }
 
-/** Path of Exile 1 characters on a public account. `account` comes back with GGG's casing. */
+/** `account` comes back with GGG's casing. */
 export function characterList(realm: string, account: string): Promise<{ account: string; characters: GameCharacter[] }> {
   return invoke<{ account: string; characters: GameCharacter[] }>("character_list", { realm, account });
 }
 
-/** One character's passive tree and items, as JSON text for `engine.importCharacter`. */
 export function characterData(realm: string, account: string, character: string): Promise<{ passives: string; items: string }> {
   return invoke<{ passives: string; items: string }>("character_data", { realm, account, character });
 }
 
-/** One character on a poe.ninja profile. */
 export interface NinjaCharacter {
   name: string;
   className: string | null;
   level: number;
   league: string;
-  /** poe.ninja's id for the league, which the build lookup needs. */
   leagueUrl: string;
-  /** When poe.ninja last saved the character, as an ISO time. */
   updated: string | null;
   isCurrent: boolean;
   /** "listed" when poe.ninja has the build; otherwise its reason: "belowCutoff", "leagueEnded", "inactive", "notFetched" or "unlisted". */
@@ -261,12 +251,11 @@ export interface NinjaCharacter {
   minLevel: number | null;
 }
 
-/** Characters on a poe.ninja profile, for the current game. `account` comes back as poe.ninja spells it. */
+/** `account` comes back as poe.ninja spells it. */
 export function ninjaCharacters(account: string): Promise<{ account: string; characters: NinjaCharacter[] }> {
   return invoke<{ account: string; characters: NinjaCharacter[] }>("ninja_characters", { account });
 }
 
-/** The PoB code poe.ninja keeps for one listed character. */
 export function ninjaCharacterCode(account: string, character: string, league: string): Promise<string> {
   return invoke<string>("ninja_character_code", { account, character, league });
 }
@@ -480,7 +469,6 @@ export interface TreeState {
   pointsUsed: number;
   /** What PoB charges the budget: main-tree nodes plus the larger weapon set. */
   passivePointsSpent: number;
-  /** Main-tree nodes only, without either weapon set. */
   mainTreePointsUsed: number;
   ascendancyPointsUsed: number;
   secondaryAscendancyPointsUsed: number;
@@ -493,7 +481,6 @@ export interface TreeState {
   /** Quest points depend on campaign progress, not level, so the budget is a range. */
   questPointsMin: number;
   questPointsMax: number;
-  /** Points from items and passives, included in pointsAvailableMin and pointsAvailableMax. */
   extraPoints: number;
   pointsAvailableMin: number;
   pointsAvailableMax: number;
@@ -1283,7 +1270,6 @@ export interface CompareLoadout {
   socketGroups: { index: number; label: string; active: boolean }[];
 }
 
-/** An item in this build by id, or an equipped item on either side of the Compare tab. */
 export type BuySimilarTarget = { itemId: number } | { slot: string; side: "mine" | "theirs" };
 
 export interface BuySimilarInfo {
@@ -1579,7 +1565,7 @@ export const engine = {
   tradeStatusOptions: () => call<{ options: { id: string; label: string }[] }>("trade_status_options"),
   tradeLeagues: () => call<{ leagues: { id: string; text: string; realm: string | null }[] }>("trade_leagues"),
   importGameBuild: (json: string, name?: string) => call<GameBuildImportResult>("import_game_build", { json, name }),
-  /** PoE1: a new build from a character's fetched passive tree and items, through PoB's Import tab. */
+  /** PoE1 only. */
   importCharacter: (p: { character: GameCharacter; passives: string; items: string; name?: string }) =>
     call<BuildInfo>("import_character", p),
   exportGameBuild: (meta?: { author?: string; link?: string; description?: string }) =>

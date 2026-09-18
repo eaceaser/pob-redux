@@ -1,18 +1,5 @@
 #!/usr/bin/env bun
-/**
- * Load every corpus source in PoB and write the cleaned stage index.
- *
- *   bun scripts/corpus/ingest.ts [--jobs 4] [--batch 30]
- *
- * Sources: corpus/files/**\/*.build (added by hand), corpus/raw/guides (Build
- * Planner variants and attached PoB codes) and corpus/raw/ladder (poe.ninja
- * characters). Each is loaded by scripts/corpus/ingest.lua inside pobctl; every
- * loadout becomes a stage. Output, all under corpus/ (not committed):
- *   stages.jsonl  one line per stage, with nodes, items, skills and stats
- *   xml/<id>.xml  the loaded build, for the bench
- *   index.json    stage metadata with labels, gear status, flags, duplicates
- *   report.md     counts and problems for a person to read
- */
+// bun scripts/corpus/ingest.ts [--jobs 4] [--batch 30] [--clean-only]
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { createHash } from "node:crypto";
@@ -127,8 +114,7 @@ async function runBatches(sources: Source[]) {
   await rm(WORK, { recursive: true, force: true });
   await mkdir(WORK, { recursive: true });
   await mkdir(join(CORPUS, "xml"), { recursive: true });
-  // Lua's io.open on Windows cannot open paths outside the ANSI code page, and
-  // ladder file names carry accounts in any script; the engine reads copies.
+  // Lua's io.open cannot open non-ANSI Windows paths, so the engine reads ASCII-named copies.
   await mkdir(join(WORK, "in"), { recursive: true });
   for (const s of sources) await Bun.write(join(WORK, "in", s.id), Bun.file(s.path));
   const batches: Source[][] = [];
@@ -153,10 +139,6 @@ async function runBatches(sources: Source[]) {
   };
   await Promise.all(Array.from({ length: Math.min(JOBS, batches.length) }, worker));
 }
-
-// ---------------------------------------------------------------------------
-// Cleaning
-// ---------------------------------------------------------------------------
 
 interface Stage {
   source: string;
@@ -196,8 +178,7 @@ function stageKind(text: string | null | undefined, level: number, kind: Kind): 
 function gearStatus(items: Stage["items"]): "none" | "bases" | "full" {
   const gear = items.filter((i) => !/flask|charm/i.test(i.slot));
   if (gear.length === 0) return "none";
-  // Build Planner files carry bases and uniques; the import names their rares
-  // "Imported <base>" and gives them no real mods.
+  // Build Planner rares import as "Imported <base>" placeholders.
   const rares = gear.filter((i) => i.rarity !== "UNIQUE");
   return rares.length > 0 && rares.every((i) => i.explicit === 0 || i.name.startsWith("Imported ")) ? "bases" : "full";
 }

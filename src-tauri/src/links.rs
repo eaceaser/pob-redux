@@ -1,12 +1,3 @@
-//! `pob://` and `pob2://` links: the schemes Path of Building registers for the
-//! "Open in PoB" buttons on build sites, for Path of Exile 1 and 2. A link names
-//! a site and a build id, and maps to that site's ordinary share link.
-//!
-//! On Windows and Linux a clicked link starts a new process. A running instance
-//! listens on loopback, and the new process hands it the link and exits, so the
-//! build opens in the window already on screen. Several instances can still run
-//! side by side; links go to the one started last.
-
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -19,7 +10,6 @@ use crate::game::Game;
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Link {
     pub game: Game,
-    /// The site's share link, which the importer already understands.
     pub url: String,
 }
 
@@ -53,7 +43,6 @@ pub fn parse(raw: &str) -> Option<Link> {
     };
     let rest = rest.trim_start_matches(['/', '\\']);
     let (site, id) = rest.split_once(['/', '\\'])?;
-    // browsers and shells can add a trailing slash
     let id = id.trim_matches(['/', '\\']);
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~')) {
         return None;
@@ -62,7 +51,6 @@ pub fn parse(raw: &str) -> Option<Link> {
     Some(Link { game, url: format!("{prefix}{id}") })
 }
 
-/// The first link on this process's command line.
 pub fn from_args() -> Option<Link> {
     std::env::args().skip(1).find_map(|a| parse(&a))
 }
@@ -71,7 +59,6 @@ fn handoff_file() -> PathBuf {
     std::env::temp_dir().join("pob-redux-links.json")
 }
 
-/// Whether another instance is listening for links, i.e. still running.
 pub fn instance_running() -> bool {
     let Ok(text) = std::fs::read_to_string(handoff_file()) else { return false };
     let Ok(info) = serde_json::from_str::<serde_json::Value>(&text) else { return false };
@@ -79,7 +66,6 @@ pub fn instance_running() -> bool {
     TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port as u16)), Duration::from_millis(300)).is_ok()
 }
 
-/// Give `link` to a running instance. True when one accepted it.
 pub fn hand_off(raw: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(handoff_file()) else { return false };
     let Ok(info) = serde_json::from_str::<serde_json::Value>(&text) else { return false };
@@ -96,7 +82,6 @@ pub fn hand_off(raw: &str) -> bool {
     BufReader::new(stream).read_line(&mut reply).is_ok() && reply.trim() == "ok"
 }
 
-/// Accept links from later processes, passing each parsed one to `deliver`.
 /// The token in the hand-off file keeps other local programs from injecting links.
 pub fn listen(deliver: impl Fn(Link) + Send + 'static) {
     let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) else { return };

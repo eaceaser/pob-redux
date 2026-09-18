@@ -145,7 +145,6 @@ fn stored_key(app: &AppHandle, id: &str) -> Option<String> {
     key_file::read(app, id).or_else(|| entry(id).ok().and_then(|e| e.get_password().ok()))
 }
 
-/// Every stored provider key, for masking in diagnostics reports.
 pub(crate) fn stored_keys(app: &AppHandle) -> Vec<String> {
     PROVIDERS.iter().filter_map(|p| stored_key(app, p.id)).collect()
 }

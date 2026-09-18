@@ -5,7 +5,6 @@ import { mount } from "svelte";
 import { invoke } from "@tauri-apps/api/core";
 import App from "./App.svelte";
 
-// Uncaught page errors go to the app log, so a diagnostics report carries them.
 const logError = (message: string) => void invoke("log_frontend", { level: "error", message }).catch(() => {});
 window.addEventListener("error", (e) => logError(`${e.message} (${e.filename}:${e.lineno}:${e.colno})`));
 window.addEventListener("unhandledrejection", (e) => {

@@ -2,7 +2,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const KEY = "pob-redux:ui";
-/** The window's minimum size in tauri.conf.json, which every view is laid out to fit. */
+/** Must match the window's minimum size in tauri.conf.json. */
 const LAYOUT_MIN_W = 1100;
 const LAYOUT_MIN_H = 680;
 
@@ -24,7 +24,6 @@ class UiStore {
   contrastAuto = $state(true);
   contrastLevel = $state(0);
   scale = $state(1);
-  /** The zoom in force: the chosen scale, lowered so the layout still fits the window. */
   scaleApplied = $state(1);
 
   private systemLight = window.matchMedia("(prefers-color-scheme: light)");

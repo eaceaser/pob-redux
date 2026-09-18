@@ -1,9 +1,5 @@
 #!/usr/bin/env bun
-/**
- * Compare two bench runs (pobctl corpus) on the stages both contain.
- *
- *   bun scripts/corpus/compare.ts corpus/bench-baseline.jsonl corpus/bench.jsonl
- */
+// bun scripts/corpus/compare.ts <before.jsonl> <after.jsonl>
 const [aPath, bPath] = process.argv.slice(2);
 if (!aPath || !bPath) {
   console.error("usage: compare.ts <before.jsonl> <after.jsonl>");
