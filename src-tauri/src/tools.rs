@@ -1262,7 +1262,7 @@ mod tests {
     #[test]
     fn registry_is_stable_and_measured() {
         let d = defs();
-        assert_eq!(d.len(), 75, "tool count changed");
+        assert_eq!(d.len(), 76, "tool count changed");
 
         let mut names: Vec<&str> = d.iter().map(|t| t.name).collect();
         names.sort_unstable();
