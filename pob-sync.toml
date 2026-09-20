@@ -4,13 +4,11 @@
 #
 # Bump `commit` deliberately: it is the upstream revision the engine has been
 # validated against. pob-sync warns when the checkout's HEAD differs.
+# Fixes upstream has not merged yet live in patches/<game>/; pob-sync applies them.
 
 [poe2]
 source_path = "../PathOfBuilding-PoE2"
-# Held before 97cb973f8 (#2494), which stops Fist of War / Ancestral Empowerment /
-# Ancestral Call boosting slam damage. Move forward once upstream merges the fix
-# (local branch fix/ancestral-boost-pass-output in the checkout).
-commit = "1bcdb485c5afd74c7b0767cb4f661663d4b548f8"
+commit = "ce566eac45ea8a86477f513c7ee65a1ebe60014e"
 
 [poe1]
 source_path = "../PathOfBuilding"

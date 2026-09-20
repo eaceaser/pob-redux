@@ -113,6 +113,7 @@ struct SyncInfo {
     files: usize,
     bytes: u64,
     tree_assets: bool,
+    patches: Vec<String>,
 }
 
 const EXCLUDE_FILES: &[&str] = &[
@@ -294,6 +295,8 @@ fn main() -> Result<()> {
         }
     }
 
+    let patches = apply_patches(&workspace.join("patches").join(game.id()), &src, &dest, &mut wanted)?;
+
     // A release-style manifest: Launch.lua treats a manifest without branch and
     // platform as a dev checkout and changes user-path and update behaviour.
     let manifest = format!(
@@ -312,6 +315,7 @@ fn main() -> Result<()> {
         files: stats.0,
         bytes: stats.1,
         tree_assets: has_web,
+        patches: patches.clone(),
     };
     fs::write(dest.join("SYNC.json"), serde_json::to_string_pretty(&info)?)?;
     wanted.insert(PathBuf::from("SYNC.json"));
@@ -337,15 +341,67 @@ fn main() -> Result<()> {
     }
 
     println!(
-        "synced PoB {version} ({}) @ {} -> {}\n  {} files, {:.1} MB copied ({generated} tree.json generated), {} stale removed",
+        "synced PoB {version} ({}) @ {} -> {}\n  {} files, {:.1} MB copied ({generated} tree.json generated), {} stale removed, {} patches applied",
         game.id(),
         &head[..head.len().min(10)],
         dest.display(),
         stats.0,
         stats.1 as f64 / 1_048_576.0,
-        removed
+        removed,
+        patches.len()
     );
     Ok(())
+}
+
+/// Fixes carried in `patches/<game>/` until upstream merges them. Each file the
+/// patch touches is recopied from the source first, so a re-run applies cleanly.
+fn apply_patches(dir: &Path, src: &Path, dest: &Path, wanted: &mut HashSet<PathBuf>) -> Result<Vec<String>> {
+    let Ok(entries) = fs::read_dir(dir) else { return Ok(Vec::new()) };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".patch"))
+        .collect();
+    names.sort();
+    for name in &names {
+        let patch = plain_path(&dir.join(name));
+        let patch = patch.to_string_lossy();
+        let touched = git_apply(dest, &["--numstat", &patch]).with_context(|| format!("read {name}"))?;
+        for line in touched.lines() {
+            let Some(rel) = line.split('\t').nth(2) else { continue };
+            let rel = PathBuf::from(rel);
+            let from = src.join(&rel);
+            if from.is_file() {
+                fs::copy(&from, dest.join(&rel)).with_context(|| format!("recopy {}", rel.display()))?;
+            }
+            wanted.insert(rel);
+        }
+        git_apply(dest, &[&patch]).with_context(|| format!("apply {name}"))?;
+    }
+    Ok(names)
+}
+
+/// `-p2` drops upstream's `a/src/` so paths land at the destination root; the
+/// ceiling stops git from finding this workspace's repository and resolving them there.
+fn git_apply(dest: &Path, args: &[&str]) -> Result<String> {
+    let dest = plain_path(dest);
+    let ceiling = dest.parent().context("patch destination has no parent")?;
+    let out = Command::new("git")
+        .current_dir(&dest)
+        .env("GIT_CEILING_DIRECTORIES", ceiling)
+        .args(["apply", "-p2"])
+        .args(args)
+        .output()?;
+    if !out.status.success() {
+        bail!("git apply {:?} failed:\n{}", args, String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Windows canonical paths carry a `\\?\` prefix that git does not accept.
+fn plain_path(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s))
 }
 
 /// True when `to` exists, is not empty, and is not older than `from`.
