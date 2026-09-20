@@ -340,6 +340,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .rows:not(.wide) .cell {
+    white-space: normal;
+    overflow: visible;
+  }
   .wide .cell {
     padding: 2px 10px 2px 8px;
     text-align: right;
