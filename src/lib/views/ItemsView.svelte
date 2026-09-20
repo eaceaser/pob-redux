@@ -13,6 +13,7 @@
     type ItemCrucible,
     type ItemShape,
     type ItemSocket,
+    type ItemVariants,
     type SharedItem,
     type SlotsResponse,
     type Tooltip,
@@ -63,7 +64,14 @@
   let corruptInfo = $state<CorruptionInfo | null>(null);
   let catInfo = $state<{ usable: boolean; names: string[]; catalyst: number; quality: number } | null>(null);
   let shape = $state<ItemShape | null>(null);
+  let variants = $state<ItemVariants | null>(null);
   let enchantOpen = $state(false);
+
+  function setVariant(pick: number, index: number) {
+    if (selectedItem == null || !variants) return;
+    const next = variants.picks.map((p, i) => (i === pick ? index : p));
+    build.run(() => engine.setItemVariant(selectedItem!, next).then((r) => (variants = r)));
+  }
   let crucible = $state<ItemCrucible | null>(null);
 
   function setCrucible(node: number, id: string) {
@@ -132,6 +140,10 @@
         .itemShape(id)
         .then((r) => (shape = r))
         .catch(() => (shape = null));
+      engine
+        .itemVariants(id)
+        .then((r) => (variants = r.names.length > 1 ? r : null))
+        .catch(() => (variants = null));
       engine
         .itemEnchants(id)
         .then((r) => (enchantable = r.available))
@@ -607,6 +619,21 @@
                   <select class="select" value={rune} onchange={(e) => selectedItem != null && build.run(() => engine.setItemRune(selectedItem!, i + 1, (e.target as HTMLSelectElement).value))}>
                     {#each detail.runes.options as o (o.name)}
                       <option value={o.name} title={o.lines.join("\n")}>{o.name === "None" ? "— empty socket —" : `${o.name}  ·  ${o.label ?? o.lines[0] ?? ""}`}</option>
+                    {/each}
+                  </select>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          {#if variants}
+            <div class="craftsec">
+              <div class="label">{variants.picks.length > 1 ? "Variants" : "Variant"}</div>
+              {#each variants.picks as pick, i (i)}
+                <div class="affix">
+                  <select class="select" value={pick} title={variants.picks.length > 1 ? `Pick ${i + 1}` : "Variant"} onchange={(e) => setVariant(i, Number((e.target as HTMLSelectElement).value))}>
+                    {#each variants.names as name, n (n)}
+                      <option value={n + 1}>{name}</option>
                     {/each}
                   </select>
                 </div>

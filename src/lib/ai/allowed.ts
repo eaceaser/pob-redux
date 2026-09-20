@@ -57,6 +57,7 @@ export const ALLOWED = new Set([
   "remove_gem",
   "equip_item_raw",
   "equip_from_item_db",
+  "set_item_variant",
   "craft_rare",
   "optimise_gear",
   "set_gem_levels",

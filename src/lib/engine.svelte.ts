@@ -1380,6 +1380,12 @@ export interface ItemShape {
   } | null;
 }
 
+export interface ItemVariants {
+  names: string[];
+  /** A 1-based index into `names` per pick; a Watcher's Eye takes two or three. */
+  picks: number[];
+}
+
 export interface PartyState {
   partyMemberStats: PartyBox;
   auras: PartyBox;
@@ -1528,6 +1534,8 @@ export const engine = {
   setItemRune: (itemId: number, index: number, name: string) => call<ItemRunes>("set_item_rune", { itemId, index, name }),
   setItemProps: (itemId: number, patch: { quality?: number; itemLevel?: number; corrupted?: boolean; catalyst?: number; catalystQuality?: number }) =>
     call<{ ok: boolean }>("set_item_props", { itemId, ...patch }),
+  itemVariants: (itemId: number) => call<ItemVariants>("item_variants", { itemId }),
+  setItemVariant: (itemId: number, picks: number[]) => call<ItemVariants>("set_item_variant", { itemId, picks }),
   listItemSets: () => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("list_item_sets"),
   selectItemSet: (id: number) => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("select_item_set", { id }),
   createItemSet: (title?: string) => call<{ itemSets: ItemSetInfo[]; activeItemSet: number }>("create_item_set", { title }),

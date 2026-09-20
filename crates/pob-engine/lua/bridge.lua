@@ -2364,6 +2364,36 @@ end
 -- Items
 -- ---------------------------------------------------------------------------
 
+local PICK_FIELDS = { "variant", "variantAlt", "variantAlt2", "variantAlt3", "variantAlt4", "variantAlt5" }
+local PICK_FLAGS = { true, "hasAltVariant", "hasAltVariant2", "hasAltVariant3", "hasAltVariant4", "hasAltVariant5" }
+
+local function variantPickCount(item)
+	if not item.variantList then return 0 end
+	local n = 0
+	for _, flag in ipairs(PICK_FLAGS) do
+		if flag == true or item[flag] then n = n + 1 end
+	end
+	return n
+end
+
+local function pickNamesOf(item)
+	local names = array({})
+	for i, flag in ipairs(PICK_FLAGS) do
+		if flag == true or item[flag] then
+			local idx = item[PICK_FIELDS[i]]
+			if idx and item.variantList[idx] then names[#names + 1] = item.variantList[idx] end
+		end
+	end
+	return names
+end
+
+-- A long list (a notable per variant) is cut; `variants` carries the full count.
+local function variantNamesOf(item, limit)
+	local names = array({})
+	for i = 1, math.min(limit, item.variantList and #item.variantList or 0) do names[i] = item.variantList[i] end
+	return names
+end
+
 local function itemSummary(item)
 	return {
 		id = item.id,
@@ -2376,6 +2406,10 @@ local function itemSummary(item)
 		corrupted = item.corrupted == true,
 		quality = opt(item.quality),
 		itemLevel = opt(item.itemLevel),
+		variants = item.variantList and #item.variantList or 0,
+		variantPicks = variantPickCount(item),
+		variantNames = variantNamesOf(item, 40),
+		selectedVariants = item.variantList and pickNamesOf(item) or array({}),
 		requirements = item.requirements and {
 			level = opt(item.requirements.level),
 			str = opt(item.requirements.str),
@@ -3619,19 +3653,6 @@ local function dbFor(name)
 	return main.uniqueDB
 end
 
--- Variant picks on a unique: index, exact name or a substring of the name.
-local PICK_FIELDS = { "variant", "variantAlt", "variantAlt2", "variantAlt3", "variantAlt4", "variantAlt5" }
-local PICK_FLAGS = { true, "hasAltVariant", "hasAltVariant2", "hasAltVariant3", "hasAltVariant4", "hasAltVariant5" }
-
-local function variantPickCount(item)
-	if not item.variantList then return 0 end
-	local n = 0
-	for _, flag in ipairs(PICK_FLAGS) do
-		if flag == true or item[flag] then n = n + 1 end
-	end
-	return n
-end
-
 -- Missing picks repeat the first, so the chosen lines appear once.
 local function setPicks(item, picks)
 	if not item.variantList then return end
@@ -3674,17 +3695,6 @@ local function activeModLines(item)
 		if item:CheckModLineVariant(ml) then lines[#lines + 1] = ml.line end
 	end
 	return lines
-end
-
-local function pickNamesOf(item)
-	local names = array({})
-	for i, flag in ipairs(PICK_FLAGS) do
-		if flag == true or item[flag] then
-			local idx = item[PICK_FIELDS[i]]
-			if idx and item.variantList[idx] then names[#names + 1] = item.variantList[idx] end
-		end
-	end
-	return names
 end
 
 M.item_db_list = function(p)
@@ -4367,6 +4377,39 @@ M.set_item_props = function(p)
 	end
 	commitItemEdit(item)
 	return { ok = true }
+end
+
+local function variantInfo(item)
+	local picks = array({})
+	if item.variantList then
+		for i, flag in ipairs(PICK_FLAGS) do
+			if flag == true or item[flag] then picks[#picks + 1] = item[PICK_FIELDS[i]] or 1 end
+		end
+	end
+	return { names = strArray(item.variantList or {}), picks = picks }
+end
+
+M.item_variants = function(p)
+	ensureBuild()
+	return variantInfo(requireItem(p))
+end
+
+-- params: { itemId, picks = { one variant per pick: its index, name or a substring } }
+M.set_item_variant = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	if not item.variantList then error(item.name .. " has no variants", 0) end
+	local wanted = type(p.picks) == "table" and p.picks or {}
+	local picks, ordinal = {}, 0
+	for i, flag in ipairs(PICK_FLAGS) do
+		if flag == true or item[flag] then
+			ordinal = ordinal + 1
+			picks[i] = wanted[ordinal] ~= nil and resolveVariant(item, wanted[ordinal]) or item[PICK_FIELDS[i]] or 1
+		end
+	end
+	setPicks(item, picks)
+	commitItemEdit(item)
+	return variantInfo(item)
 end
 
 -- ---------------------------------------------------------------------------

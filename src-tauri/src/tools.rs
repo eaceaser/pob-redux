@@ -404,6 +404,17 @@ setting for the whole tree. It applies to nodes allocated from then on, so set i
             ),
         ),
         rw(
+            "set_item_variant",
+            "Change which variant an item already in the build uses (a legacy or current version, a Watcher's Eye's aura mods, a Loreweave's ring mods). `variants` takes one entry per pick, a variant's name, a substring of it, or its index; list_items shows each item's `variantNames` and `selectedVariants`. Returns the picks it set.",
+            obj(
+                json!({
+                    "item_id": prop("integer", "Item id from list_items"),
+                    "variants": { "type": "array", "items": { "type": "string" }, "description": "Variant per pick: name, substring or index" }
+                }),
+                &["item_id", "variants"],
+            ),
+        ),
+        rw(
             "optimise_gear",
             "Design a rare for each chosen slot by greedy search over the affix families that roll on the slot's base, every candidate scored by PoB's calculation. An empty slot gets a base picked from the build: the defence type the character's attributes favour, the weapon type the main skill needs, a shield when a skill uses one, all within the character's level. Keeps resistances at 75, attribute requirements met and movement speed on boots, then maximises DPS (the minions' for a minion skill), life plus energy shield, and effective HP by the chosen aim. Item level defaults to the character's level. Each proposal carries `lookFor` (the mod lines without numbers, what to look for in game), `base`, `baseReason`, `mods`, `raw` and a stat delta; `summary` says what happened. Nothing is equipped unless `apply` is true. Unique items are left alone, and a slot keeps its item when no designed rare scores higher (listed in `skipped`). Takes a few seconds for all slots. This is the tool for filling empty slots or improving gear; do not craft slot by slot.",
             obj(
@@ -1020,6 +1031,10 @@ pub(crate) fn run_tool(ctx: &ToolContext, name: &str, args: &JsonObject) -> Resu
                 "item_db_equip",
                 json!({ "name": req_str(args, "name")?, "db": arg_str(args, "db"), "slotName": arg_str(args, "slot"), "variants": variants }),
             )?)
+        }
+        "set_item_variant" => {
+            let picks: Vec<Value> = arg_list(args, "variants").into_iter().filter(|v| v.as_str().is_some() || v.is_number()).collect();
+            stats(ctx.call("set_item_variant", json!({ "itemId": req_i64(args, "item_id")?, "picks": picks }))?)
         }
         "suggest_unique_jewels" => {
             let sockets: Vec<Value> = arg_list(args, "sockets").into_iter().filter(|v| v.as_str().is_some() || v.is_number()).collect();
