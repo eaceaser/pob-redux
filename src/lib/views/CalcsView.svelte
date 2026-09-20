@@ -117,39 +117,40 @@
 
   {#if mode === "sections"}
     <div class="body">
-      <div class="colwrap" class:narrow={bd !== null}>
+      <div class="cards">
         {#each groups as [g, secs] (g)}
-          <div class="gcol">
-            {#each secs as sec (sec.index)}
-              <div class="section" style:border-left-color={sec.colour ?? "var(--line-1)"}>
-                {#each sec.subSections as sub (sub.index)}
-                  {@const cols = Math.max(1, ...sub.rows.map((r) => r.cells.length))}
-                  <div class="subhead">
-                    <span class="sublabel"><PobText text={sub.label} /></span>
-                    {#if sub.extra}<span class="extra num"><PobText text={sub.extra} /></span>{/if}
-                  </div>
-                  <div class="rows" class:wide={cols > 1} style:--cols={cols} style:--colw={`${Math.round((sub.colWidth ?? 95) * 0.72)}px`}>
-                    {#each sub.rows as row (row.index)}
-                      <div class="crow" class:small={row.textSize != null && row.textSize < 16}>
-                        <span class="rlabel">{#if row.label}<PobText text={row.label} />{/if}</span>
-                        {#each row.cells as cell, i (cell.index)}
-                          <button
-                            class="cell num"
-                            class:link={cell.hasBreakdown}
-                            disabled={!cell.hasBreakdown}
-                            style:grid-column={cols > 1 && i === row.cells.length - 1 && row.cells.length < cols ? `${i + 2} / -1` : null}
-                            onclick={() => openCell(sec, sub.index, row.index, cell.index, stripPobText(`${sub.label} · ${row.label ?? ""}`))}
-                          >
-                            <span class="ct">{#if cell.text}<PobText text={cell.text} />{/if}</span>
-                          </button>
-                        {/each}
-                      </div>
-                    {/each}
-                  </div>
-                {/each}
-              </div>
-            {/each}
-          </div>
+          {#each secs as sec (sec.index)}
+            {@const table = sec.subSections.some((s) => s.rows.some((r) => r.cells.length >= 4))}
+            <div class="section" class:table style:--accent={sec.colour ?? "var(--line-2)"}>
+              {#each sec.subSections as sub (sub.index)}
+                {@const cols = Math.max(1, ...sub.rows.map((r) => r.cells.length))}
+                <div class="subhead">
+                  <span class="sublabel"><PobText text={sub.label} /></span>
+                  {#if sub.extra}<span class="extra num"><PobText text={sub.extra} /></span>{/if}
+                </div>
+                <div class="rows" class:wide={cols > 1} style:--cols={cols} style:--colw={`${Math.round((sub.colWidth ?? 95) * 0.72)}px`}>
+                  {#each sub.rows as row, ri (row.index)}
+                    <div class="crow" class:small={row.textSize != null && row.textSize < 16} class:head={ri === 0 && !row.label && row.cells.length > 1}>
+                      <span class="rlabel">{#if row.label}<PobText text={row.label} />{/if}</span>
+                      {#each row.cells as cell, i (cell.index)}
+                        {@const span = cols > 1 && i === row.cells.length - 1 && row.cells.length < cols}
+                        <button
+                          class="cell num"
+                          class:link={cell.hasBreakdown}
+                          class:span
+                          disabled={!cell.hasBreakdown}
+                          style:grid-column={span ? `${i + 2} / -1` : null}
+                          onclick={() => openCell(sec, sub.index, row.index, cell.index, stripPobText(`${sub.label} · ${row.label ?? ""}`))}
+                        >
+                          <span class="ct">{#if cell.text}<PobText text={cell.text} />{/if}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/each}
+                </div>
+              {/each}
+            </div>
+          {/each}
         {/each}
       </div>
       {#if bd}
@@ -225,36 +226,51 @@
     display: flex;
     min-height: 0;
   }
-  .colwrap {
+  .cards {
     flex: 1;
     min-width: 0;
     overflow: auto;
-    display: flex;
-    gap: 10px;
-    padding: 10px;
-    align-items: flex-start;
-  }
-  .gcol {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    flex: 1 1 auto;
+    container-type: inline-size;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    grid-auto-flow: dense;
+    align-content: start;
+    align-items: start;
+    gap: 14px;
+    padding: 14px;
   }
   .section {
-    min-width: 290px;
+    min-width: 0;
     background: var(--bg-1);
     border: 1px solid var(--line-0);
-    border-left-width: 2px;
+    border-left: 2px solid var(--accent);
     border-radius: var(--r-2);
-    padding-bottom: 4px;
+    overflow: clip;
+  }
+  .section.table {
+    grid-column: span 2;
+  }
+  @container (width < 720px) {
+    .section.table {
+      grid-column: auto;
+    }
   }
   .subhead {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     gap: 8px;
-    padding: 7px 10px 4px;
+    padding: 8px 12px 4px;
+    margin-top: 6px;
+    border-top: 1px solid var(--line-0);
+  }
+  /* The card's own title: a band tinted with PoB's section colour, so the eye finds section starts. */
+  .subhead:first-child {
+    margin-top: 0;
+    padding: 9px 12px 8px;
+    border-top: 0;
     border-bottom: 1px solid var(--line-0);
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-1));
   }
   .sublabel {
     font-size: var(--fs-xs);
@@ -262,6 +278,10 @@
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--fg-2);
+  }
+  .subhead:first-child .sublabel {
+    font-size: var(--fs-sm);
+    color: var(--fg-0);
   }
   .extra {
     font-size: var(--fs-xs);
@@ -273,15 +293,16 @@
   /* One grid per subsection, so a table's columns line up across its rows as PoB draws them. */
   .rows {
     display: grid;
-    grid-template-columns: minmax(118px, max-content) minmax(0, 1fr);
+    grid-template-columns: minmax(130px, max-content) minmax(0, 1fr);
     column-gap: 8px;
-    row-gap: 2px;
     align-items: baseline;
-    padding: 4px 10px;
+    padding: 6px 12px 8px;
     font-size: var(--fs-sm);
+    line-height: 1.5;
   }
   .rows.wide {
-    grid-template-columns: minmax(118px, max-content) repeat(var(--cols), minmax(auto, max-content));
+    grid-template-columns: minmax(130px, max-content) repeat(var(--cols), minmax(auto, max-content));
+    column-gap: 0;
   }
   .crow {
     display: contents;
@@ -289,25 +310,43 @@
   .crow.small {
     font-size: var(--fs-xs);
   }
+  .crow.head > * {
+    color: var(--fg-2);
+    font-size: var(--fs-xs);
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--line-0);
+  }
+  .wide .crow:nth-child(even) > * {
+    background: var(--bg-2);
+  }
   .rlabel {
     grid-column: 1;
-    color: var(--fg-1);
-    font-size: var(--fs-xs);
+    padding: 2px 0;
+    color: var(--fg-2);
+  }
+  .wide .rlabel {
+    padding: 2px 8px 2px 6px;
   }
   .cell {
     appearance: none;
     border: 0;
     background: none;
-    padding: 0 2px;
+    padding: 2px 4px;
     color: var(--fg-0);
     font-size: inherit;
+    line-height: inherit;
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .wide .cell {
+    padding: 2px 10px 2px 8px;
+    text-align: right;
     overflow: visible;
+  }
+  .wide .cell.span {
+    text-align: left;
   }
   /* The floor sits inside the button: a min-width on the button itself would replace the
      automatic minimum, and the track would stop seeing the text width. */
@@ -317,11 +356,11 @@
   }
   .cell.link {
     cursor: pointer;
-    border-bottom: 1px dotted var(--line-2);
+    border-radius: 3px;
   }
   .cell.link:hover {
     color: var(--focus);
-    border-bottom-color: var(--focus);
+    background: var(--bg-hover);
   }
   .bdside {
     width: 560px;

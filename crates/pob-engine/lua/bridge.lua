@@ -952,10 +952,16 @@ M.calc_sections = function(p)
 		if section.subSection then
 			local enabled = calcsTab:CheckFlag(section)
 			local colour = section.colour
+			local hex = null
+			if type(colour) == "string" then
+				hex = colour:match("^%^x(%x%x%x%x%x%x)$") and ("#" .. colour:sub(3)) or null
+			elseif type(colour) == "table" then
+				hex = string.format("#%02x%02x%02x", (colour[1] or 1) * 255, (colour[2] or 1) * 255, (colour[3] or 1) * 255)
+			end
 			local secOut = {
 				index = sIndex,
 				group = opt(section.group),
-				colour = colour and string.format("#%02x%02x%02x", (colour[1] or 1) * 255, (colour[2] or 1) * 255, (colour[3] or 1) * 255) or null,
+				colour = hex,
 				enabled = enabled and true or false,
 				subSections = array({}),
 			}
