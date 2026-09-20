@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type NodeTattoos, type PowerStat, type SocketedJewel, type Tooltip, type TreePower, type WeaponSetMode } from "$lib/engine.svelte";
+  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type NodeCompare, type NodeTattoos, type PowerStat, type SocketedJewel, type Tooltip, type TreePower, type WeaponSetMode } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { game } from "$lib/state/game.svelte";
@@ -39,6 +39,7 @@
   // The socketed jewel's item tooltip, shown under the node tip while its socket is hovered.
   let jewelTip = $state<Tooltip | null>(null);
   let tipEl = $state<HTMLDivElement | null>(null);
+  let tipH = $state(0);
   const jewelTipCache = new Map<string, Tooltip>();
   $effect(() => {
     const h = hover;
@@ -66,6 +67,56 @@
     return () => {
       live = false;
     };
+  });
+
+  // PoB's node tooltip stat comparison: what allocating or removing the
+  // hovered node does to the sidebar stats. Each one costs a recalculation,
+  // so it waits for the pointer to settle and keeps what it has computed.
+  let statDiff = $state<NodeCompare | null>(null);
+  const statDiffCache = new Map<string, NodeCompare>();
+  let statDiffRev = -1;
+  $effect(() => {
+    const h = hover;
+    const rev = build.rev;
+    const ws = wsMode;
+    const path = shiftDown && trace.length ? trace.slice() : null;
+    if (!ui.treeStatDiff || !h) {
+      statDiff = null;
+      return;
+    }
+    if (statDiffRev !== rev) {
+      statDiffCache.clear();
+      statDiffRev = rev;
+    }
+    const key = `${ws}:${h.id}:${path?.join(",") ?? ""}`;
+    const cached = statDiffCache.get(key);
+    if (cached) {
+      statDiff = cached;
+      return;
+    }
+    statDiff = null;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      engine
+        .nodeCompare(h.id, { weaponSet: ws, path: path ?? undefined })
+        .then((r) => {
+          statDiffCache.set(key, r);
+          if (live) statDiff = r;
+        })
+        .catch(() => {
+          if (live) statDiff = null;
+        });
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  });
+  // Measured after every content change, so a tall tip slides up rather than off the view.
+  $effect(() => {
+    hover;
+    statDiff;
+    tipH = tipEl?.offsetHeight ?? 0;
   });
   let hoverPath = $state<Set<number>>(new Set());
   let hoverDep = $state<Set<number>>(new Set());
@@ -1458,6 +1509,7 @@
     else if (e.key === "a") focusAscendancy();
     else if (e.key === "p") powerOn = !powerOn;
     else if (e.key === "r" && powerOn) showReport = !showReport;
+    else if (e.key === "d" && e.ctrlKey) ui.setTreeStatDiff(!ui.treeStatDiff);
     else if (e.key === "f" && !e.ctrlKey) fitAll();
     else if (e.key === "/" || (e.key === "f" && e.ctrlKey)) {
       e.preventDefault();
@@ -1714,6 +1766,9 @@
         <button class="btn sm ghost" onclick={() => (timelessOpen = true)} title={m.tree_timeless_title()}>{m.tree_timeless()}</button>
       {/if}
       <span class="vr"></span>
+      <button class="btn sm ghost" class:on={ui.treeStatDiff} onclick={() => ui.setTreeStatDiff(!ui.treeStatDiff)} title={m.tree_stat_diff_title()}>
+        {m.tree_stat_diff()}
+      </button>
       <button class="btn sm" class:on={powerOn} onclick={() => (powerOn = !powerOn)} title={m.tree_power_title()}>
         {m.tree_power()}
       </button>
@@ -1899,7 +1954,7 @@
     {#if hover && !attrMenu && !masteryMenu}
       {@const ov = overrides[String(hover.id)]}
       {@const socketed = hover.kind === "socket" ? sockets.get(hover.id) : undefined}
-      <div class="tip" bind:this={tipEl} style:left={`${Math.min(mouse.x + 18, w - 340)}px`} style:top={`${Math.min(mouse.y + 18, h - 60)}px`}>
+      <div class="tip" bind:this={tipEl} style:left={`${Math.min(mouse.x + 18, w - 340)}px`} style:top={`${Math.max(8, Math.min(mouse.y + 18, h - tipH - 8))}px`}>
         <div class="tip-head">
           <span class="tip-name" class:key={hover.kind === "keystone"} class:notable={hover.kind === "notable"}>{ov?.name ?? hover.name}</span>
           <span class="label">{hover.asc ?? hover.kind}</span>
@@ -1923,6 +1978,17 @@
         {/if}
         {#if hoverBlocked}
           <div class="tip-warn">{hoverBlocked}</div>
+        {/if}
+        {#if ui.treeStatDiff && statDiff && statDiff.id === hover.id}
+          <div class="tip-diff">
+            {#if statDiff.changes === 0}
+              <div class="dim">{m.tree_no_changes()}</div>
+            {:else}
+              {#each statDiff.lines as l}
+                <div class:head={l.head}><PobText text={l.text} /></div>
+              {/each}
+            {/if}
+          </div>
         {/if}
         <div class="tip-foot num">
           {#if allocated.has(hover.id)}
@@ -2280,6 +2346,8 @@
   .tip {
     position: absolute;
     width: 320px;
+    max-height: calc(100% - 16px);
+    overflow: hidden;
     padding: 10px 12px;
     background: color-mix(in srgb, var(--bg-1) 94%, transparent);
     border: 1px solid var(--line-1);
@@ -2332,6 +2400,22 @@
     margin-top: 6px;
     color: var(--warn);
     font-size: var(--fs-xs);
+  }
+  .tip-diff {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line-0);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    line-height: 1.45;
+  }
+  .tip-diff .head {
+    margin-top: 4px;
+    color: var(--fg-1);
+    font-family: var(--font-ui);
+  }
+  .tip-diff .head:first-child {
+    margin-top: 0;
   }
   .tip-foot {
     display: flex;

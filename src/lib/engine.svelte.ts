@@ -562,6 +562,16 @@ export interface HoverInfo {
   blocked: string | null;
 }
 
+export interface NodeCompare {
+  id: number;
+  allocated: boolean;
+  granted: boolean;
+  pathCount: number;
+  changes: number;
+  lines: (TooltipLine & { head?: boolean })[];
+  rev: number;
+}
+
 export interface SpecInfo {
   index: number;
   title: string;
@@ -1452,6 +1462,8 @@ export const engine = {
   nodeInfo: (id: number) => call<NodeInfo>("node_info", { id }),
   selectMastery: (id: number, effect: number) => call<TreeState>("select_mastery", { id, effect }),
   nodeHover: (id: number, weaponSet: WeaponSetMode = 0) => call<HoverInfo>("node_hover", { id, weaponSet }),
+  nodeCompare: (id: number, opts?: { weaponSet?: WeaponSetMode; path?: number[] }) =>
+    call<NodeCompare>("node_compare", { id, ...opts }),
   treeClick: (id: number, opts?: { attribute?: number; confirm?: "reset" | "connect"; weaponSet?: WeaponSetMode }) =>
     call<TreeClickResult>("tree_click", { id, ...opts }),
   switchAttribute: (id: number, attribute: number) => call<TreeState>("switch_attribute", { id, attribute }),

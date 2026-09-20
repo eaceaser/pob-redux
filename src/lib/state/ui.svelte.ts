@@ -27,6 +27,7 @@ class UiStore {
   scale = $state(1);
   scaleApplied = $state(1);
   treeWeaponSet = $state<WeaponSetMode>(0);
+  treeStatDiff = $state(true);
 
   private systemLight = window.matchMedia("(prefers-color-scheme: light)");
   private systemContrast = window.matchMedia("(prefers-contrast: more)");
@@ -44,6 +45,7 @@ class UiStore {
       // The three steps this replaced, at the levels that reproduce them.
       else if (named) this.contrastLevel = named === "most" ? 40 : named === "more" ? CONTRAST_SYSTEM : 0;
       if (typeof saved.scale === "number") this.scale = clampScale(saved.scale);
+      if (typeof saved.treeStatDiff === "boolean") this.treeStatDiff = saved.treeStatDiff;
     } catch {}
     this.applyTheme();
     this.systemLight.addEventListener("change", () => this.applyTheme());
@@ -65,6 +67,11 @@ class UiStore {
 
   toggleSidebar() {
     this.sidebarCollapsed = !this.sidebarCollapsed;
+    this.save();
+  }
+
+  setTreeStatDiff(show: boolean) {
+    this.treeStatDiff = show;
     this.save();
   }
 
@@ -156,6 +163,7 @@ class UiStore {
           contrastAuto: this.contrastAuto,
           contrastLevel: this.contrastLevel,
           scale: this.scale,
+          treeStatDiff: this.treeStatDiff,
         }),
       );
     } catch {}

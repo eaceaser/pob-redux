@@ -123,6 +123,28 @@ local function strArray(t)
 	return out
 end
 
+-- A PoB tooltip as sized, colour-coded lines. `header` names the rarity art
+-- PoB would frame it with (UNIQUE, RARE, MAGIC, NORMAL, RELIC, GEM); `font`
+-- is set on the lines PoB draws in the game font ("FONTIN SC").
+local function tooltipPayload(tt)
+	local lines = array({})
+	for _, l in ipairs(tt.lines) do
+		lines[#lines + 1] = {
+			size = l.size or 14,
+			text = l.text or "",
+			center = l.center == true,
+			sep = (l.separatorImage ~= nil or l.text == nil) and true or false,
+			font = opt(l.font),
+		}
+	end
+	return {
+		lines = lines,
+		header = tt.tooltipHeader and tostring(tt.tooltipHeader):upper() or null,
+		runic = tt.runicItem ~= nil,
+		uniqueGem = tt.isUniqueGem == true,
+	}
+end
+
 -- Which game this PoB is for. The two forks share their class and tab layout;
 -- the differences the bridge has to bracket are keyed on this.
 local GAME = (tostring(APP_NAME or ""):find("PoE2", 1, true) or tostring(liveTargetVersion or ""):match("^0_")) and "poe2" or "poe1"
@@ -1587,6 +1609,85 @@ M.node_hover = function(p)
 		out.cost = #path
 	end
 	return out
+end
+
+-- PoB's "Mod differences" block from the node tooltip (PassiveTreeView), as
+-- sized, colour-coded lines: what allocating or unallocating this node, and
+-- then the whole path to it, does to the sidebar stats. `path` overrides the
+-- engine's own path so a shift-traced route compares what the UI highlights.
+M.node_compare = function(p)
+	ensureBuild()
+	local node = requireNode(p)
+	local mode = weaponSetParam(p)
+	local calcsTab = build.calcsTab
+	local granted = (calcsTab.mainEnv.grantedPassives or {})[node.id] == true
+	local path = {}
+	if type(p.path) == "table" and #p.path > 0 then
+		for _, pid in ipairs(p.path) do
+			local pn = build.spec.nodes[tonumber(pid) or -1]
+			if pn then path[#path + 1] = pn end
+		end
+	elseif node.alloc then
+		for _, pn in pairs(node.depends or {}) do path[#path + 1] = pn end
+	else
+		local ok, eff = pcall(withAllocMode, mode, build.spec.GetEffectiveAllocationPath, build.spec, node)
+		for _, pn in pairs((ok and eff) or node.path or {}) do path[#path + 1] = pn end
+	end
+	local pathNodes = {}
+	for _, pn in ipairs(path) do pathNodes[pn] = true end
+
+	local calcFunc, calcBase = calcsTab:GetMiscCalculator(build)
+	local nodeOutput, pathOutput
+	if node.alloc then
+		nodeOutput = calcFunc({ removeNodes = { [node] = true } })
+		if #path > 1 then pathOutput = calcFunc({ removeNodes = pathNodes }) end
+	elseif granted then
+		nodeOutput = calcFunc({ removeNodes = { [node.id] = true } })
+	else
+		nodeOutput = calcFunc({ addNodes = { [node] = true } })
+		if #path > 1 then pathOutput = calcFunc({ addNodes = pathNodes }) end
+	end
+
+	local tt = new("Tooltip"):Tooltip()
+	local heads = {}
+	local function compare(output, header, nodeCount)
+		local at = #tt.lines + 1
+		local n = build:AddStatComparesToTooltip(tt, calcBase, output, header, nodeCount)
+		if n > 0 then heads[at] = true end
+		return n
+	end
+	local count = compare(nodeOutput,
+		granted and "^7This node is granted by an item. Removing it will give you:"
+		or node.alloc and "^7Unallocating this node will give you:"
+		or "^7Allocating this node will give you:")
+	if pathOutput and not granted and (#(node.intuitiveLeapLikesAffecting or {}) == 0 or node.alloc) then
+		count = count + compare(pathOutput,
+			node.alloc and "^7Unallocating this node and all nodes depending on it will give you:"
+			or "^7Allocating this node and all nodes leading to it will give you:", #path)
+	end
+
+	-- A minion build puts the "Minion:" caption in the header line itself.
+	local NL = string.char(10)
+	local lines = array({})
+	for i, l in ipairs(tooltipPayload(tt).lines) do
+		if tostring(l.text):find(NL, 1, true) then
+			for piece in tostring(l.text):gmatch("[^" .. NL .. "]+") do
+				lines[#lines + 1] = { size = l.size, text = piece, center = l.center, sep = l.sep, font = l.font, head = heads[i] }
+			end
+		else
+			l.head = heads[i]
+			lines[#lines + 1] = l
+		end
+	end
+	return {
+		id = node.id,
+		allocated = node.alloc == true,
+		granted = granted,
+		pathCount = #path,
+		changes = count,
+		lines = lines,
+		rev = build.outputRevision,
+	}
 end
 
 -- Left-click on a node, following PassiveTreeView:Draw's click handling:
@@ -3272,28 +3373,6 @@ local function gemInstanceFor(p)
 	if not gem then error("unknown gem index", 0) end
 	if not gem.gemData then error("gem is not resolved to any gem data", 0) end
 	return gem
-end
-
--- A PoB tooltip as sized, colour-coded lines. `header` names the rarity art
--- PoB would frame it with (UNIQUE, RARE, MAGIC, NORMAL, RELIC, GEM); `font`
--- is set on the lines PoB draws in the game font ("FONTIN SC").
-local function tooltipPayload(tt)
-	local lines = array({})
-	for _, l in ipairs(tt.lines) do
-		lines[#lines + 1] = {
-			size = l.size or 14,
-			text = l.text or "",
-			center = l.center == true,
-			sep = (l.separatorImage ~= nil or l.text == nil) and true or false,
-			font = opt(l.font),
-		}
-	end
-	return {
-		lines = lines,
-		header = tt.tooltipHeader and tostring(tt.tooltipHeader):upper() or null,
-		runic = tt.runicItem ~= nil,
-		uniqueGem = tt.isUniqueGem == true,
-	}
 end
 
 -- PoB's own gem tooltip (GemTooltip.lua), returned as sized, colour-coded lines.
