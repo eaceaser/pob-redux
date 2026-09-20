@@ -5,8 +5,12 @@
   import { chat } from "$lib/state/chat.svelte";
   import { game } from "$lib/state/game.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { m } from "$lib/paraglide/messages";
 
   let { status, paths }: { status: EngineStatus | null; paths: AppPaths | null } = $props();
+
+  const DISCORD_URL = "https://discord.pobredux.com/";
 
   // Workers spawn on demand and boot in the background; poll only while one is
   // booting, and look again whenever engine activity starts or stops.
@@ -36,12 +40,12 @@
 <footer class="statusbar">
   <div class="seg">
     <span class="dot" style:background={stateColor} class:pulse={status?.state === "booting" || telemetry.inflight > 0}></span>
-    <span>engine {status?.state ?? "…"}</span>
-    {#if status?.boot_ms != null}<span class="dim num">{status.boot_ms} ms boot</span>{/if}
+    <span>{m.status_engine({ state: status?.state ?? "…" })}</span>
+    {#if status?.boot_ms != null}<span class="dim num">{m.status_boot_ms({ ms: status.boot_ms })}</span>{/if}
   </div>
   {#if pool && pool.size > 0}
-    <div class="seg dim" title="Extra PoB engines that share node-power and gem-DPS scoring">
-      <span>workers</span>
+    <div class="seg dim" title={m.status_workers_title()}>
+      <span>{m.status_workers()}</span>
       <span class="num" class:pulse={pool.spawned > pool.ready}>{pool.ready}/{pool.size}</span>
     </div>
   {/if}
@@ -53,14 +57,14 @@
     </div>
   {/if}
   {#if mcp.status?.running}
-    <div class="seg" title="MCP server for AI clients is on (configure in Options)">
+    <div class="seg" title={m.status_mcp_title()}>
       <span class="dim">mcp</span>
       <span class="num">:{mcp.status.port}</span>
     </div>
   {/if}
   <div class="grow"></div>
   {#if build.error}
-    <button class="seg err" onclick={() => build.clearError()} title="Dismiss">
+    <button class="seg err" onclick={() => build.clearError()} title={m.status_dismiss()}>
       <span>{build.error}</span>
     </button>
   {:else if build.notice}
@@ -73,19 +77,27 @@
     </div>
   {/if}
   {#if build.info}
-    <div class="seg dim"><span>rev</span><span class="num">{build.info.rev}</span></div>
+    <div class="seg dim"><span>{m.status_rev()}</span><span class="num">{build.info.rev}</span></div>
   {/if}
   {#if game.isPoe2}
     <button
       class="seg iconbtn"
       class:on={chat.open}
       onclick={() => chat.toggle()}
-      title="Assistant panel (Ctrl+K)"
-      aria-label="Assistant panel"
+      title={m.status_assistant_title()}
+      aria-label={m.status_assistant()}
     >
       <Icon name="chat-text" size={15} />
     </button>
   {/if}
+  <button
+    class="seg iconbtn"
+    onclick={() => openUrl(DISCORD_URL).catch(() => {})}
+    title={m.status_discord_title()}
+    aria-label={m.status_discord()}
+  >
+    <Icon name="discord-logo" size={15} />
+  </button>
 </footer>
 
 <style>

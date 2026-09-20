@@ -3,6 +3,7 @@
   import { clearKey, setBase, setKey, type ProviderStatus } from "$lib/ai/providers";
   import { chat } from "$lib/state/chat.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let drafts = $state<Record<string, string>>({});
   let bases = $state<Record<string, string>>({});
@@ -62,11 +63,7 @@
 </script>
 
 <div class="sheet">
-  <p class="dim intro">
-    Keys are held in your operating system's credential manager. If Windows refuses one, it is saved encrypted
-    for your Windows account in this app's settings folder instead. Keys never leave your machine except to the
-    provider you configured.
-  </p>
+  <p class="dim intro">{m.provider_intro()}</p>
 
   {#each chat.providers as p}
     <div class="row" class:active={p.id === chat.provider}>
@@ -74,11 +71,11 @@
         <span class="dot" class:ok={p.ready}></span>
         <span class="name">{p.label}</span>
         {#if !p.needs_key}
-          <span class="tag">no key needed</span>
+          <span class="tag">{m.provider_no_key_needed()}</span>
         {:else if p.has_key}
           <span class="tag mono">···{p.hint}</span>
         {:else}
-          <span class="tag warn">not configured</span>
+          <span class="tag warn">{m.provider_not_configured()}</span>
         {/if}
         <span class="chev"><Icon name={expanded === p.id ? "minus" : "plus"} size={11} /></span>
       </button>
@@ -90,29 +87,27 @@
               <input
                 class="input"
                 type="password"
-                placeholder={p.has_key ? "Replace key…" : "Paste API key…"}
+                placeholder={p.has_key ? m.provider_replace_key() : m.provider_paste_key()}
                 bind:value={drafts[p.id]}
                 onkeydown={(e) => e.key === "Enter" && save(p)}
               />
               <button class="btn sm" onclick={() => save(p)} disabled={busy === p.id || !(drafts[p.id] ?? "").trim()}>
-                Save
+                {m.common_save()}
               </button>
               {#if p.has_key}
-                <button class="btn sm ghost" onclick={() => remove(p)} disabled={busy === p.id}>Remove</button>
+                <button class="btn sm ghost" onclick={() => remove(p)} disabled={busy === p.id}>{m.provider_remove()}</button>
               {/if}
             </div>
             {#if p.keys_url}
-              <button class="link" onclick={() => openUrl(p.keys_url!)}>Get a key →</button>
+              <button class="link" onclick={() => openUrl(p.keys_url!)}>{m.provider_get_key()}</button>
             {/if}
           {/if}
 
           <div class="field">
             <input class="input mono sm" bind:value={bases[p.id]} placeholder={p.default_base} />
-            <button class="btn sm ghost" onclick={() => saveBase(p)} disabled={busy === p.id}>Set URL</button>
+            <button class="btn sm ghost" onclick={() => saveBase(p)} disabled={busy === p.id}>{m.provider_set_url()}</button>
           </div>
-          <div class="hint">
-            Base URL. Leave blank for the default ({p.default_base}).
-          </div>
+          <div class="hint">{m.provider_base_hint({ base: p.default_base })}</div>
         </div>
       {/if}
     </div>

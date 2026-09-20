@@ -16,8 +16,6 @@ pub enum Game {
 }
 
 impl Game {
-    pub const ALL: [Game; 2] = [Game::Poe1, Game::Poe2];
-
     pub fn id(self) -> &'static str {
         match self {
             Game::Poe1 => "poe1",

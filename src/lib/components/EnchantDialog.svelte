@@ -1,6 +1,7 @@
 <script lang="ts">
   import { engine, type ItemEnchants } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let { itemId, onclose }: { itemId: number; onclose: () => void } = $props();
 
@@ -40,15 +41,15 @@
 
 <div class="modal">
   <div class="panel dialog enchdlg">
-    <div class="label">Enchant item</div>
+    <div class="label">{m.enchant_title()}</div>
 
     {#if info && !info.available}
-      <p class="dim small">This item takes no enchantments.</p>
+      <p class="dim small">{m.enchant_unavailable()}</p>
     {:else}
       <div class="filters">
         {#if info?.bySkill}
           <label class="fld-inline">
-            <span class="label">Skill</span>
+            <span class="label">{m.enchant_skill()}</span>
             <select class="select sm" value={skill ?? ""} onchange={(e) => (skill = (e.target as HTMLSelectElement).value)}>
               {#each info?.skills ?? [] as s}
                 <option value={s}>{s}</option>
@@ -57,7 +58,7 @@
           </label>
         {/if}
         <label class="fld-inline">
-          <span class="label">Source</span>
+          <span class="label">{m.enchant_source()}</span>
           <select class="select sm" value={source ?? ""} onchange={(e) => (source = (e.target as HTMLSelectElement).value)}>
             {#each info?.sources ?? [] as s}
               <option value={s}>{s}</option>
@@ -65,8 +66,8 @@
           </select>
         </label>
         {#if (info?.slots ?? 1) > 1}
-          <label class="fld-inline" title="Which enchantment slot to write">
-            <span class="label">Slot</span>
+          <label class="fld-inline" title={m.enchant_slot_title()}>
+            <span class="label">{m.enchant_slot()}</span>
             <select class="select sm" bind:value={slot}>
               {#each Array(info?.slots ?? 1) as _, i}
                 <option value={i + 1}>{i + 1}</option>
@@ -74,16 +75,16 @@
             </select>
           </label>
         {/if}
-        <input class="input grow" placeholder="Search enchantments…" bind:value={search} />
+        <input class="input grow" placeholder={m.enchant_search()} bind:value={search} />
       </div>
 
       {#if info?.current.length}
         <div class="current">
-          <span class="label">On the item</span>
+          <span class="label">{m.enchant_current()}</span>
           {#each info.current as c, i (c + i)}
             <span class="pill">
               {c}
-              <button class="mini x" title="Remove" onclick={() => removeAt(i)}>✕</button>
+              <button class="mini x" title={m.common_remove()} onclick={() => removeAt(i)}>✕</button>
             </span>
           {/each}
         </div>
@@ -93,13 +94,13 @@
         {#each lines as l (l)}
           <button class="row" onclick={() => apply(l)}>{l}</button>
         {:else}
-          <div class="dim small pad">Nothing matches.</div>
+          <div class="dim small pad">{m.common_nothing_matches()}</div>
         {/each}
       </div>
     {/if}
 
     <div class="acts">
-      <button class="btn ghost" onclick={onclose}>Close</button>
+      <button class="btn ghost" onclick={onclose}>{m.common_close()}</button>
     </div>
   </div>
 </div>

@@ -41,6 +41,8 @@ const HEX_ALIASES: Record<string, string> = {
   "d02090": "var(--c-chaos)",
   "808080": "var(--fg-2)",
   "e05030": "var(--bad)",
+  // PoB's NEGATIVE code, the counterpart of the already-mapped POSITIVE 33ff77.
+  dd0022: "var(--bad)",
   "ff9922": "var(--warn)",
   "33ff77": "var(--ok)",
   "fdb8b8": "var(--c-life)",
@@ -64,7 +66,7 @@ export function parsePobText(s: string | null | undefined): Span[] {
       if (nx === "x" && i + 7 < s.length && /^[0-9a-fA-F]{6}$/.test(s.slice(i + 2, i + 8))) {
         flush();
         const hex = s.slice(i + 2, i + 8).toLowerCase();
-        color = HEX_ALIASES[hex] ?? `color-mix(in srgb, #${hex} var(--pob-mix, 100%), var(--fg-0))`;
+        color = HEX_ALIASES[hex] ?? `color-mix(in oklab, #${hex} var(--pob-mix, 100%), var(--fg-0))`;
         i += 8;
         continue;
       }

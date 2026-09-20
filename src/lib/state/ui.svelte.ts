@@ -116,15 +116,15 @@ class UiStore {
   private applyContrast() {
     const el = document.documentElement;
     const level = this.contrastEffective;
-    if (level <= 0) {
-      for (let i = 1; i <= 4; i++) el.style.removeProperty(`--fg-${i}`);
-      return;
-    }
-    const cs = getComputedStyle(el);
-    const target = cs.getPropertyValue("--fg-0");
     for (let i = 1; i <= 4; i++) {
-      const lifted = mixHex(cs.getPropertyValue(`--ramp-${i}`), target, (level / 100) * CONTRAST_REACH[i - 1]);
-      if (lifted) el.style.setProperty(`--fg-${i}`, lifted);
+      if (level <= 0) {
+        el.style.removeProperty(`--fg-${i}`);
+        continue;
+      }
+      // Mixed in oklab so each step of the slider lifts by the same perceived
+      // amount, and against the tokens so it follows a theme change on its own.
+      const pct = (level / 100) * CONTRAST_REACH[i - 1] * 100;
+      el.style.setProperty(`--fg-${i}`, `color-mix(in oklab, var(--fg-0) ${pct.toFixed(1)}%, var(--ramp-${i}))`);
     }
   }
 
@@ -164,18 +164,6 @@ class UiStore {
 
 function clampContrast(n: number) {
   return Math.min(CONTRAST_MAX, Math.max(0, Math.round(n / 5) * 5));
-}
-
-function parseHex(s: string): number[] | null {
-  const m = /^#?([0-9a-f]{6})$/i.exec(s.trim());
-  return m ? [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)) : null;
-}
-
-function mixHex(from: string, to: string, t: number): string | null {
-  const a = parseHex(from);
-  const b = parseHex(to);
-  if (!a || !b) return null;
-  return "#" + a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, "0")).join("");
 }
 
 function clampScale(s: number) {

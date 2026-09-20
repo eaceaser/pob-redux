@@ -16,6 +16,7 @@
   import { build } from "$lib/state/build.svelte";
   import { game } from "$lib/state/game.svelte";
   import { stripPobText } from "$lib/pobtext";
+  import { m } from "$lib/paraglide/messages";
 
   // Review: PoB's numbers plus the rule-based findings, refreshed with the build.
   let summary = $state<BuildSummary | null>(null);
@@ -113,19 +114,19 @@
     }
   }
 
-  const HEADLINE: { key: string; label: string; pct?: boolean }[] = [
-    { key: "Life", label: "Life" },
-    { key: "TotalEHP", label: "Effective HP" },
-    { key: "Armour", label: "Armour" },
-    { key: "CombinedDPS", label: "DPS" },
-    { key: "FireResist", label: "Fire res", pct: true },
-    { key: "ColdResist", label: "Cold res", pct: true },
-    { key: "LightningResist", label: "Lightning res", pct: true },
-    { key: "ChaosResist", label: "Chaos res", pct: true },
-    { key: "Str", label: "Strength" },
-    { key: "Dex", label: "Dexterity" },
-    { key: "Int", label: "Intelligence" },
-  ];
+  const HEADLINE = $derived<{ key: string; label: string; pct?: boolean }[]>([
+    { key: "Life", label: m.opt_stat_life() },
+    { key: "TotalEHP", label: m.opt_stat_ehp() },
+    { key: "Armour", label: m.opt_stat_armour() },
+    { key: "CombinedDPS", label: m.opt_stat_dps() },
+    { key: "FireResist", label: m.opt_stat_fire_res(), pct: true },
+    { key: "ColdResist", label: m.opt_stat_cold_res(), pct: true },
+    { key: "LightningResist", label: m.opt_stat_lightning_res(), pct: true },
+    { key: "ChaosResist", label: m.opt_stat_chaos_res(), pct: true },
+    { key: "Str", label: m.opt_stat_str() },
+    { key: "Dex", label: m.opt_stat_dex() },
+    { key: "Int", label: m.opt_stat_int() },
+  ]);
 
   const fmt = (v: number | undefined, pct = false) =>
     v == null ? "" : pct ? `${Math.round(v)}%` : Math.round(v).toLocaleString();
@@ -136,19 +137,19 @@
   };
   const deltaClass = (v: number | undefined) => (v == null || Math.abs(v) < 0.5 ? "" : v > 0 ? "up" : "down");
 
-  const DELTA_KEYS: { key: string; label: string; pct?: boolean }[] = [
-    { key: "Life", label: "life" },
-    { key: "TotalEHP", label: "EHP" },
-    { key: "CombinedDPS", label: "DPS" },
-    { key: "Armour", label: "armour" },
-    { key: "FireResist", label: "fire", pct: true },
-    { key: "ColdResist", label: "cold", pct: true },
-    { key: "LightningResist", label: "lightning", pct: true },
-    { key: "ChaosResist", label: "chaos", pct: true },
-    { key: "Str", label: "str" },
-    { key: "Dex", label: "dex" },
-    { key: "Int", label: "int" },
-  ];
+  const DELTA_KEYS = $derived<{ key: string; label: string; pct?: boolean }[]>([
+    { key: "Life", label: m.opt_delta_life() },
+    { key: "TotalEHP", label: m.opt_delta_ehp() },
+    { key: "CombinedDPS", label: m.opt_delta_dps() },
+    { key: "Armour", label: m.opt_delta_armour() },
+    { key: "FireResist", label: m.opt_delta_fire(), pct: true },
+    { key: "ColdResist", label: m.opt_delta_cold(), pct: true },
+    { key: "LightningResist", label: m.opt_delta_lightning(), pct: true },
+    { key: "ChaosResist", label: m.opt_delta_chaos(), pct: true },
+    { key: "Str", label: m.opt_delta_str() },
+    { key: "Dex", label: m.opt_delta_dex() },
+    { key: "Int", label: m.opt_delta_int() },
+  ]);
 
   const sevClass: Record<string, string> = { high: "bad", medium: "warn", low: "low" };
 
@@ -163,14 +164,14 @@
 
   // Tree: node power for one stat, the best unallocated per point and the
   // weakest allocated, straight from the scan the tree tab already runs.
-  const TREE_STATS: [string, string][] = [
-    ["Life", "Life"],
-    ["EnergyShield", "ES"],
-    ["TotalEHP", "EHP"],
-    ["CombinedDPS", "DPS"],
-    ["Armour", "Armour"],
-    ["EffectiveMovementSpeedMod", "Speed"],
-  ];
+  const TREE_STATS = $derived<[string, string][]>([
+    ["Life", m.opt_stat_life()],
+    ["EnergyShield", m.opt_tree_es()],
+    ["TotalEHP", m.opt_tree_ehp()],
+    ["CombinedDPS", m.opt_stat_dps()],
+    ["Armour", m.opt_stat_armour()],
+    ["EffectiveMovementSpeedMod", m.opt_tree_speed()],
+  ]);
   let treeStat = $state("Life");
   let treeStatChosen = false;
   $effect(() => {
@@ -251,29 +252,29 @@
 <div class="page">
   <section class="col review">
     <div class="head">
-      <span class="title">Review</span>
+      <span class="title">{m.opt_review()}</span>
       {#if sanity}
         <span class="dim small">
-          <span class="mono">{sanity.high}</span> high · <span class="mono">{sanity.medium}</span> medium · <span class="mono">{sanity.low}</span> low
+          <span class="mono">{sanity.high}</span> {m.opt_sev_high()} · <span class="mono">{sanity.medium}</span> {m.opt_sev_medium()} · <span class="mono">{sanity.low}</span> {m.opt_sev_low()}
         </span>
       {/if}
     </div>
     {#if !build.loaded}
-      <div class="dim small pad">Open a build to review it.</div>
+      <div class="dim small pad">{m.opt_open_build()}</div>
     {:else if summary}
       <div class="facts">
-        <div class="fact" title="Skills that need a keypress"><span class="k">Active</span><span class="v mono">{summary.activeSkills}</span></div>
-        <div class="fact" title="Persistent, trigger and meta gems"><span class="k">Automatic</span><span class="v mono">{summary.persistentSkills + summary.triggerSkills + summary.metaSkills}</span></div>
-        <div class="fact" title="Passive points spent (the larger weapon set counts), budget at level {summary.characterLevel}"><span class="k">Points</span><span class="v mono">{summary.passivePointsSpent}<span class="dim"> / {summary.pointsAvailableMin === summary.pointsAvailableMax ? summary.pointsAvailableMax : `${summary.pointsAvailableMin}–${summary.pointsAvailableMax}`}</span></span></div>
+        <div class="fact" title={m.opt_active_title()}><span class="k">{m.opt_active()}</span><span class="v mono">{summary.activeSkills}</span></div>
+        <div class="fact" title={m.opt_automatic_title()}><span class="k">{m.opt_automatic()}</span><span class="v mono">{summary.persistentSkills + summary.triggerSkills + summary.metaSkills}</span></div>
+        <div class="fact" title={m.opt_points_title({ level: summary.characterLevel })}><span class="k">{m.opt_points()}</span><span class="v mono">{summary.passivePointsSpent}<span class="dim"> / {summary.pointsAvailableMin === summary.pointsAvailableMax ? summary.pointsAvailableMax : `${summary.pointsAvailableMin}–${summary.pointsAvailableMax}`}</span></span></div>
         {#if game.isPoe2}
-          <div class="fact" title="Spirit reserved"><span class="k">Spirit</span><span class="v mono">{summary.spiritReserved}<span class="dim"> / {summary.spirit}</span></span></div>
-          <div class="fact" title="Charms equipped; slots come from the belt"><span class="k">Charms</span><span class="v mono">{summary.charmsEquipped}<span class="dim"> / {summary.charmLimit}</span></span></div>
+          <div class="fact" title={m.opt_spirit_title()}><span class="k">{m.opt_spirit()}</span><span class="v mono">{summary.spiritReserved}<span class="dim"> / {summary.spirit}</span></span></div>
+          <div class="fact" title={m.opt_charms_title()}><span class="k">{m.opt_charms()}</span><span class="v mono">{summary.charmsEquipped}<span class="dim"> / {summary.charmLimit}</span></span></div>
         {/if}
-        <div class="fact" title="Fire, cold, lightning, chaos"><span class="k">Resists</span><span class="v mono"><span class="fire" class:bad={summary.fireResist < 75}>{Math.round(summary.fireResist)}</span> / <span class="cold" class:bad={summary.coldResist < 75}>{Math.round(summary.coldResist)}</span> / <span class="lightning" class:bad={summary.lightningResist < 75}>{Math.round(summary.lightningResist)}</span> / <span class="chaos">{Math.round(summary.chaosResist)}</span></span></div>
+        <div class="fact" title={m.opt_resists_title()}><span class="k">{m.opt_resists()}</span><span class="v mono"><span class="fire" class:bad={summary.fireResist < 75}>{Math.round(summary.fireResist)}</span> / <span class="cold" class:bad={summary.coldResist < 75}>{Math.round(summary.coldResist)}</span> / <span class="lightning" class:bad={summary.lightningResist < 75}>{Math.round(summary.lightningResist)}</span> / <span class="chaos">{Math.round(summary.chaosResist)}</span></span></div>
       </div>
       <div class="findings">
         {#if sanity && sanity.findings.length === 0}
-          <div class="dim small pad">No findings.</div>
+          <div class="dim small pad">{m.opt_no_findings()}</div>
         {/if}
         {#each sanity?.findings ?? [] as f}
           <div class="finding">
@@ -290,49 +291,49 @@
 
   <section class="col gear">
     <div class="head">
-      <span class="title">Gear</span>
+      <span class="title">{m.opt_gear()}</span>
     </div>
     <div class="controls">
       <div class="ctl">
-        <span class="label">Aim</span>
+        <span class="label">{m.opt_aim()}</span>
         <div class="seg" role="radiogroup">
-          {#each [["balanced", "Balanced"], ["defence", "Defence"], ["damage", "Damage"]] as [id, label]}
+          {#each [["balanced", m.opt_aim_balanced()], ["defence", m.opt_aim_defence()], ["damage", m.opt_aim_damage()]] as [id, label]}
             <button class:on={preset === id} onclick={() => (preset = id as typeof preset)} disabled={running}>{label}</button>
           {/each}
         </div>
       </div>
       <div class="ctl">
-        <span class="label">Item level</span>
+        <span class="label">{m.opt_item_level()}</span>
         <input class="input mono ilvl" type="number" min="1" max="100" bind:value={itemLevel} oninput={() => (itemLevelTouched = true)} disabled={running} />
       </div>
       <div class="ctl">
-        <span class="label">Rolls</span>
+        <span class="label">{m.opt_rolls()}</span>
         <div class="seg" role="radiogroup">
-          {#each [[1, "Perfect"], [0.8, "Good"], [0.5, "Average"]] as [v, label]}
+          {#each [[1, m.opt_roll_perfect()], [0.8, m.opt_roll_good()], [0.5, m.opt_roll_average()]] as [v, label]}
             <button class:on={range === v} onclick={() => (range = v as number)} disabled={running}>{label}</button>
           {/each}
         </div>
       </div>
       <div class="ctl slots">
-        <span class="label">Slots</span>
+        <span class="label">{m.opt_slots()}</span>
         <div class="chips">
           {#each equipped as e (e.slot)}
             <button class="chip" class:on={chosen.has(e.slot)} disabled={running} title={e.name ?? ""} onclick={() => toggleSlot(e.slot)}>
-              {e.slot}{#if e.unique}<span class="dim"> unique</span>{/if}
+              {e.slot}{#if e.unique}<span class="dim"> {m.opt_unique()}</span>{/if}
             </button>
           {/each}
-          {#if equipped.length === 0}<span class="dim small">No gear equipped.</span>{/if}
+          {#if equipped.length === 0}<span class="dim small">{m.opt_no_gear()}</span>{/if}
         </div>
       </div>
       <div class="ctl run">
         {#if running}
-          <button class="btn sm" onclick={() => (cancel = true)}>Stop</button>
+          <button class="btn sm" onclick={() => (cancel = true)}>{m.common_stop()}</button>
           <span class="prog">
             <span class="bar"><span class="fill" style:width={progress && progress.total ? `${(100 * progress.done) / progress.total}%` : "0%"}></span></span>
-            <span class="dim small">{progress?.note ?? "starting"}</span>
+            <span class="dim small">{progress?.note ?? m.opt_starting()}</span>
           </span>
         {:else}
-          <button class="btn sm primary" onclick={run} disabled={!build.loaded || chosen.size === 0} title="Resistances stay at 75, requirements stay met, movement speed is kept. Nothing changes until you apply.">Optimise {chosen.size} slot{chosen.size === 1 ? "" : "s"}</button>
+          <button class="btn sm primary" onclick={run} disabled={!build.loaded || chosen.size === 0} title={m.opt_run_title()}>{m.opt_run({ count: chosen.size })}</button>
         {/if}
       </div>
       {#if error}<div class="err small">{error}</div>{/if}
@@ -341,12 +342,12 @@
     {#if result}
       <div class="results">
         <div class="ghead">
-          <span>Result</span>
-          <span class="dim">{result.proposals.length} item{result.proposals.length === 1 ? "" : "s"} · {Math.round(result.ms / 100) / 10}s</span>
-          <button class="btn sm primary" onclick={applyAll} disabled={build.busy > 0 || result.proposals.every((p) => applied.has(p.slot))}>Apply all</button>
+          <span>{m.opt_result()}</span>
+          <span class="dim">{m.opt_result_summary({ count: result.proposals.length, seconds: Math.round(result.ms / 100) / 10 })}</span>
+          <button class="btn sm primary" onclick={applyAll} disabled={build.busy > 0 || result.proposals.every((p) => applied.has(p.slot))}>{m.opt_apply_all()}</button>
         </div>
         <table class="before">
-          <thead><tr><th></th><th class="num">Now</th><th class="num">Proposed</th><th class="num">Change</th></tr></thead>
+          <thead><tr><th></th><th class="num">{m.opt_col_now()}</th><th class="num">{m.opt_col_proposed()}</th><th class="num">{m.opt_col_change()}</th></tr></thead>
           <tbody>
             {#each HEADLINE as h}
               {#if result.before[h.key] !== undefined || result.after[h.key] !== undefined}
@@ -365,13 +366,13 @@
             <div class="phead">
               <span class="pslot">{p.slot}</span>
               <span class="pbase">{p.base}</span>
-              {#if p.replaces}<span class="dim small">replaces {stripPobText(p.replaces)}</span>{/if}
-              <button class="btn sm" onclick={() => apply(p)} disabled={build.busy > 0 || applied.has(p.slot)}>{applied.has(p.slot) ? "Applied" : "Apply"}</button>
+              {#if p.replaces}<span class="dim small">{m.opt_replaces({ item: stripPobText(p.replaces) })}</span>{/if}
+              <button class="btn sm" onclick={() => apply(p)} disabled={build.busy > 0 || applied.has(p.slot)}>{applied.has(p.slot) ? m.opt_applied() : m.opt_apply()}</button>
             </div>
             <div class="mods mono">
-              {#each p.mods as m}<div>{m}</div>{/each}
+              {#each p.mods as mod}<div>{mod}</div>{/each}
             </div>
-            <div class="lookfor"><span class="dim">Look for</span> {p.lookFor.join(", ")}{#if p.implicit}<span class="dim"> · implicit</span> {plainImplicit(p.implicit)}{/if}</div>
+            <div class="lookfor"><span class="dim">{m.opt_look_for()}</span> {p.lookFor.join(", ")}{#if p.implicit}<span class="dim"> {m.opt_implicit()}</span> {plainImplicit(p.implicit)}{/if}</div>
             <div class="deltas">
               {#each DELTA_KEYS as d}
                 {#if p.delta[d.key] !== undefined && Math.abs(p.delta[d.key]) >= 0.5}
@@ -379,7 +380,7 @@
                 {/if}
               {/each}
               {#if p.requirements.str || p.requirements.dex || p.requirements.int}
-                <span class="dim small">needs <span class="mono">{[p.requirements.str && `${p.requirements.str} str`, p.requirements.dex && `${p.requirements.dex} dex`, p.requirements.int && `${p.requirements.int} int`].filter(Boolean).join(", ")}</span></span>
+                <span class="dim small">{m.opt_needs()} <span class="mono">{[p.requirements.str && m.opt_req_str({ value: p.requirements.str }), p.requirements.dex && m.opt_req_dex({ value: p.requirements.dex }), p.requirements.int && m.opt_req_int({ value: p.requirements.int })].filter(Boolean).join(", ")}</span></span>
               {/if}
             </div>
           </div>
@@ -390,11 +391,11 @@
       </div>
     {/if}
     <div class="head tree">
-      <span class="title">Tree</span>
+      <span class="title">{m.opt_tree()}</span>
     </div>
     <div class="controls">
       <div class="ctl">
-        <span class="label">Stat</span>
+        <span class="label">{m.opt_tree_stat()}</span>
         <div class="seg" role="radiogroup">
           {#each TREE_STATS as [id, label]}
             <button
@@ -409,14 +410,14 @@
         </div>
       </div>
       <div class="ctl run">
-        <button class="btn sm primary" onclick={scanTree} disabled={treeRunning || planRunning || !build.loaded}>{treeRunning ? "Scanning…" : "Scan"}</button>
-        <label class="chk small"><input type="checkbox" bind:checked={notablesOnly} disabled={treeRunning} /> notables only</label>
+        <button class="btn sm primary" onclick={scanTree} disabled={treeRunning || planRunning || !build.loaded}>{treeRunning ? m.opt_scanning() : m.opt_scan()}</button>
+        <label class="chk small"><input type="checkbox" bind:checked={notablesOnly} disabled={treeRunning} /> {m.opt_notables_only()}</label>
         {#if summary}
-          <span class="dim small"><span class="mono">{Math.max(0, summary.pointsAvailableMax - summary.passivePointsSpent)}</span> points unspent</span>
+          <span class="dim small"><span class="mono">{Math.max(0, summary.pointsAvailableMax - summary.passivePointsSpent)}</span> {m.opt_points_unspent()}</span>
         {/if}
       </div>
       <div class="ctl run">
-        <span class="label">Plan</span>
+        <span class="label">{m.opt_plan()}</span>
         <input
           class="input sm num budget"
           type="number"
@@ -425,10 +426,10 @@
           placeholder={String(unspent || 10)}
           bind:value={planBudget}
           disabled={planRunning}
-          title="How many passive points to spend"
+          title={m.opt_plan_budget_title()}
         />
-        <span class="dim small">points</span>
-        <button class="btn sm" onclick={planTree} disabled={planRunning || treeRunning || !build.loaded}>{planRunning ? "Planning…" : "Plan"}</button>
+        <span class="dim small">{m.opt_plan_points()}</span>
+        <button class="btn sm" onclick={planTree} disabled={planRunning || treeRunning || !build.loaded}>{planRunning ? m.opt_planning() : m.opt_plan()}</button>
       </div>
       {#if treeError}<div class="err small">{treeError}</div>{/if}
       {#if planError}<div class="err small">{planError}</div>{/if}
@@ -436,20 +437,20 @@
     {#if plan}
       <div class="results">
         <div class="ghead">
-          <span>Plan · <span class="mono">{plan.spent}</span> points · <span class="mono up">+{fmtGain(plan.total)}</span> {plan.label}</span>
+          <span>{m.opt_plan_header()} <span class="mono">{plan.spent}</span> {m.opt_plan_points_label()} <span class="mono up">+{fmtGain(plan.total)}</span> {plan.label}</span>
           <span class="dim">{Math.round(plan.ms / 100) / 10}s</span>
-          {#if planStale}<span class="warn">tree changed, plan again</span>{/if}
-          <button class="btn sm primary" onclick={applyPlan} disabled={build.busy > 0 || planStale || plan.picks.length === 0}>Allocate all</button>
+          {#if planStale}<span class="warn">{m.opt_plan_stale()}</span>{/if}
+          <button class="btn sm primary" onclick={applyPlan} disabled={build.busy > 0 || planStale || plan.picks.length === 0}>{m.opt_allocate_all()}</button>
         </div>
         {#if plan.picks.length === 0}
-          <div class="dim small pad">No node within {plan.budget} points raises {plan.label}.</div>
+          <div class="dim small pad">{m.opt_plan_none({ budget: plan.budget, stat: plan.label })}</div>
         {/if}
         {#each plan.picks as p, i (p.id)}
           <div class="node">
             <span class="nname" title={p.name ?? ""}><span class="dim mono">{i + 1}</span> {p.name}</span>
             <span class="ntype dim small">{p.type}</span>
             <span class="ngain mono up">+{fmtGain(p.gain)}</span>
-            <span class="nnote dim small"><span class="mono">{p.cost}</span> {p.cost === 1 ? "point" : "points"}</span>
+            <span class="nnote dim small"><span class="mono">{p.cost}</span> {p.cost === 1 ? m.opt_point_one() : m.opt_point_many()}</span>
             <span></span>
           </div>
         {/each}
@@ -457,24 +458,24 @@
     {/if}
     {#if treeRows}
       <div class="results">
-        <div class="ghead"><span>Best to add · {treeRows.stat} per point</span><span class="dim">{Math.round(treeRows.ms / 100) / 10}s</span>{#if treeStale}<span class="warn">tree changed, scan again</span>{/if}</div>
+        <div class="ghead"><span>{m.opt_best_to_add({ stat: treeRows.stat })}</span><span class="dim">{Math.round(treeRows.ms / 100) / 10}s</span>{#if treeStale}<span class="warn">{m.opt_scan_stale()}</span>{/if}</div>
         {#each treeRows.best as r (r.id)}
           <div class="node">
             <span class="nname" title={r.name}>{r.name}</span>
             <span class="ntype dim small">{r.type}</span>
             <span class="ngain mono up">+{fmtGain(r.pathPower)}</span>
-            <span class="nnote dim small">per point · <span class="mono">{r.pathDist}</span> to reach</span>
-            <button class="btn sm" onclick={() => allocate(r.id)} disabled={build.busy > 0}>Allocate</button>
+            <span class="nnote dim small">{m.opt_per_point()} <span class="mono">{r.pathDist}</span> {m.opt_to_reach()}</span>
+            <button class="btn sm" onclick={() => allocate(r.id)} disabled={build.busy > 0}>{m.opt_allocate()}</button>
           </div>
         {/each}
-        <div class="ghead"><span>Allocated, contributing least</span></div>
+        <div class="ghead"><span>{m.opt_weakest()}</span></div>
         {#each treeRows.weakest as r (r.id)}
           <div class="node">
             <span class="nname" title={r.name}>{r.name}</span>
             <span class="ntype dim small">{r.type}</span>
             <span class="ngain mono" class:down={r.power < 0}>{r.power < 0 ? fmtGain(r.power) : "0"}</span>
-            <span class="nnote dim small">if removed · <span class="mono">{r.pathDist}</span> depend on it</span>
-            <button class="btn sm ghost" onclick={() => remove(r.id)} disabled={build.busy > 0}>Remove</button>
+            <span class="nnote dim small">{m.opt_if_removed()} <span class="mono">{r.pathDist}</span> {m.opt_depend_on_it()}</span>
+            <button class="btn sm ghost" onclick={() => remove(r.id)} disabled={build.busy > 0}>{m.common_remove()}</button>
           </div>
         {/each}
       </div>

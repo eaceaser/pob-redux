@@ -1,19 +1,20 @@
 import type { SidebarRow } from "$lib/engine.svelte";
 import { stripPobText } from "$lib/pobtext";
+import { m } from "$lib/paraglide/messages";
 
 export type StatGroup = "offence" | "skill" | "attributes" | "resources" | "mitigation" | "resistances" | "misc" | "fulldps";
 
 const ORDER: StatGroup[] = ["offence", "skill", "attributes", "resources", "mitigation", "resistances", "misc", "fulldps"];
 
-const LABEL: Record<StatGroup, string> = {
-  offence: "Offence",
-  skill: "Skill",
-  attributes: "Attributes",
-  resources: "Resources",
-  mitigation: "Mitigation",
-  resistances: "Resistances",
-  misc: "Misc",
-  fulldps: "Full DPS",
+const LABEL: Record<StatGroup, () => string> = {
+  offence: m.stat_group_offence,
+  skill: m.stat_group_skill,
+  attributes: m.stat_group_attributes,
+  resources: m.stat_group_resources,
+  mitigation: m.stat_group_mitigation,
+  resistances: m.stat_group_resistances,
+  misc: m.stat_group_misc,
+  fulldps: m.stat_group_fulldps,
 };
 
 const KEYS: Record<StatGroup, string[]> = {
@@ -148,10 +149,10 @@ export function groupSidebar(rows: SidebarRow[]): SidebarSection[] {
   const infoRows = trimmed(info);
   if (infoRows.length) out.push({ key: "info", label: null, items: infoRows });
   const minionRows = trimmed(minion);
-  if (minionRows.length) out.push({ key: "minion", label: "Minion", items: minionRows });
+  if (minionRows.length) out.push({ key: "minion", label: m.sidebar_minion(), items: minionRows });
   for (const g of ORDER) {
     const items = trimmed(buckets.get(g) ?? []);
-    if (items.length) out.push({ key: g, label: LABEL[g], items });
+    if (items.length) out.push({ key: g, label: LABEL[g](), items });
   }
   return out;
 }

@@ -51,6 +51,33 @@ pob-redux/
   pob-sync.toml        upstream checkout path and pinned commit
 ```
 
+## Translate the interface
+
+The interface is translated with [Paraglide JS](https://paraglidejs.com). English lives in
+`messages/en.json`; each other language is a file beside it, named for its locale. A key a language
+does not have compiles to the English text, so a partial translation is safe to merge.
+
+```sh
+bun run i18n          # compile messages into src/lib/paraglide (bun run check and the dev server do this too)
+```
+
+To translate, copy a key and its English text into your language's file and replace the text. Keep
+every `{placeholder}` exactly as it appears in English; the compiler rejects a message that invents
+one. Leave proper nouns alone: Path of Building, PoB Redux, Discord, Wraeclast and key names such as
+`Ctrl+B`. Where a string names something from the game, prefer the wording the game itself uses in
+that language.
+
+In the app, `m.some_key()` returns the text for the current language and re-renders when it changes.
+Build a table of labels inside `$derived`, never at module scope, or it keeps the language it was
+first built with.
+
+To add a language, put its tag in `locales` in `project.inlang/settings.json`, add
+`messages/<tag>.json`, and add the language's own name to `LOCALE_LABEL` in
+`src/lib/state/locale.svelte.ts`.
+
+Game data — passive names, item mods, gem names, the stats in the sidebar — comes from Path of
+Building and stays in English whatever the interface language is.
+
 ## Update the bundled PoB data
 
 The installer bundles PoB's Lua and game data. The app never downloads data while it runs, and PoB's

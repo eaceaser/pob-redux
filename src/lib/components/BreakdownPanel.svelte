@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BreakdownSection } from "$lib/engine.svelte";
   import PobText from "./PobText.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let { sections }: { sections: BreakdownSection[] } = $props();
 </script>
@@ -29,11 +30,11 @@
         {#if s.footer}<div class="tfoot"><PobText text={s.footer} /></div>{/if}
       </div>
     {:else if s.type === "radius"}
-      <div class="dim small">Area of effect radius: {s.radius}</div>
+      <div class="dim small">{m.breakdown_radius({ radius: s.radius })}</div>
     {/if}
   {/each}
   {#if sections.length === 0}
-    <div class="dim small">No breakdown available.</div>
+    <div class="dim small">{m.breakdown_none()}</div>
   {/if}
 </div>
 

@@ -24,6 +24,7 @@
   import { game, GAMES, GAME_LABEL } from "$lib/state/game.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { appOptions } from "$lib/state/options.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let bootDots = $state(0);
   const status = $derived(app.status);
@@ -63,19 +64,19 @@
         <div class="center">
           <div class="boot">
             <img class="bootlogo" src={logo} alt="" draggable="false" />
-            <div class="label">Engine</div>
-            <div class="big">Loading Path of Building{game.isPoe1 ? "" : " (PoE2)"}{".".repeat(bootDots)}</div>
+            <div class="label">{m.boot_engine()}</div>
+            <div class="big">{m.boot_loading({ suffix: game.isPoe1 ? "" : " (PoE2)", dots: ".".repeat(bootDots) })}</div>
             <div class="dim mono small">{status?.pob_root ?? ""}</div>
           </div>
         </div>
       {:else if status.state === "error" || status.state === "stopped"}
         <div class="center">
           <div class="boot err">
-            <div class="label" style:color="var(--bad)">Engine failed to start</div>
+            <div class="label" style:color="var(--bad)">{m.boot_failed()}</div>
             <pre class="mono small selectable">{status.message}</pre>
             <div class="dim small">
-              PoB program directory: <span class="mono">{status.pob_root || "(not found)"}</span><br />
-              Run <span class="mono">bun run sync</span> to vendor Path of Building, then restart.
+              {m.boot_pob_dir()} <span class="mono">{status.pob_root || m.boot_pob_dir_missing()}</span><br />
+              {m.boot_run_sync()} <span class="mono">bun run sync</span>
             </div>
           </div>
         </div>
@@ -108,14 +109,14 @@
   {#if game.firstRun}
     <div class="pick-backdrop">
       <div class="pick">
-        <div class="label">Welcome</div>
-        <div class="big">Which game are you building for?</div>
-        <div class="dim small">Each game runs its own Path of Building. You can switch any time from the title bar.</div>
+        <div class="label">{m.welcome_title()}</div>
+        <div class="big">{m.welcome_question()}</div>
+        <div class="dim small">{m.welcome_hint()}</div>
         <div class="pick-row">
           {#each GAMES as g (g)}
-            <button class="pick-btn" onclick={() => game.choose(g)} disabled={!game.has(g) || game.switching}>
+            <button class="pick-btn" onclick={() => game.choose(g)} disabled={game.switching}>
               <span class="pick-name">{GAME_LABEL[g]}</span>
-              <span class="dim small">{game.has(g) ? (g === "poe1" ? "Wraeclast, 3.x" : "Early access, 0.x") : "Not installed"}</span>
+              <span class="dim small">{g === "poe1" ? m.game_poe1_note() : m.game_poe2_note()}</span>
             </button>
           {/each}
         </div>
@@ -215,7 +216,6 @@
     text-align: left;
   }
   .pick-btn:hover:not(:disabled) {
-    border-color: var(--fg-2);
     background: var(--bg-hover);
   }
   .pick-btn:disabled {

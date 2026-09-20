@@ -2,6 +2,7 @@
   import { engine, fetchBuildCode, type PartyState, type PartyKind } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let party = $state<PartyState | null>(null);
   let importText = $state("");
@@ -9,16 +10,16 @@
   let only = $state("all");
 
   // PoB's destination dropdown: take everything, or just one kind of buff.
-  const DESTINATIONS: [string, string][] = [
-    ["all", "Everything"],
-    ["editPartyMemberStats", "Party member stats"],
-    ["editAuras", "Auras"],
-    ["editCurses", "Curses"],
-    ["editWarcries", "Warcries"],
-    ["editLinks", "Link skills"],
-    ["enemyCond", "Enemy conditions"],
-    ["enemyMods", "Enemy modifiers"],
-  ];
+  const DESTINATIONS = $derived<[string, string][]>([
+    ["all", m.party_dest_all()],
+    ["editPartyMemberStats", m.party_dest_stats()],
+    ["editAuras", m.party_dest_auras()],
+    ["editCurses", m.party_dest_curses()],
+    ["editWarcries", m.party_dest_warcries()],
+    ["editLinks", m.party_dest_links()],
+    ["enemyCond", m.party_dest_enemy_cond()],
+    ["enemyMods", m.party_dest_enemy_mods()],
+  ]);
   let advanced = $state(false);
   let fetching = $state(false);
 
@@ -27,15 +28,15 @@
     if (build.loaded) engine.getParty().then((r) => (party = r)).catch(() => (party = null));
   });
 
-  const boxes: { kind: PartyKind; label: string; hint: string }[] = [
-    { kind: "auras", label: "Auras", hint: "Auras with the highest effect take priority" },
-    { kind: "curses", label: "Curses", hint: "Your own curses take priority over a support's" },
-    { kind: "warcries", label: "Warcry Skills", hint: "" },
-    { kind: "links", label: "Link Skills", hint: "" },
-    { kind: "partyMemberStats", label: "Party Member Stats", hint: "" },
-    { kind: "enemyConditions", label: "Enemy Conditions", hint: "" },
-    { kind: "enemyMods", label: "Enemy Modifiers", hint: "" },
-  ];
+  const boxes = $derived<{ kind: PartyKind; label: string; hint: string }[]>([
+    { kind: "auras", label: m.party_box_auras(), hint: m.party_box_auras_hint() },
+    { kind: "curses", label: m.party_box_curses(), hint: m.party_box_curses_hint() },
+    { kind: "warcries", label: m.party_box_warcries(), hint: "" },
+    { kind: "links", label: m.party_box_links(), hint: "" },
+    { kind: "partyMemberStats", label: m.party_box_stats(), hint: "" },
+    { kind: "enemyConditions", label: m.party_box_enemy_cond(), hint: "" },
+    { kind: "enemyMods", label: m.party_box_enemy_mods(), hint: "" },
+  ]);
 
   async function doImport() {
     const text = importText.trim();
@@ -62,19 +63,19 @@
   <div class="toolbar">
     <input
       class="input imp"
-      placeholder="Support build's share code or link (exported with 'Export support' enabled)"
+      placeholder={m.party_import_placeholder()}
       bind:value={importText}
       onkeydown={(e) => e.key === "Enter" && doImport()}
     />
     <button class="btn primary sm" onclick={doImport} disabled={!importText.trim() || build.busy > 0 || fetching}>
-      {fetching ? "Fetching…" : "Import"}
+      {fetching ? m.party_fetching() : m.party_import()}
     </button>
-    <label class="chk small" title="Append to the current party lists instead of replacing them (curses still replace)">
+    <label class="chk small" title={m.party_append_title()}>
       <input type="checkbox" bind:checked={append} />
-      Append
+      {m.party_append()}
     </label>
-    <label class="fld-inline" title="Take only one kind of support from the imported build">
-      <span class="label">Take</span>
+    <label class="fld-inline" title={m.party_take_title()}>
+      <span class="label">{m.party_take()}</span>
       <select class="select sm" bind:value={only}>
         {#each DESTINATIONS as [id, label] (id)}
           <option value={id}>{label}</option>
@@ -82,27 +83,27 @@
       </select>
     </label>
     <span class="vr"></span>
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.partyClear())} disabled={build.busy > 0}>Clear</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.partyClear())} disabled={build.busy > 0}>{m.common_clear()}</button>
     <button
       class="btn sm ghost"
-      title="Turn the party's effects off without losing the pasted data. Rebuild all puts them back."
+      title={m.party_disable_title()}
       onclick={() => build.run(() => engine.partyDisable())}
-      disabled={build.busy > 0}>Disable effects</button
+      disabled={build.busy > 0}>{m.party_disable()}</button
     >
-    <button class="btn sm ghost" title="Reparse all boxes after manual edits" onclick={() => build.run(() => engine.partyRebuild())} disabled={build.busy > 0}>Rebuild all</button>
+    <button class="btn sm ghost" title={m.party_rebuild_title()} onclick={() => build.run(() => engine.partyRebuild())} disabled={build.busy > 0}>{m.party_rebuild()}</button>
     <span class="vr"></span>
-    <label class="chk small" title="Include this build's own auras/curses/buffs when exporting its share code, so a party member can import them here">
+    <label class="chk small" title={m.party_export_title()}>
       <input type="checkbox" checked={party?.enableExportBuffs ?? false} onchange={(e) => build.run(() => engine.partySetExport((e.target as HTMLInputElement).checked))} />
-      Export support with share code
+      {m.party_export()}
     </label>
-    <label class="chk small" title="Show and edit the raw parsed buffers">
+    <label class="chk small" title={m.party_advanced_title()}>
       <input type="checkbox" bind:checked={advanced} />
-      Advanced
+      {m.party_advanced()}
     </label>
   </div>
   <div class="scroll">
     {#if !party}
-      <div class="dim small pad">Load a build first.</div>
+      <div class="dim small pad">{m.party_no_build()}</div>
     {:else}
       <div class="cols">
         {#each boxes as b (b.kind)}

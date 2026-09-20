@@ -4,6 +4,7 @@ import { fetchBuildCode } from "$lib/engine.svelte";
 import { build } from "$lib/state/build.svelte";
 import { confirm } from "$lib/state/confirm.svelte";
 import { game } from "$lib/state/game.svelte";
+import { m } from "$lib/paraglide/messages";
 
 type Link = { game: "poe1" | "poe2"; url: string };
 
@@ -33,20 +34,20 @@ class LinkStore {
     // switching game asks about unsaved changes on its own
     if (build.info?.unsaved && link.game === game.current) {
       const ok = await confirm.ask({
-        title: "Open linked build",
-        message: "The open build has unsaved changes. Open the linked build anyway?",
-        ok: "Open",
-        cancel: "Keep editing",
+        title: m.link_open_title(),
+        message: m.link_open_message(),
+        ok: m.link_open_ok(),
+        cancel: m.link_open_cancel(),
       });
       if (!ok) return false;
     }
     try {
       const r = await fetchBuildCode(link.url);
       const loaded = await build.loadCode(r.code);
-      if (loaded) build.say(`Opened a build from ${r.site}`);
+      if (loaded) build.say(m.link_opened({ site: r.site }));
       return !!loaded;
     } catch (e) {
-      build.error = `Could not open the link: ${String(e)}`;
+      build.error = m.link_failed({ error: String(e) });
       return false;
     }
   }

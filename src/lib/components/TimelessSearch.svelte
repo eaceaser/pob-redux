@@ -9,6 +9,7 @@
     type TimelessWant,
   } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -112,7 +113,7 @@
       result = await engine.timelessSearchResult(200);
       const ms = performance.now() - started;
       const took = ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-      note = `${result.found.toLocaleString()} of ${result.total.toLocaleString()} seeds match, searched in ${took}`;
+      note = m.timeless_summary({ found: result.found.toLocaleString(), total: result.total.toLocaleString(), took });
     } catch (e) {
       build.error = String(e);
     } finally {
@@ -143,7 +144,7 @@
     try {
       const r = await engine.timelessTradeUrl({ jewelType, seeds: tradeSeeds, conqueror, league });
       await openUrl(r.url);
-      note = `Trade search opened for ${r.seeds} seed${r.seeds === 1 ? "" : "s"}`;
+      note = m.timeless_trade_opened({ count: r.seeds });
     } catch (e) {
       build.error = String(e);
     }
@@ -153,7 +154,7 @@
     if (!tradeSeeds.length) return;
     try {
       await writeText(tradeSeeds.join("\n"));
-      note = `${tradeSeeds.length} seed${tradeSeeds.length === 1 ? "" : "s"} copied`;
+      note = m.timeless_seeds_copied({ count: tradeSeeds.length });
     } catch (e) {
       build.error = String(e);
     }
@@ -163,63 +164,63 @@
 <div class="modal">
   <div class="panel dialog tldlg">
     <div class="head">
-      <span class="label">Timeless jewel search</span>
+      <span class="label">{m.timeless_title()}</span>
       {#if socketNode}
-        <span class="dim small">{info?.radius.length ?? 0} passives in range of {socketNode.label}</span>
+        <span class="dim small">{m.timeless_in_range({ count: info?.radius.length ?? 0, socket: socketNode.label })}</span>
       {/if}
     </div>
 
     <div class="filters">
-      <select class="select sm" bind:value={jewelType} disabled={running} title="Which legion jewel to search">
+      <select class="select sm" bind:value={jewelType} disabled={running} title={m.timeless_jewel_title()}>
         {#each info?.jewels ?? [] as j}
           <option value={j.id}>{j.label}</option>
         {/each}
       </select>
-      <select class="select sm" bind:value={conqueror} disabled={running} title="Conqueror, which decides the keystone the jewel grants">
+      <select class="select sm" bind:value={conqueror} disabled={running} title={m.timeless_conqueror_title()}>
         {#each jewel?.conquerors ?? [] as c}
           <option value={c.id}>{c.label}</option>
         {/each}
       </select>
-      <select class="select sm grow" bind:value={socket} disabled={running} title="Jewel socket to search around">
+      <select class="select sm grow" bind:value={socket} disabled={running} title={m.timeless_socket_title()}>
         {#each info?.sockets ?? [] as s}
           <option value={s.id}>{s.allocated ? "● " : ""}{s.label}</option>
         {/each}
       </select>
-      <label class="chk small" title="Only score passives you have taken, or ones within a few points of your tree">
+      <label class="chk small" title={m.timeless_taken_only_title()}>
         <input type="checkbox" bind:checked={allocatedOnly} disabled={running} />
-        Taken only
+        {m.timeless_taken_only()}
       </label>
       {#if allocatedOnly}
-        <input class="input num sm" type="number" min="0" max="20" bind:value={reach} disabled={running} title="Also score unallocated passives this many points away" />
+        <input class="input num sm" type="number" min="0" max="20" bind:value={reach} disabled={running} title={m.timeless_reach_title()} />
       {/if}
     </div>
 
     <div class="cols">
       <section class="side">
         <div class="shead">
-          What the jewel should make
+          {m.timeless_wanted_source()}
           <span class="dim num">{options.length}</span>
         </div>
-        <input class="input sm srch" placeholder="Search by name or stat…" bind:value={search} />
+        <input class="input sm srch" placeholder={m.timeless_search_placeholder()} bind:value={search} />
         <div class="scroll">
           {#each options as n (n.id)}
             <button class="row" onclick={() => add(n)} title={n.stats.join("\n")}>
               <span class="nm">{n.name}</span>
-              {#if n.total}<span class="tag">pooled</span>{/if}
+              {#if n.total}<span class="tag">{m.timeless_pooled()}</span>{/if}
             </button>
           {:else}
-            <div class="dim small pad">Nothing matches.</div>
+            <div class="dim small pad">{m.common_nothing_matches()}</div>
           {/each}
         </div>
       </section>
 
       <section class="side">
         <div class="shead">
-          Wanted
+          {m.timeless_wanted()}
           <span class="dim num">{wanted.length}</span>
           {#if wanted.length}
             <span class="dim small cols3" class:three={jewelType === 1}>
-              <span>weight</span>{#if jewelType === 1}<span>2nd</span>{/if}<span>minimum</span>
+              <span>{m.timeless_col_weight()}</span>{#if jewelType === 1}<span>{m.timeless_col_second()}</span>{/if}<span>{m.timeless_col_minimum()}</span>
             </span>
           {/if}
         </div>
@@ -233,7 +234,7 @@
                 step="0.1"
                 value={w.weight ?? 1}
                 oninput={(e) => setWeight(w.id, "weight", (e.target as HTMLInputElement).value)}
-                title="Weight: how much this counts towards a seed's score"
+                title={m.timeless_weight_title()}
               />
               {#if jewelType === 1}
                 <input
@@ -241,9 +242,9 @@
                   type="number"
                   step="0.1"
                   value={w.weight2 ?? ""}
-                  placeholder="2nd"
+                  placeholder={m.timeless_col_second()}
                   oninput={(e) => setWeight(w.id, "weight2", (e.target as HTMLInputElement).value)}
-                  title="Weight for the node's second stat roll"
+                  title={m.timeless_weight2_title()}
                 />
               {/if}
               <input
@@ -251,18 +252,18 @@
                 type="number"
                 step="0.1"
                 value={w.minWeight ?? ""}
-                placeholder="min"
+                placeholder={m.timeless_min_placeholder()}
                 oninput={(e) => setWeight(w.id, "minWeight", (e.target as HTMLInputElement).value)}
-                title="Reject a seed that does not reach this much of this node"
+                title={m.timeless_min_title()}
               />
-              <button class="x" onclick={() => drop(w.id)} title="Remove">✕</button>
+              <button class="x" onclick={() => drop(w.id)} title={m.common_remove()}>✕</button>
             </div>
           {:else}
-            <div class="dim small pad">Pick from the left. A seed scores by the weights you set here.</div>
+            <div class="dim small pad">{m.timeless_wanted_empty()}</div>
           {/each}
         </div>
         {#if jewelType === 4 && radiusNotables.length}
-          <div class="shead">Keep as they are</div>
+          <div class="shead">{m.timeless_keep()}</div>
           <div class="scroll short">
             {#each radiusNotables as n (n.id)}
               <label class="chk small keeprow">
@@ -275,7 +276,7 @@
                       : keep.filter((k) => k !== n.name))}
                 />
                 {n.name}
-                {#if n.keystone}<span class="tag">keystone</span>{/if}
+                {#if n.keystone}<span class="tag">{m.timeless_keystone()}</span>{/if}
               </label>
             {/each}
           </div>
@@ -285,25 +286,25 @@
 
     <div class="runbar">
       <button class="btn primary" onclick={run} disabled={running || !wanted.length || !socket}>
-        {running ? "Searching…" : "Search"}
+        {running ? m.timeless_searching() : m.timeless_search()}
       </button>
       {#if running}
-        <button class="btn ghost sm" onclick={() => (cancel = true)}>Stop</button>
+        <button class="btn ghost sm" onclick={() => (cancel = true)}>{m.common_stop()}</button>
         <div class="prog"><span style:width={`${Math.round(progress * 100)}%`}></span></div>
         <span class="dim num small">{checked.toLocaleString()} / {total.toLocaleString()}</span>
       {:else if note}
         <span class="dim small">{note}</span>
       {:else if jewel}
-        <span class="dim num small">seeds {jewel.seedMin.toLocaleString()}–{jewel.seedMax.toLocaleString()}</span>
+        <span class="dim num small">{m.timeless_seed_range({ min: jewel.seedMin.toLocaleString(), max: jewel.seedMax.toLocaleString() })}</span>
       {/if}
     </div>
 
     {#if result}
       <div class="side results">
         <div class="shead">
-          Best seeds
+          {m.timeless_best_seeds()}
           <span class="dim num">{result.results.length}</span>
-          <span class="dim small">click to pick, shift-click for a run</span>
+          <span class="dim small">{m.timeless_pick_hint()}</span>
         </div>
         <div class="scroll">
           {#each result.results as r (r.seed)}
@@ -317,7 +318,7 @@
               </span>
             </button>
           {:else}
-            <div class="dim small pad">No seed produces what you asked for in that socket.</div>
+            <div class="dim small pad">{m.timeless_no_results()}</div>
           {/each}
         </div>
       </div>
@@ -325,14 +326,14 @@
 
     <div class="acts">
       {#if result && result.results.length}
-        <input class="input sm lg" bind:value={league} title="Trade league to search" />
-        <button class="btn sm ghost" onclick={copySeeds}>Copy seeds</button>
-        <button class="btn sm" onclick={trade} title="Open a pathofexile.com trade search for these seeds">
-          Trade {tradeSeeds.length} seed{tradeSeeds.length === 1 ? "" : "s"}
+        <input class="input sm lg" bind:value={league} title={m.timeless_league_title()} />
+        <button class="btn sm ghost" onclick={copySeeds}>{m.timeless_copy_seeds()}</button>
+        <button class="btn sm" onclick={trade} title={m.timeless_trade_title()}>
+          {m.timeless_trade({ count: tradeSeeds.length })}
         </button>
         <span class="sp"></span>
       {/if}
-      <button class="btn ghost" onclick={onclose}>Close</button>
+      <button class="btn ghost" onclick={onclose}>{m.common_close()}</button>
     </div>
   </div>
 </div>

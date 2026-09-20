@@ -7,6 +7,7 @@ import { chat, type Mode } from "$lib/state/chat.svelte";
 import { appUpdate } from "$lib/state/update.svelte";
 import { game } from "$lib/state/game.svelte";
 import { links } from "$lib/state/links.svelte";
+import { m } from "$lib/paraglide/messages";
 
 /**
  * The engine's boot state and the app's boot sequence. `boot()` runs once at
@@ -71,7 +72,7 @@ class AppStore {
       await build.loadFile(this.paths.open_on_start);
     } else if (session?.safeMode) {
       await build.run(async () => {}, { sync: true });
-      build.say("Safe mode: the last build was not reopened");
+      build.say(m.app_safe_mode());
     } else if (session?.uncleanExit && (await this.declineRecovery())) {
       await build.run(async () => {}, { sync: true });
     } else if (!(await build.reopenLast())) {
@@ -99,10 +100,10 @@ class AppStore {
     if (!saved?.xml) return false;
     const name = saved.name || "build";
     const reopen = await confirm.ask({
-      title: "Reopen the last build?",
-      message: `PoB Redux closed unexpectedly while ${saved.name ? `"${saved.name}"` : "a build"} was open. If reopening it closes the app again, choose Start empty; the build is then saved to your builds folder as a recovered copy.`,
-      ok: "Reopen",
-      cancel: "Start empty",
+      title: m.app_recover_title(),
+      message: m.app_recover_message({ build: saved.name ? `"${saved.name}"` : m.app_recover_build_fallback() }),
+      ok: m.app_recover_ok(),
+      cancel: m.app_recover_cancel(),
     });
     if (reopen) return false;
     const dir = this.paths?.builds_dir;
@@ -110,10 +111,10 @@ class AppStore {
       const d = new Date();
       const two = (n: number) => String(n).padStart(2, "0");
       const stamp = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}-${two(d.getMinutes())}`;
-      const file = `Recovered - ${name.replace(/[\\/:*?"<>|]/g, "")} ${stamp}.xml`;
+      const file = `${m.app_recovered_prefix({ name: name.replace(/[\\/:*?"<>|]/g, ""), stamp })}.xml`;
       await writeTextFile(`${dir}/${file}`, saved.xml)
-        .then(() => build.say(`Saved the last build as ${file}`))
-        .catch((e) => (build.error = `Could not save the recovered build: ${String(e)}`));
+        .then(() => build.say(m.app_recovered_saved({ file })))
+        .catch((e) => (build.error = m.app_recovered_failed({ error: String(e) })));
     }
     return true;
   }

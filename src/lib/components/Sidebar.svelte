@@ -7,6 +7,7 @@
   import { build } from "$lib/state/build.svelte";
   import { groupSidebar } from "$lib/sidebar-groups";
   import { stripPobText } from "$lib/pobtext";
+  import { m } from "$lib/paraglide/messages";
 
   let libraryOpen = $state(false);
 
@@ -128,7 +129,7 @@
   {#if info}
     <section class="head">
       <div class="buildname">
-        <span class="label">Build</span>
+        <span class="label">{m.sidebar_build()}</span>
         {#if nameEdit !== null}
           <!-- svelte-ignore a11y_autofocus -->
           <input
@@ -145,20 +146,20 @@
           <button
             class="bname"
             onclick={() => (nameEdit = info?.name ?? "")}
-            title={(info.file ? `${info.file}\n` : "Not saved yet. ") + "Click to rename. The file is renamed with it."}
+            title={(info.file ? `${info.file}\n` : m.sidebar_not_saved()) + m.sidebar_rename_title()}
           >
             <span class="bn">{info.name}</span>
-            {#if info.unsaved}<span class="unsaved" title="Unsaved changes (Ctrl+S saves)">●</span>{/if}
+            {#if info.unsaved}<span class="unsaved" title={m.sidebar_unsaved()}>●</span>{/if}
           </button>
         {/if}
       </div>
       {#if loadouts.loadouts.length}
         <div class="field">
-          <span class="label">Loadout</span>
+          <span class="label">{m.sidebar_loadout()}</span>
           {#if loEdit}
             <input
               class="input"
-              placeholder={loEdit.mode === "new" ? "New loadout name" : loEdit.mode === "copy" ? "Copy as…" : "Rename to…"}
+              placeholder={loEdit.mode === "new" ? m.sidebar_loadout_new_placeholder() : loEdit.mode === "copy" ? m.sidebar_loadout_copy_placeholder() : m.sidebar_loadout_rename_placeholder()}
               bind:value={loEdit.draft}
               onblur={loCommit}
               onkeydown={(e) => {
@@ -173,29 +174,29 @@
                 value={loadouts.active ?? ""}
                 onchange={(e) => build.run(() => engine.selectLoadout((e.target as HTMLSelectElement).value))}
                 disabled={build.busy > 0}
-                title="Loadout: a matching tree, item set, skill set and config set"
+                title={m.sidebar_loadout_title()}
               >
                 {#if !loadouts.active}<option value="">—</option>{/if}
                 {#each loadouts.loadouts as l}
                   <option value={l}>{stripPobText(l)}</option>
                 {/each}
               </select>
-              <button class="loact" title="New loadout" aria-label="New loadout" onclick={() => (loEdit = { mode: "new", draft: "" })}>
+              <button class="loact" title={m.sidebar_loadout_new()} aria-label={m.sidebar_loadout_new()} onclick={() => (loEdit = { mode: "new", draft: "" })}>
                 <Icon name="plus" size={13} />
               </button>
               <button
                 class="loact"
-                title="Copy loadout"
-                aria-label="Copy loadout"
+                title={m.sidebar_loadout_copy()}
+                aria-label={m.sidebar_loadout_copy()}
                 disabled={!loadouts.active}
-                onclick={() => (loEdit = { mode: "copy", draft: `${loadouts.active} (Copy)` })}
+                onclick={() => (loEdit = { mode: "copy", draft: m.sidebar_loadout_copy_suffix({ name: loadouts.active ?? "" }) })}
               >
                 <Icon name="copy" size={13} />
               </button>
               <button
                 class="loact"
-                title="Rename loadout"
-                aria-label="Rename loadout"
+                title={m.sidebar_loadout_rename()}
+                aria-label={m.sidebar_loadout_rename()}
                 disabled={!loadouts.active}
                 onclick={() => (loEdit = { mode: "rename", draft: loadouts.active ?? "" })}
               >
@@ -203,8 +204,8 @@
               </button>
               <button
                 class="loact danger"
-                title="Delete loadout (removes its tree, item, skill and config sets)"
-                aria-label="Delete loadout"
+                title={m.sidebar_loadout_delete_title()}
+                aria-label={m.sidebar_loadout_delete()}
                 disabled={loadouts.loadouts.length <= 1 || !loadouts.active}
                 onclick={() => loadouts.active && build.run(() => engine.deleteLoadout(loadouts.active!))}
               >
@@ -216,7 +217,7 @@
       {/if}
       <div class="row2">
         <label class="field">
-          <span class="label">Class</span>
+          <span class="label">{m.sidebar_class()}</span>
           <select class="select" value={info.classId} onchange={onClass} disabled={build.busy > 0}>
             {#each build.classes as c}
               <option value={c.id}>{c.name}</option>
@@ -224,9 +225,9 @@
           </select>
         </label>
         <label class="field">
-          <span class="label">Ascendancy</span>
+          <span class="label">{m.sidebar_ascendancy()}</span>
           <select class="select" value={info.ascendClassId} onchange={onAsc} disabled={build.busy > 0}>
-            <option value={0}>None</option>
+            <option value={0}>{m.sidebar_ascendancy_none()}</option>
             {#each cls?.ascendancies ?? [] as a}
               <option value={a.id}>{a.name}</option>
             {/each}
@@ -236,9 +237,9 @@
       {#if build.secondaryAscendancies.length}
         <div class="row2">
           <label class="field wide">
-            <span class="label">Second ascendancy</span>
+            <span class="label">{m.sidebar_second_ascendancy()}</span>
             <select class="select" value={info.secondaryAscendClassId ?? 0} onchange={onSecondaryAsc} disabled={build.busy > 0}>
-              <option value={0}>None</option>
+              <option value={0}>{m.sidebar_ascendancy_none()}</option>
               {#each build.secondaryAscendancies as a}
                 <option value={a.id}>{a.name}</option>
               {/each}
@@ -248,7 +249,7 @@
       {/if}
       <div class="row2">
         <div class="field lvl">
-          <span class="label">Level</span>
+          <span class="label">{m.sidebar_level()}</span>
           <div class="lvlrow">
             <input
               class="input num"
@@ -262,26 +263,26 @@
             <button
               class="auto"
               class:on={info.levelAuto}
-              title={info.levelAuto ? "Level follows the points spent (PoB's Auto mode). Click for Manual." : "Set the level from the points spent, as PoB's Auto mode does"}
+              title={info.levelAuto ? m.sidebar_level_auto_on() : m.sidebar_level_auto_off()}
               onclick={() => build.setLevelAuto(!info.levelAuto)}
-            >auto</button>
+            >{m.sidebar_level_auto()}</button>
           </div>
         </div>
         <div class="field points" title={info.points.requiredLevelText ?? ""}>
-          <span class="label">Points</span>
+          <span class="label">{m.sidebar_points()}</span>
           <div class="pts num">
             <span class:over={info.points.used > info.points.max}>{info.points.used}<span class="dim">/{info.points.max}</span></span>
             <span class="sep">·</span>
             <span class="asc" class:over={info.points.ascUsed > info.points.ascMax}>{info.points.ascUsed}<span class="dim">/{info.points.ascMax}</span></span>
-            <span class="dim label2">asc</span>
+            <span class="dim label2">{m.sidebar_points_asc()}</span>
           </div>
         </div>
       </div>
       {#if info.points.weaponSet1Used || info.points.weaponSet2Used}
         {@const wsMax = info.points.weaponSetMax}
         <div class="row2">
-          <div class="field wide" title="Each weapon set holds up to {wsMax} passives. Only the larger set counts against your passive points.">
-            <span class="label">Weapon set passives</span>
+          <div class="field wide" title={m.sidebar_weapon_set_title({ max: wsMax })}>
+            <span class="label">{m.sidebar_weapon_set_points()}</span>
             <div class="pts num">
               <span class:over={info.points.weaponSet1Used > wsMax}><span class="set1">I</span> {info.points.weaponSet1Used}<span class="dim">/{wsMax}</span></span>
               <span class="sep">·</span>
@@ -291,19 +292,19 @@
         </div>
       {/if}
       <label class="field">
-        <span class="label">Main skill</span>
+        <span class="label">{m.sidebar_main_skill()}</span>
         <select class="select" value={info.mainSocketGroup} onchange={onMainSkill} disabled={groups.length === 0 || build.busy > 0}>
           {#if groups.length === 0}
-            <option value={0}>No skills</option>
+            <option value={0}>{m.sidebar_no_skills()}</option>
           {/if}
           {#each groups as g}
-            <option value={g.index}>{g.grantedBy?.kind === "mechanic" ? "◈ " : g.grantedBy?.kind === "node" ? "✦ " : g.grantedBy ? "⚔ " : ""}{stripPobText(g.displayLabel ?? g.label ?? `Group ${g.index}`)}{g.duplicateOf ? ` (item copy of ${g.duplicateOf})` : ""}</option>
+            <option value={g.index}>{g.grantedBy?.kind === "mechanic" ? "◈ " : g.grantedBy?.kind === "node" ? "✦ " : g.grantedBy ? "⚔ " : ""}{stripPobText(g.displayLabel ?? g.label ?? m.sidebar_group_fallback({ index: g.index }))}{g.duplicateOf ? m.sidebar_group_item_copy({ source: g.duplicateOf }) : ""}</option>
           {/each}
         </select>
       </label>
       {#if mainGroup && mainGroup.skills.length > 1}
         <label class="field">
-          <span class="label">Active skill</span>
+          <span class="label">{m.sidebar_active_skill()}</span>
           <select class="select" value={mainGroup.mainActiveSkill ?? 1} onchange={(e) => patchMainSkill({ mainActiveSkill: Number((e.target as HTMLSelectElement).value) })}>
             {#each mainGroup.skills as s}
               <option value={s.index}>{s.name}</option>
@@ -313,7 +314,7 @@
       {/if}
       {#if mainSkill?.statSets?.length}
         <label class="field">
-          <span class="label">Stat set</span>
+          <span class="label">{m.sidebar_stat_set()}</span>
           <select class="select" value={mainSkill.statSet ?? 1} onchange={(e) => patchMainSkill({ statSet: Number((e.target as HTMLSelectElement).value) })}>
             {#each mainSkill.statSets as label, i}
               <option value={i + 1}>{label}</option>
@@ -323,7 +324,7 @@
       {/if}
       {#if mainSkill?.parts?.length}
         <label class="field">
-          <span class="label">Skill part</span>
+          <span class="label">{m.sidebar_skill_part()}</span>
           <select class="select" value={mainSkill.part ?? 1} onchange={(e) => patchMainSkill({ part: Number((e.target as HTMLSelectElement).value) })}>
             {#each mainSkill.parts as part, i}
               <option value={i + 1}>{part.name}</option>
@@ -333,10 +334,10 @@
       {/if}
       {#if mainSkill?.minions?.length}
         <label class="field">
-          <span class="label">Minion</span>
+          <span class="label">{m.sidebar_minion()}</span>
           <select class="select" value={mainSkill.minion ?? mainSkill.minions[0].id} onchange={(e) => patchMainSkill({ minionId: (e.target as HTMLSelectElement).value })}>
-            {#each mainSkill.minions as m}
-              <option value={m.id}>{m.name}</option>
+            {#each mainSkill.minions as minion}
+              <option value={minion.id}>{minion.name}</option>
             {/each}
           </select>
         </label>
@@ -344,12 +345,10 @@
       {#if mainSkill?.minionLibrary}
         <button
           class="btn sm wide"
-          title={mainSkill.minionLibrary === "beast"
-            ? "Choose which beasts this build owns, so a Companion gem can use them"
-            : "Choose which spectres this build owns, so a Raise Spectre gem can use them"}
+          title={mainSkill.minionLibrary === "beast" ? m.sidebar_manage_beasts_title() : m.sidebar_manage_spectres_title()}
           onclick={() => (libraryOpen = true)}
         >
-          {mainSkill.minionLibrary === "beast" ? "Manage beasts…" : "Manage spectres…"}
+          {mainSkill.minionLibrary === "beast" ? m.sidebar_manage_beasts() : m.sidebar_manage_spectres()}
         </button>
       {/if}
     </section>
@@ -392,7 +391,7 @@
         {/each}
         {#if side.warnings.length}
           <div class="warnings">
-            <div class="label" style:color="var(--warn)">Warnings</div>
+            <div class="label" style:color="var(--warn)">{m.sidebar_warnings()}</div>
             {#each side.warnings as w}
               <div class="warn">{w}</div>
             {/each}
@@ -402,15 +401,15 @@
     </div>
   {:else}
     <div class="empty">
-      <span class="label">No build loaded</span>
+      <span class="label">{m.sidebar_no_build()}</span>
     </div>
   {/if}
 
   {#if bd}
     <div class="bdpop" style:top={`${bd.y}px`}>
       <div class="bdhead">
-        <span class="label">Breakdown</span>
-        {#if bd.pinned}<span class="dim small">pinned</span>{/if}
+        <span class="label">{m.sidebar_breakdown()}</span>
+        {#if bd.pinned}<span class="dim small">{m.sidebar_breakdown_pinned()}</span>{/if}
       </div>
       <div class="bdscroll">
         <BreakdownPanel sections={bd.sections} />
@@ -524,7 +523,6 @@
   }
   .loact:hover:not(:disabled) {
     background: var(--bg-hover);
-    border-color: var(--line-2);
     color: var(--fg-0);
   }
   .loact.danger:hover:not(:disabled) {
@@ -558,11 +556,9 @@
   }
   .lvlrow .auto:hover {
     color: var(--fg-0);
-    border-color: var(--line-2);
   }
   .lvlrow .auto.on {
     color: var(--ok);
-    border-color: var(--line-2);
   }
   .pts {
     height: 26px;
@@ -574,7 +570,7 @@
     padding: 0 2px;
   }
   .pts .sep {
-    color: var(--fg-4);
+    color: var(--fg-3);
   }
   .label2 {
     font-size: var(--fs-xs);

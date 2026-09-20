@@ -6,6 +6,7 @@
   import PobText from "$lib/components/PobText.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
   import { stripPobText } from "$lib/pobtext";
+  import { m } from "$lib/paraglide/messages";
 
   const groups = $derived(build.skills?.socketGroups ?? []);
   const skillSets = $derived(build.skills?.skillSets ?? []);
@@ -29,18 +30,18 @@
   let options = $state<SkillsOptions | null>(null);
 
   // PoB's own labels for the two gem-option dropdowns.
-  const SORT_LABELS: Record<string, string> = {
-    FullDPS: 'Full DPS',
-    CombinedDPS: 'Combined DPS',
-    TotalDPS: 'Hit DPS',
-    AverageDamage: 'Average hit',
-    TotalDot: 'DoT DPS',
-    BleedDPS: 'Bleed DPS',
-    IgniteDPS: 'Ignite DPS',
-    TotalPoisonDPS: 'Poison DPS',
-    TotalEHP: 'Effective hit pool',
-  };
-  const SUPPORT_LABELS: Record<string, string> = { ALL: 'All', LINEAGE: 'Lineage', NORMAL: 'Non-lineage', EXCEPTIONAL: 'Exceptional' };
+  const SORT_LABELS = $derived<Record<string, string>>({
+    FullDPS: m.skills_sort_fulldps(),
+    CombinedDPS: m.skills_sort_combined(),
+    TotalDPS: m.skills_sort_hit(),
+    AverageDamage: m.skills_sort_average(),
+    TotalDot: m.skills_sort_dot(),
+    BleedDPS: m.skills_sort_bleed(),
+    IgniteDPS: m.skills_sort_ignite(),
+    TotalPoisonDPS: m.skills_sort_poison(),
+    TotalEHP: m.skills_sort_ehp(),
+  });
+  const SUPPORT_LABELS = $derived<Record<string, string>>({ ALL: m.skills_support_all(), LINEAGE: m.skills_support_lineage(), NORMAL: m.skills_support_normal(), EXCEPTIONAL: m.skills_support_exceptional() });
   $effect(() => {
     build.rev;
     engine
@@ -178,15 +179,15 @@
   type Mark = { glyph: string; text: string; kind: "item" | "node" | "mechanic" | "gem" };
   function markOf(g: SocketGroup): Mark | null {
     const by = g.grantedBy;
-    if (by?.kind === "mechanic") return { glyph: "◈", text: `${by.source}: a mechanic PoB calculates, not a skill`, kind: "mechanic" };
-    if (by?.kind === "node") return { glyph: "✦", text: `Granted by the passive ${by.node ?? "node"}; not a socketed gem`, kind: "node" };
+    if (by?.kind === "mechanic") return { glyph: "◈", text: m.skills_mark_mechanic({ source: by.source }), kind: "mechanic" };
+    if (by?.kind === "node") return { glyph: "✦", text: m.skills_mark_node({ node: by.node ?? m.skills_mark_node_fallback() }), kind: "node" };
     if (by?.kind === "item") {
-      const where = by.item ? `${by.item}${by.slot ? ` (${by.slot})` : ""}` : "an item";
-      const dup = g.duplicateOf ? `. Same skill as group ${g.duplicateOf}, which carries the supports` : "";
-      return { glyph: "⚔", text: `Comes with ${where}; leaves with it${dup}`, kind: "item" };
+      const where = by.item ? `${by.item}${by.slot ? ` (${by.slot})` : ""}` : m.skills_mark_item_fallback();
+      const duplicate = g.duplicateOf ? m.skills_mark_item_duplicate({ source: g.duplicateOf }) : "";
+      return { glyph: "⚔", text: m.skills_mark_item({ where, duplicate }), kind: "item" };
     }
     const gem = g.gems.find((x) => !x.support && x.granted);
-    if (gem) return { glyph: "⚔", text: `${gem.name ?? "This skill"} ${gem.granted}`, kind: "gem" };
+    if (gem) return { glyph: "⚔", text: m.skills_mark_gem({ name: gem.name ?? m.skills_mark_gem_fallback(), granted: gem.granted ?? "" }), kind: "gem" };
     return null;
   }
 </script>
@@ -212,48 +213,48 @@
         value={activeSet?.id ?? 1}
         onchange={(e) => build.run(() => engine.selectSkillSet(Number((e.target as HTMLSelectElement).value)))}
         disabled={build.busy > 0}
-        title="Skill set"
+        title={m.skills_set_title()}
       >
         {#each skillSets as s}
           <option value={s.id}>{stripPobText(s.title)}</option>
         {/each}
       </select>
     {/if}
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.createSkillSet())}>New</button>
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.copySkillSet())}>Copy</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.createSkillSet())}>{m.common_new()}</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.copySkillSet())}>{m.common_copy_button()}</button>
     <button
       class="btn sm ghost"
       onclick={() => {
         setDraft = activeSet?.title ?? "";
         renamingSet = true;
-      }}>Rename</button
+      }}>{m.common_rename()}</button
     >
-    <button class="btn sm ghost" disabled={skillSets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteSkillSet(activeSet.id))}>Delete</button>
+    <button class="btn sm ghost" disabled={skillSets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteSkillSet(activeSet.id))}>{m.common_delete()}</button>
     <span class="vr"></span>
-    <button class="btn sm" onclick={addGroup}>New socket group</button>
-    <button class="btn sm ghost" disabled={!sel} onclick={copyGroup} title="Copy the selected group as text (PoB-compatible)">Copy group</button>
-    <button class="btn sm ghost" onclick={pasteGroup} title="Paste a group copied from PoB or this app">Paste group</button>
+    <button class="btn sm" onclick={addGroup}>{m.skills_new_group()}</button>
+    <button class="btn sm ghost" disabled={!sel} onclick={copyGroup} title={m.skills_copy_group_title()}>{m.skills_copy_group()}</button>
+    <button class="btn sm ghost" onclick={pasteGroup} title={m.skills_paste_group_title()}>{m.skills_paste_group()}</button>
     <span class="vr"></span>
-    <label class="fld-inline" title="Level given to newly added gems">
-      <span class="label">Default level</span>
+    <label class="fld-inline" title={m.skills_default_level_title()}>
+      <span class="label">{m.skills_default_level()}</span>
       <select class="select opt" value={options?.defaultGemLevel ?? "normalMaximum"} onchange={(e) => setOptions({ defaultGemLevel: (e.target as HTMLSelectElement).value })}>
-        <option value="normalMaximum">Max</option>
-        <option value="corruptedMaximum">Corrupted max</option>
-        <option value="characterLevel">Character level</option>
+        <option value="normalMaximum">{m.skills_level_max()}</option>
+        <option value="corruptedMaximum">{m.skills_level_corrupted()}</option>
+        <option value="characterLevel">{m.skills_level_character()}</option>
       </select>
     </label>
-    <label class="fld-inline" title="Quality given to newly added gems">
-      <span class="label">Quality</span>
+    <label class="fld-inline" title={m.skills_quality_title()}>
+      <span class="label">{m.skills_quality()}</span>
       <input class="input opt num" type="number" min="0" max="23" value={options?.defaultGemQuality ?? 0} onchange={(e) => setOptions({ defaultGemQuality: Number((e.target as HTMLInputElement).value) })} />
     </label>
     <span class="vr"></span>
-    <label class="chk small" title="Order the gem picker by what each gem would do for this build">
+    <label class="chk small" title={m.skills_sort_by_title()}>
       <input type="checkbox" checked={options?.sortGemsByDPS ?? true} onchange={(e) => setOptions({ sortGemsByDPS: (e.target as HTMLInputElement).checked })} />
-      Sort by
+      {m.skills_sort_by()}
     </label>
     <select
       class="select opt"
-      title="Which number the gem picker sorts on"
+      title={m.skills_sort_field_title()}
       disabled={!(options?.sortGemsByDPS ?? true)}
       value={options?.sortGemsByDPSField ?? "FullDPS"}
       onchange={(e) => setOptions({ sortGemsByDPSField: (e.target as HTMLSelectElement).value })}
@@ -262,43 +263,43 @@
         <option value={f}>{SORT_LABELS[f] ?? f}</option>
       {/each}
     </select>
-    <label class="fld-inline" title="Which support gems the picker offers">
-      <span class="label">Supports</span>
+    <label class="fld-inline" title={m.skills_supports_title()}>
+      <span class="label">{m.skills_supports()}</span>
       <select class="select opt" value={options?.showSupportGemTypes ?? "ALL"} onchange={(e) => setOptions({ showSupportGemTypes: (e.target as HTMLSelectElement).value })}>
         {#each options?.supportTypes ?? [] as t}
           <option value={t}>{SUPPORT_LABELS[t] ?? t}</option>
         {/each}
       </select>
     </label>
-    <label class="chk small" title="Offer gems that are no longer obtainable">
+    <label class="chk small" title={m.skills_legacy_title()}>
       <input type="checkbox" checked={options?.showLegacyGems ?? false} onchange={(e) => setOptions({ showLegacyGems: (e.target as HTMLInputElement).checked })} />
-      Legacy
+      {m.skills_legacy()}
     </label>
   </div>
 
   <div class="cols">
     <section class="col list">
       {#each groups as g (g.index)}
-        {@const mark = markOf(g)}
+        {@const gmark = markOf(g)}
         <div class="grow-row" class:sel={sel?.index === g.index} class:off={!g.enabled} class:dup={!!g.duplicateOf}>
-          <button class="gmain" title="Set as main skill" class:ismain={g.isMainSkill} onclick={() => build.setMainSkill(g.index)}>⌾</button>
+          <button class="gmain" title={m.skills_set_main()} class:ismain={g.isMainSkill} onclick={() => build.setMainSkill(g.index)}>⌾</button>
           <button class="gname" onclick={() => (selectedIdx = g.index)}>
-            <PobText text={g.displayLabel ?? g.label ?? `Group ${g.index}`} />
-            {#if mark}
-              <span class="granted mark-{mark.kind}" title={mark.text}>{mark.glyph}</span>
+            <PobText text={g.displayLabel ?? g.label ?? m.skills_group_fallback({ index: g.index })} />
+            {#if gmark}
+              <span class="granted mark-{gmark.kind}" title={gmark.text}>{gmark.glyph}</span>
             {/if}
             {#if g.duplicateOf}
-              <span class="dim small">item copy of group {g.duplicateOf}</span>
+              <span class="dim small">{m.skills_item_copy_of({ source: g.duplicateOf })}</span>
             {/if}
           </button>
           <span class="ops">
-            <button class="mini" title="Move up" disabled={g.index <= 1} onclick={() => moveGroup(g.index, -1)}>▲</button>
-            <button class="mini" title="Move down" disabled={g.index >= groups.length} onclick={() => moveGroup(g.index, 1)}>▼</button>
+            <button class="mini" title={m.common_move_up()} disabled={g.index <= 1} onclick={() => moveGroup(g.index, -1)}>▲</button>
+            <button class="mini" title={m.common_move_down()} disabled={g.index >= groups.length} onclick={() => moveGroup(g.index, 1)}>▼</button>
           </span>
         </div>
       {/each}
       {#if groups.length === 0}
-        <div class="dim pad">No socket groups yet.</div>
+        <div class="dim pad">{m.skills_no_groups()}</div>
       {/if}
     </section>
 
@@ -307,19 +308,19 @@
         <div class="dhead">
           <input
             class="input dlabel"
-            placeholder="Group label"
+            placeholder={m.skills_group_label()}
             bind:value={labelDraft}
             onblur={() => labelDraft !== (sel.label ?? "") && patchGroup(sel.index, { label: labelDraft })}
             onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
           />
-          {#if sel.slot && !sel.grantedBy}<span class="dim small">socketed in {sel.slot}</span>{/if}
-          {#if markOf(sel)}{@const m = markOf(sel)!}<span class="dim small">{m.glyph} {m.text}</span>{/if}
+          {#if sel.slot && !sel.grantedBy}<span class="dim small">{m.skills_socketed_in({ slot: sel.slot })}</span>{/if}
+          {#if markOf(sel)}{@const sm = markOf(sel)!}<span class="dim small">{sm.glyph} {sm.text}</span>{/if}
           <span class="grow"></span>
-          <label class="chk small"><input type="checkbox" checked={sel.includeInFullDPS} onchange={(e) => patchGroup(sel.index, { includeInFullDPS: (e.target as HTMLInputElement).checked })} /> Full DPS</label>
-          <label class="chk small"><input type="checkbox" checked={sel.enabled} onchange={(e) => patchGroup(sel.index, { enabled: (e.target as HTMLInputElement).checked })} /> Enabled</label>
+          <label class="chk small"><input type="checkbox" checked={sel.includeInFullDPS} onchange={(e) => patchGroup(sel.index, { includeInFullDPS: (e.target as HTMLInputElement).checked })} /> {m.skills_full_dps()}</label>
+          <label class="chk small"><input type="checkbox" checked={sel.enabled} onchange={(e) => patchGroup(sel.index, { enabled: (e.target as HTMLInputElement).checked })} /> {m.skills_enabled()}</label>
           {#if sel.groupCount !== null && sel.groupCount !== undefined}
-            <label class="fld-inline" title="How many copies of this item-granted skill apply">
-              <span class="label">Count</span>
+            <label class="fld-inline" title={m.skills_count_title()}>
+              <span class="label">{m.skills_count()}</span>
               <input
                 class="input opt num"
                 type="number"
@@ -333,15 +334,15 @@
           <button
             class="btn sm ghost danger"
             disabled={!!sel.source}
-            title={sel.source ? "This group comes with an item or a mechanic and cannot be deleted; change the item instead" : "Delete this socket group"}
-            onclick={removeGroup}>Delete group</button>
+            title={sel.source ? m.skills_delete_group_blocked() : m.skills_delete_group_title()}
+            onclick={removeGroup}>{m.skills_delete_group()}</button>
         </div>
 
         {#if sel.skills.length > 0}
           <div class="skillsel">
             {#if sel.skills.length > 1}
               <label class="fld">
-                <span class="label">Skill</span>
+                <span class="label">{m.skills_skill()}</span>
                 <select class="select sm" value={sel.mainActiveSkill ?? 1} onchange={(e) => patchSkill({ mainActiveSkill: Number((e.target as HTMLSelectElement).value) })}>
                   {#each sel.skills as s}
                     <option value={s.index}>{s.name}</option>
@@ -351,7 +352,7 @@
             {/if}
             {#if selSkill?.statSets?.length}
               <label class="fld">
-                <span class="label">Stat set</span>
+                <span class="label">{m.skills_stat_set()}</span>
                 <select class="select sm" value={selSkill.statSet ?? 1} onchange={(e) => patchSkill({ statSet: Number((e.target as HTMLSelectElement).value) })}>
                   {#each selSkill.statSets as label, i}
                     <option value={i + 1}>{label}</option>
@@ -361,7 +362,7 @@
             {/if}
             {#if selSkill?.parts?.length}
               <label class="fld">
-                <span class="label">Part</span>
+                <span class="label">{m.skills_part()}</span>
                 <select class="select sm" value={selSkill.part ?? 1} onchange={(e) => patchSkill({ part: Number((e.target as HTMLSelectElement).value) })}>
                   {#each selSkill.parts as part, i}
                     <option value={i + 1}>{part.name}</option>
@@ -371,29 +372,29 @@
             {/if}
             {#if selSkill?.hasStages}
               <label class="fld">
-                <span class="label">Stages</span>
+                <span class="label">{m.skills_stages()}</span>
                 <input class="input sm num" type="number" min="1" value={selSkill.stageCount ?? 1} onchange={(e) => patchSkill({ stageCount: Number((e.target as HTMLInputElement).value) })} />
               </label>
             {/if}
             {#if selSkill?.hasMines}
               <label class="fld">
-                <span class="label">Mines</span>
+                <span class="label">{m.skills_mines()}</span>
                 <input class="input sm num" type="number" min="1" value={selSkill.mineCount ?? ""} onchange={(e) => patchSkill({ mineCount: Number((e.target as HTMLInputElement).value) })} />
               </label>
             {/if}
             {#if selSkill?.minions?.length}
               <label class="fld">
-                <span class="label">Minion</span>
+                <span class="label">{m.skills_minion()}</span>
                 <select class="select sm wide" value={selSkill.minion ?? selSkill.minions[0].id} onchange={(e) => patchSkill({ minionId: (e.target as HTMLSelectElement).value })}>
-                  {#each selSkill.minions as m}
-                    <option value={m.id}>{m.name}</option>
+                  {#each selSkill.minions as minion}
+                    <option value={minion.id}>{minion.name}</option>
                   {/each}
                 </select>
               </label>
             {/if}
             {#if selSkill?.minionSkills?.length}
               <label class="fld">
-                <span class="label">Minion skill</span>
+                <span class="label">{m.skills_minion_skill()}</span>
                 <select class="select sm wide" value={selSkill.minionSkill ?? 1} onchange={(e) => patchSkill({ minionSkill: Number((e.target as HTMLSelectElement).value) })}>
                   {#each selSkill.minionSkills as name, i}
                     <option value={i + 1}>{name}</option>
@@ -405,7 +406,7 @@
         {/if}
 
         <div class="gems">
-          <div class="gcols label"><span></span><span>Gem</span><span class="r">Level</span><span class="r">Quality</span><span></span></div>
+          <div class="gcols label"><span></span><span>{m.skills_col_gem()}</span><span class="r">{m.skills_col_level()}</span><span class="r">{m.skills_col_quality()}</span><span></span></div>
           {#each sel.gems as gem (gem.index)}
             <div class="gem" class:disabled={!gem.enabled}>
               <span class="ops">
@@ -425,14 +426,14 @@
               </span>
               <input class="input sm num r" type="number" min="1" max={gem.maxLevel + 10} value={gem.level ?? 1} onchange={(e) => patchGem(sel.index, gem.index, { level: Number((e.target as HTMLInputElement).value) })} />
               <input class="input sm num r" type="number" min="0" max="30" value={gem.quality ?? 0} onchange={(e) => patchGem(sel.index, gem.index, { quality: Number((e.target as HTMLInputElement).value) })} />
-              <button class="mini x" title="Remove gem" onclick={() => build.run(() => engine.removeGem(sel.index, gem.index))}>✕</button>
+              <button class="mini x" title={m.skills_remove_gem()} onclick={() => build.run(() => engine.removeGem(sel.index, gem.index))}>✕</button>
             </div>
           {/each}
 
           <div class="adder" class:open={pickerOpen}>
             <input
               class="input"
-              placeholder="Add a gem… (name, or tag like 'projectile')"
+              placeholder={m.skills_add_gem()}
               bind:value={pickerQuery}
               onfocus={() => (pickerOpen = true)}
               onkeydown={(e) => {
@@ -444,33 +445,33 @@
               }}
             />
             {#if pickerOpen}
-              <button class="btn sm" class:on={pickerDps} onclick={() => (pickerDps = !pickerDps)} title="Score every valid support by its DPS impact and sort by it (first run takes a moment)">DPS</button>
-              <button class="btn sm ghost" onclick={() => (pickerOpen = false)}>Close</button>
+              <button class="btn sm" class:on={pickerDps} onclick={() => (pickerDps = !pickerDps)} title={m.skills_dps_title()}>{m.skills_dps()}</button>
+              <button class="btn sm ghost" onclick={() => (pickerOpen = false)}>{m.common_close()}</button>
             {/if}
           </div>
           {#if pickerOpen}
             <div class="picker">
               {#if pickerScoring}
-                <div class="dim small pad">Scoring gems against this group…</div>
+                <div class="dim small pad">{m.skills_scoring()}</div>
               {/if}
               {#each pickerRows as row (row.gemId)}
-                <button class="prow" class:invalid={!row.valid} onclick={() => addGem(row)} title={row.valid ? row.gemId : "Cannot support this group's active skill"}>
+                <button class="prow" class:invalid={!row.valid} onclick={() => addGem(row)} title={row.valid ? row.gemId : m.skills_cannot_support()}>
                   <span class="pname"><PobText text={row.color + row.name} /></span>
                   <span class="ptags dim">{row.tags ?? ""}</span>
                   {#if pickerDps}
                     <span class="pdps num" style:color={row.dpsDiff == null ? "var(--fg-3)" : row.dpsDiff > 0 ? "var(--ok)" : row.dpsDiff < 0 ? "var(--bad)" : "var(--fg-2)"}>{fmtDps(row.dpsDiff)}</span>
                   {/if}
-                  <span class="pkind dim">{row.support ? (row.valid ? "support" : "support ✕") : "active"}</span>
+                  <span class="pkind dim">{row.support ? (row.valid ? m.skills_kind_support() : m.skills_kind_support_invalid()) : m.skills_kind_active()}</span>
                 </button>
               {/each}
               {#if pickerRows.length === 0 && !pickerScoring}
-                <div class="dim small pad">No matching gems.</div>
+                <div class="dim small pad">{m.skills_no_gems()}</div>
               {/if}
             </div>
           {/if}
         </div>
       {:else}
-        <div class="dim pad">Select or create a socket group.</div>
+        <div class="dim pad">{m.skills_no_selection()}</div>
       {/if}
     </section>
   </div>
@@ -543,7 +544,7 @@
     appearance: none;
     border: 0;
     background: none;
-    color: var(--fg-3);
+    color: var(--fg-2);
     font-size: 19px;
     line-height: 1;
     width: 30px;
@@ -601,7 +602,6 @@
   }
   .mini:hover:not(:disabled) {
     color: var(--fg-0);
-    border-color: var(--line-1);
   }
   .mini:disabled {
     opacity: var(--fade-off);

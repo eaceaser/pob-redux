@@ -1,3 +1,4 @@
+import { m } from "$lib/paraglide/messages";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -387,17 +388,17 @@ class ChatStore {
    * changes in place and stops tracking them: discarding someone's work
    * because they changed a dropdown would be the wrong default.
    */
-  async setMode(m: Mode) {
-    if (m === this.mode) return;
+  async setMode(mode: Mode) {
+    if (mode === this.mode) return;
     const leavingTry = this.mode === "try" && this.experiment;
-    this.mode = m;
+    this.mode = mode;
     this.persist();
-    if (m === "try") {
+    if (mode === "try") {
       await this.startExperiment();
     } else if (leavingTry) {
       this.experiment = null;
       this.undoWarning = null;
-      this.notice = "Experiment closed and the changes kept. Switch back to Try to start a new one.";
+      this.notice = m.chat_experiment_kept();
     }
   }
 
@@ -423,7 +424,7 @@ class ChatStore {
     try {
       await callTool("checkpoint", { label });
     } catch (e) {
-      this.notice = `Could not checkpoint the build, so Try has no undo: ${String(e)}`;
+      this.notice = m.chat_checkpoint_failed({ error: String(e) });
       return;
     }
     const before = await this.readStats();
@@ -454,9 +455,9 @@ class ChatStore {
     try {
       await callTool("rollback", { label: e.label });
       this.experiment = null;
-      this.notice = "Rolled back to the checkpoint.";
+      this.notice = m.chat_rolled_back();
     } catch (err) {
-      this.notice = `Could not roll back: ${String(err)}`;
+      this.notice = m.chat_rollback_failed({ error: String(err) });
     }
   }
 
@@ -801,11 +802,11 @@ class ChatStore {
           // Anything other than a plain stop ended the answer early, and saying
           // so is the difference between "finished" and "gave up quietly".
           if (finish === "length") {
-            this.notice = "The reply hit the model's output limit and was cut off.";
+            this.notice = m.chat_output_limit();
           } else if (finish === "content-filter") {
-            this.notice = "The provider's content filter stopped the reply.";
+            this.notice = m.chat_content_filter();
           } else if (finish === "error" || finish === "other") {
-            this.notice = `The model stopped early (${finish}).`;
+            this.notice = m.chat_stopped_early({ reason: finish });
           }
           done = true;
           break;
@@ -903,7 +904,7 @@ class ChatStore {
       }
 
       if (!done) {
-        this.notice = `Paused after ${MAX_STEPS} tool steps without finishing.`;
+        this.notice = m.chat_paused_steps({ steps: MAX_STEPS });
         this.canContinue = true;
       }
     } catch (e) {

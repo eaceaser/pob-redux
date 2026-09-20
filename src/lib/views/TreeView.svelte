@@ -11,6 +11,7 @@
   import PobTooltip from "$lib/components/PobTooltip.svelte";
   import { stripPobText } from "$lib/pobtext";
   import TimelessSearch from "$lib/components/TimelessSearch.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let timelessOpen = $state(false);
   let canvas = $state<HTMLCanvasElement | null>(null);
@@ -245,7 +246,7 @@
         if (st.size > 0) {
           const r = await powerScanParallel(powerStat, powerDepth);
           power = r.result;
-          powerNote = `${Math.round(r.elapsed_ms)} ms · ${Math.max(1, st.ready)} engines`;
+          powerNote = m.tree_power_elapsed({ ms: Math.round(r.elapsed_ms), engines: Math.max(1, st.ready) });
           scored = true;
         }
       } catch (e) {
@@ -259,7 +260,7 @@
           powerProgress = r.progress;
         }
         power = await engine.treePowerResult();
-        powerNote = `${Math.round(performance.now() - t0)} ms · 1 engine`;
+        powerNote = m.tree_power_elapsed_one({ ms: Math.round(performance.now() - t0) });
       }
       powerKey = `${powerStat}|${powerDepth}|${power!.rev}`;
     } catch (e) {
@@ -460,8 +461,8 @@
     if (!L) return false;
     const k = layerKey(S);
     if (k.length !== L.key.length || k.some((v, i) => v !== L.key[i])) return false;
-    const m = scale / L.scale;
-    if (m !== 1 && (!zooming || m < 1 / ZOOM_BAND || m > ZOOM_BAND)) return false;
+    const z = scale / L.scale;
+    if (z !== 1 && (!zooming || z < 1 / ZOOM_BAND || z > ZOOM_BAND)) return false;
     return Math.abs(cx - L.cx) + w / 2 / scale <= L.w / 2 / L.scale && Math.abs(cy - L.cy) + h / 2 / scale <= L.h / 2 / L.scale;
   }
   function renderLayer(S: Scene) {
@@ -519,9 +520,9 @@
     const V: View = { cx, cy, w, h };
     if (!layerUsable(S)) renderLayer(S);
     const L = layer!;
-    const m = scale / L.scale;
-    const dw = L.w * m;
-    const dh = L.h * m;
+    const z = scale / L.scale;
+    const dw = L.w * z;
+    const dh = L.h * z;
     const dx = (L.cx - cx) * scale + (w - dw) / 2;
     const dy = (L.cy - cy) * scale + (h - dh) / 2;
     const H = hoverParts(S, V);
@@ -1155,8 +1156,8 @@
   }
 
   function pobColor(code: string): string {
-    const m = /\^x([0-9a-fA-F]{6})/.exec(code);
-    return m ? `#${m[1]}` : palette.search;
+    const hit = /\^x([0-9a-fA-F]{6})/.exec(code);
+    return hit ? `#${hit[1]}` : palette.search;
   }
 
   function drawFallback(ctx: CanvasRenderingContext2D, n: TNode, sx: number, sy: number, isAlloc: boolean, onPath: boolean, isHover: boolean) {
@@ -1656,102 +1657,102 @@
           }}
         />
       {:else}
-        <select class="select spec" value={activeSpec?.index ?? 1} onchange={onSpecChange} disabled={build.busy > 0} title="Passive tree (spec)">
+        <select class="select spec" value={activeSpec?.index ?? 1} onchange={onSpecChange} disabled={build.busy > 0} title={m.tree_spec_title()}>
           {#each build.specs as s}
             <option value={s.index}>{stripPobText(s.title)} · {s.allocatedNodeCount}</option>
           {/each}
         </select>
       {/if}
-      <button class="btn sm ghost" title="New tree" onclick={() => build.createSpec()}>New</button>
-      <button class="btn sm ghost" title="Copy current tree" onclick={() => build.copySpec()}>Copy</button>
+      <button class="btn sm ghost" title={m.tree_new_title()} onclick={() => build.createSpec()}>{m.common_new()}</button>
+      <button class="btn sm ghost" title={m.tree_copy_title()} onclick={() => build.copySpec()}>{m.common_copy_button()}</button>
       <button
         class="btn sm ghost"
-        title="Rename"
+        title={m.common_rename()}
         onclick={() => {
           renameDraft = activeSpec?.title ?? "";
           renaming = true;
-        }}>Rename</button
+        }}>{m.common_rename()}</button
       >
-      <button class="btn sm ghost" title="Delete current tree" disabled={build.specs.length <= 1} onclick={() => activeSpec && build.deleteSpec(activeSpec.index)}>Delete</button>
+      <button class="btn sm ghost" title={m.tree_delete_title()} disabled={build.specs.length <= 1} onclick={() => activeSpec && build.deleteSpec(activeSpec.index)}>{m.common_delete()}</button>
       <span class="vr"></span>
       <select
         class="select sm cmp"
         value={compareIdx}
         onchange={(e) => (compareIdx = Number((e.target as HTMLSelectElement).value))}
         disabled={build.specs.length <= 1}
-        title="Overlay another tree: green = allocate to match it, red = remove to match it"
+        title={m.tree_compare_title()}
       >
-        <option value={0}>Compare: off</option>
+        <option value={0}>{m.tree_compare_off()}</option>
         {#each build.specs.filter((s) => !s.active) as s}
-          <option value={s.index}>vs {stripPobText(s.title)}</option>
+          <option value={s.index}>{m.tree_compare_vs({ title: stripPobText(s.title) })}</option>
         {/each}
       </select>
     </div>
     {#if game.isPoe2}
-      <div class="group" role="group" aria-label="Allocate into" title="Where a click allocates passives. Alt + scroll over the tree also changes it.">
-        <button class="btn sm ghost" class:on={wsMode === 0} onclick={() => setWeaponSet(0)}>Tree</button>
+      <div class="group" role="group" aria-label={m.tree_allocate_into()} title={m.tree_allocate_into_title()}>
+        <button class="btn sm ghost" class:on={wsMode === 0} onclick={() => setWeaponSet(0)}>{m.view_tree()}</button>
         <button class="btn sm ghost set1" class:on={wsMode === 1} onclick={() => setWeaponSet(1)}>
-          Set I <span class="num">{build.tree?.weaponSet1PointsUsed ?? 0}/{wsMax}</span>
+          {m.tree_set_1()} <span class="num">{build.tree?.weaponSet1PointsUsed ?? 0}/{wsMax}</span>
         </button>
         <button class="btn sm ghost set2" class:on={wsMode === 2} onclick={() => setWeaponSet(2)}>
-          Set II <span class="num">{build.tree?.weaponSet2PointsUsed ?? 0}/{wsMax}</span>
+          {m.tree_set_2()} <span class="num">{build.tree?.weaponSet2PointsUsed ?? 0}/{wsMax}</span>
         </button>
       </div>
     {/if}
     <div class="group">
-      <input class="input search" placeholder="Search nodes… (Enter jumps)" bind:value={search} bind:this={searchEl} onkeydown={(e) => e.key === "Enter" && jumpToMatch()} />
+      <input class="input search" placeholder={m.tree_search()} bind:value={search} bind:this={searchEl} onkeydown={(e) => e.key === "Enter" && jumpToMatch()} />
       {#if matches.size}<span class="dim num">{matches.size}</span>{/if}
-      <button class="btn sm ghost" onclick={focusClass} title="Center on class start (h)">Class</button>
-      <button class="btn sm ghost" onclick={focusAscendancy} disabled={!currentAsc} title={currentAsc ? "Center on the ascendancy ring, where its 8 points are spent (a)" : "Pick an ascendancy in the sidebar first"}>Ascendancy</button>
-      <button class="btn sm ghost" onclick={fitAll} title="Fit whole tree">Fit</button>
-      <button class="btn sm ghost" onclick={() => build.undo()} title="Undo (Ctrl+Z)">Undo</button>
-      <button class="btn sm ghost" onclick={() => build.redo()} title="Redo (Ctrl+Y)">Redo</button>
+      <button class="btn sm ghost" onclick={focusClass} title={m.tree_class_title()}>{m.tree_class()}</button>
+      <button class="btn sm ghost" onclick={focusAscendancy} disabled={!currentAsc} title={currentAsc ? m.tree_ascendancy_title() : m.tree_ascendancy_none()}>{m.tree_ascendancy()}</button>
+      <button class="btn sm ghost" onclick={fitAll} title={m.tree_fit_title()}>{m.tree_fit()}</button>
+      <button class="btn sm ghost" onclick={() => build.undo()} title={m.tree_undo_title()}>{m.tree_undo()}</button>
+      <button class="btn sm ghost" onclick={() => build.redo()} title={m.tree_redo_title()}>{m.tree_redo()}</button>
       <span class="vr"></span>
-      <button class="btn sm ghost" onclick={() => { urlPanel = urlPanel === "import" ? null : "import"; urlDraft = ""; }} title="Import a pathofexile.com tree link">Import link</button>
-      <button class="btn sm ghost" onclick={exportUrl} title="Copy a pathofexile.com tree link">Export link</button>
+      <button class="btn sm ghost" onclick={() => { urlPanel = urlPanel === "import" ? null : "import"; urlDraft = ""; }} title={m.tree_import_link_title()}>{m.tree_import_link()}</button>
+      <button class="btn sm ghost" onclick={exportUrl} title={m.tree_export_link_title()}>{m.tree_export_link()}</button>
       {#if game.isPoe1}
-        <button class="btn sm ghost" onclick={() => (timelessOpen = true)} title="Find a timeless jewel seed that makes the passives you want">Timeless</button>
+        <button class="btn sm ghost" onclick={() => (timelessOpen = true)} title={m.tree_timeless_title()}>{m.tree_timeless()}</button>
       {/if}
       <span class="vr"></span>
-      <button class="btn sm" class:on={powerOn} onclick={() => (powerOn = !powerOn)} title="Show node power (p): estimated value of each unallocated node">
-        Power
+      <button class="btn sm" class:on={powerOn} onclick={() => (powerOn = !powerOn)} title={m.tree_power_title()}>
+        {m.tree_power()}
       </button>
     </div>
     {#if powerOn}
       <div class="group">
-        <select class="select sm" value={powerStat ?? ""} onchange={(e) => (powerStat = (e.target as HTMLSelectElement).value || null)} title="Stat to score nodes by">
+        <select class="select sm" value={powerStat ?? ""} onchange={(e) => (powerStat = (e.target as HTMLSelectElement).value || null)} title={m.tree_power_stat_title()}>
           {#each powerStats as s}
             <option value={s.stat ?? ""}>{s.label}</option>
           {/each}
         </select>
-        <select class="select sm depth" value={powerDepth ?? 0} onchange={(e) => { const v = Number((e.target as HTMLSelectElement).value); powerDepth = v || null; }} title="Max path length to score (lower = faster)">
-          <option value={0}>All</option>
+        <select class="select sm depth" value={powerDepth ?? 0} onchange={(e) => { const v = Number((e.target as HTMLSelectElement).value); powerDepth = v || null; }} title={m.tree_power_depth_title()}>
+          <option value={0}>{m.tree_depth_all()}</option>
           <option value={5}>≤ 5</option>
           <option value={10}>≤ 10</option>
           <option value={15}>≤ 15</option>
         </select>
-        <button class="btn sm ghost" class:on={showReport} onclick={() => (showReport = !showReport)}>Report</button>
+        <button class="btn sm ghost" class:on={showReport} onclick={() => (showReport = !showReport)}>{m.tree_report()}</button>
         {#if powerBusy}
-          <span class="dim num small">scoring…{powerProgress ? ` ${powerProgress}%` : ""}</span>
+          <span class="dim num small">{m.tree_power_scoring()}{powerProgress ? ` ${powerProgress}%` : ""}</span>
         {:else if powerNote}
-          <span class="dim num small" title="Time to score every eligible node, and how many engines shared the work">{powerNote}</span>
+          <span class="dim num small" title={m.tree_power_note_title()}>{powerNote}</span>
         {:else if power}
-          <span class="dim num small">{Object.keys(power.nodes).length} nodes · {(power.ms / 1000).toFixed(1)}s</span>
+          <span class="dim num small">{m.tree_power_counts({ count: Object.keys(power.nodes).length, seconds: (power.ms / 1000).toFixed(1) })}</span>
         {/if}
       </div>
     {/if}
     {#if urlPanel}
       <div class="group">
-        <input class="input url" bind:value={urlDraft} placeholder="https://www.pathofexile.com/passive-skill-tree/…" readonly={urlPanel === "export"} onkeydown={(e) => e.key === "Enter" && urlPanel === "import" && importUrl()} />
+        <input class="input url" bind:value={urlDraft} placeholder={m.tree_url_placeholder()} readonly={urlPanel === "export"} onkeydown={(e) => e.key === "Enter" && urlPanel === "import" && importUrl()} />
         {#if urlPanel === "import"}
-          <button class="btn sm primary" onclick={importUrl} disabled={!urlDraft.trim()}>Import</button>
+          <button class="btn sm primary" onclick={importUrl} disabled={!urlDraft.trim()}>{m.tree_import()}</button>
         {:else}
-          <span class="dim small">Copied to clipboard</span>
+          <span class="dim small">{m.tree_copied()}</span>
         {/if}
-        <button class="btn sm ghost" onclick={() => (urlPanel = null)}>Close</button>
+        <button class="btn sm ghost" onclick={() => (urlPanel = null)}>{m.common_close()}</button>
       </div>
     {/if}
-    <button class="dock" title={ui.treeBarDock === "top" ? "Dock toolbar at the bottom" : "Dock toolbar at the top"} onclick={() => ui.setTreeBarDock(ui.treeBarDock === "top" ? "bottom" : "top")}>
+    <button class="dock" title={ui.treeBarDock === "top" ? m.tree_dock_bottom() : m.tree_dock_top()} onclick={() => ui.setTreeBarDock(ui.treeBarDock === "top" ? "bottom" : "top")}>
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="11" height="11" rx="1.5" /><path d={ui.treeBarDock === "top" ? "M0.5 8.5h11" : "M0.5 3.5h11"} /></svg>
     </button>
   </div>
@@ -1768,19 +1769,19 @@
   
   
     {#if wsMode > 0}
-      <div class="wsbadge" class:set2={wsMode === 2}>Allocating into weapon set {wsMode === 1 ? "I" : "II"} · Alt + scroll to change</div>
+      <div class="wsbadge" class:set2={wsMode === 2}>{m.tree_weapon_set_badge({ set: wsMode === 1 ? "I" : "II" })}</div>
     {/if}
 
     {#if assetsMissing}
-      <div class="notice">Tree art not found: run <span class="mono">pnpm sync -- --tree-assets</span>. Showing wireframe.</div>
+      <div class="notice">{m.tree_assets_missing_before()} <span class="mono">pnpm sync -- --tree-assets</span>{m.tree_assets_missing_after()}</div>
     {/if}
   
     {#if build.meta && build.tree && build.tree.treeVersion !== build.meta.latestTreeVersion}
       <div class="banner">
-        <span>This tree uses passive tree version <b class="mono">{build.tree.treeVersion.replace("_", ".")}</b>; the current game version is <b class="mono">{build.meta.latestTreeVersion.replace("_", ".")}</b>. Converting keeps the old tree as a separate spec; passives that no longer exist are dropped.</span>
-        <button class="btn sm primary" onclick={() => build.convertTree(false)}>Convert this tree</button>
+        <span>{m.tree_version_banner({ current: build.tree.treeVersion.replace("_", "."), latest: build.meta.latestTreeVersion.replace("_", ".") })}</span>
+        <button class="btn sm primary" onclick={() => build.convertTree(false)}>{m.tree_convert_one()}</button>
         {#if build.specs.length > 1}
-          <button class="btn sm" onclick={() => build.convertTree(true)}>Convert all</button>
+          <button class="btn sm" onclick={() => build.convertTree(true)}>{m.tree_convert_all()}</button>
         {/if}
       </div>
     {/if}
@@ -1788,11 +1789,11 @@
     {#if powerOn && showReport}
       <aside class="report">
         <div class="report-head">
-          <span class="label">Power report</span>
+          <span class="label">{m.tree_power_report()}</span>
           <span class="dim small">{power?.label ?? ""}</span>
         </div>
         <div class="report-cols label">
-          <span>Node</span><span class="r">{power?.stat ? "per point" : "off/pt"}</span><span class="r">{power?.stat ? "node" : "def/pt"}</span><span class="r">pts</span>
+          <span>{m.tree_col_node()}</span><span class="r">{power?.stat ? m.tree_col_per_point() : m.tree_col_off_per_point()}</span><span class="r">{power?.stat ? m.tree_col_node_value() : m.tree_col_def_per_point()}</span><span class="r">{m.tree_col_points()}</span>
         </div>
         <div class="report-list">
           {#each reportRows as r (r.id)}
@@ -1804,7 +1805,7 @@
             </button>
           {/each}
           {#if reportRows.length === 0}
-            <div class="dim small pad">{powerBusy ? "Scoring nodes…" : "No unallocated node improves this stat within the depth limit."}</div>
+            <div class="dim small pad">{powerBusy ? m.tree_scoring_nodes() : m.tree_no_node_improves()}</div>
           {/if}
         </div>
       </aside>
@@ -1813,15 +1814,15 @@
     {#if loadError}
       <div class="overlay err">{loadError}</div>
     {:else if !model}
-      <div class="overlay dim">Loading tree…</div>
+      <div class="overlay dim">{m.tree_loading()}</div>
     {/if}
   
     {#if attrMenu}
       <div class="menu" style:left={`${Math.min(attrMenu.x, w - 160)}px`} style:top={`${Math.min(attrMenu.y, h - 120)}px`}>
-        <div class="label">Attribute</div>
-        <button class="mi" onclick={() => pickAttribute(1)}><span style:color="var(--c-life)">Strength</span> <kbd>S</kbd></button>
-        <button class="mi" onclick={() => pickAttribute(2)}><span style:color="var(--ok)">Dexterity</span> <kbd>D</kbd></button>
-        <button class="mi" onclick={() => pickAttribute(3)}><span style:color="var(--c-mana)">Intelligence</span> <kbd>I</kbd></button>
+        <div class="label">{m.tree_attribute()}</div>
+        <button class="mi" onclick={() => pickAttribute(1)}><span style:color="var(--c-life)">{m.tree_strength()}</span> <kbd>S</kbd></button>
+        <button class="mi" onclick={() => pickAttribute(2)}><span style:color="var(--ok)">{m.tree_dexterity()}</span> <kbd>D</kbd></button>
+        <button class="mi" onclick={() => pickAttribute(3)}><span style:color="var(--c-mana)">{m.tree_intelligence()}</span> <kbd>I</kbd></button>
       </div>
     {/if}
   
@@ -1833,13 +1834,13 @@
             class="mi effect"
             class:on={e.effect === masteryMenu.selected}
             disabled={e.takenBy != null && e.takenBy !== masteryMenu.id}
-            title={e.takenBy != null && e.takenBy !== masteryMenu.id ? "Taken by another mastery of this kind" : ""}
+            title={e.takenBy != null && e.takenBy !== masteryMenu.id ? m.tree_mastery_taken() : ""}
             onclick={() => pickMastery(e.effect)}
           >
             {#each e.stats as s}<span>{s}</span>{/each}
           </button>
         {/each}
-        <button class="mi dim" onclick={() => (masteryMenu = null)}>Cancel</button>
+        <button class="mi dim" onclick={() => (masteryMenu = null)}>{m.common_cancel()}</button>
       </div>
     {/if}
 
@@ -1860,7 +1861,7 @@
               if (info && tattooMenu) tattooMenu = { ...tattooMenu, info };
             }}
           />
-          Legacy tattoos
+          {m.tree_legacy_tattoos()}
         </label>
         <div class="tatlist">
           {#each tattooMenu.info.options as t (t.id)}
@@ -1871,9 +1872,9 @@
           {/each}
         </div>
         {#if tattooMenu.info.applied}
-          <button class="mi danger" onclick={() => pickTattoo(null)}>Reset node</button>
+          <button class="mi danger" onclick={() => pickTattoo(null)}>{m.tree_reset_node()}</button>
         {/if}
-        <button class="mi dim" onclick={() => (tattooMenu = null)}>Cancel</button>
+        <button class="mi dim" onclick={() => (tattooMenu = null)}>{m.common_cancel()}</button>
       </div>
     {/if}
 
@@ -1884,15 +1885,12 @@
     {#if classConfirm}
       <div class="modal">
         <div class="panel dialog">
-          <div class="label">Class change</div>
-          <p>
-            Switching to <b>{classConfirm.ascendClassName ?? classConfirm.className}</b> changes your class to <b>{classConfirm.className}</b>. Your tree is not
-            connected to that class's start, so it would be reset.
-          </p>
+          <div class="label">{m.tree_class_change()}</div>
+          <p>{m.tree_class_change_body({ ascendancy: classConfirm.ascendClassName ?? classConfirm.className, className: classConfirm.className })}</p>
           <div class="actions">
-            <button class="btn" onclick={() => confirmClass("connect")}>Connect a path instead</button>
-            <button class="btn primary" onclick={() => confirmClass("reset")}>Reset tree and switch</button>
-            <button class="btn ghost" onclick={() => (classConfirm = null)}>Cancel</button>
+            <button class="btn" onclick={() => confirmClass("connect")}>{m.tree_connect_path()}</button>
+            <button class="btn primary" onclick={() => confirmClass("reset")}>{m.tree_reset_and_switch()}</button>
+            <button class="btn ghost" onclick={() => (classConfirm = null)}>{m.common_cancel()}</button>
           </div>
         </div>
       </div>
@@ -1908,7 +1906,7 @@
         </div>
         {#if socketed}
           <div class="tip-stat">
-            <span class="dim">Socketed:</span>
+            <span class="dim">{m.tree_socketed()}</span>
             <span class="rarity" data-rarity={socketed.rarity ?? ""}>{socketed.title ?? socketed.name}</span>
           </div>
         {/if}
@@ -1929,14 +1927,14 @@
         <div class="tip-foot num">
           {#if allocated.has(hover.id)}
             {@const set = weaponSets.get(hover.id)}
-            <span style:color={set === 1 ? "var(--bad)" : "var(--ok)"}>{set ? `weapon set ${set === 1 ? "I" : "II"}` : "allocated"}</span>
+            <span style:color={set === 1 ? "var(--bad)" : "var(--ok)"}>{set ? m.tree_in_weapon_set({ set: set === 1 ? "I" : "II" }) : m.tree_allocated()}</span>
             {#if !hoverBlocked}
-              <span class="dim">{hoverDep.size > 1 ? `click removes ${hoverDep.size}` : "click to remove"}{hover.isAttribute ? " · right-click to switch" : hover.kind === "mastery" ? " · right-click to change effect" : ""}</span>
+              <span class="dim">{hoverDep.size > 1 ? m.tree_click_removes({ count: hoverDep.size }) : m.tree_click_to_remove()}{hover.isAttribute ? m.tree_right_click_switch() : hover.kind === "mastery" ? m.tree_right_click_effect() : ""}</span>
             {/if}
           {:else if hoverCost != null}
-            <span>{hoverCost} point{hoverCost === 1 ? "" : "s"}</span>
+            <span>{m.tree_point_cost({ count: hoverCost })}</span>
             {#if !hoverBlocked}
-              <span class="dim">{shiftDown && trace.length ? "tracing · click to allocate path" : hover.kind === "mastery" ? "click to choose an effect" : "click to allocate · hold Shift to trace"}</span>
+              <span class="dim">{shiftDown && trace.length ? m.tree_tracing() : hover.kind === "mastery" ? m.tree_choose_effect() : m.tree_click_allocate()}</span>
             {/if}
           {:else if !hoverBlocked}
             <span class="dim">…</span>

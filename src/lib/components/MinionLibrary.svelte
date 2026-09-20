@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { engine, type MinionLibrary, type MinionEntry } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let { onclose, kind: initialKind = "spectre" }: { onclose: () => void; kind?: "spectre" | "beast" } = $props();
 
@@ -27,29 +28,29 @@
       .catch((e) => (build.error = String(e)));
   });
 
-  const ownedIds = $derived(new Set(owned.map((m) => m.id)));
+  const ownedIds = $derived(new Set(owned.map((e) => e.id)));
   const shown = $derived.by(() => {
     const q = search.trim().toLowerCase();
     return (lib?.available ?? []).filter(
-      (m) =>
-        !ownedIds.has(m.id) &&
-        (!q || m.name.toLowerCase().includes(q)) &&
-        (!category || m.category === category) &&
-        (!recommendedOnly || m.recommended),
+      (e) =>
+        !ownedIds.has(e.id) &&
+        (!q || e.name.toLowerCase().includes(q)) &&
+        (!category || e.category === category) &&
+        (!recommendedOnly || e.recommended),
     );
   });
 
-  function add(m: MinionEntry) {
-    if (!ownedIds.has(m.id)) owned = [...owned, m];
+  function add(e: MinionEntry) {
+    if (!ownedIds.has(e.id)) owned = [...owned, e];
   }
   function remove(id: string) {
-    owned = owned.filter((m) => m.id !== id);
+    owned = owned.filter((e) => e.id !== id);
   }
 
   async function save() {
     saving = true;
     try {
-      await build.run(() => engine.setMinionLibrary(kind, owned.map((m) => m.id)));
+      await build.run(() => engine.setMinionLibrary(kind, owned.map((e) => e.id)));
       onclose();
     } catch (e) {
       build.error = String(e);
@@ -62,69 +63,66 @@
 <div class="modal">
   <div class="panel dialog libdlg">
     <div class="head">
-      <span class="label">{kind === "beast" ? "Beast library" : "Spectre library"}</span>
+      <span class="label">{kind === "beast" ? m.minions_beast_library() : m.minions_spectre_library()}</span>
       {#if lib?.hasBeasts}
         <span class="seg">
-          <button class:on={kind === "spectre"} onclick={() => (kind = "spectre")}>Spectres</button>
-          <button class:on={kind === "beast"} onclick={() => (kind = "beast")}>Beasts</button>
+          <button class:on={kind === "spectre"} onclick={() => (kind = "spectre")}>{m.minions_spectres()}</button>
+          <button class:on={kind === "beast"} onclick={() => (kind = "beast")}>{m.minions_beasts()}</button>
         </span>
       {/if}
     </div>
 
     <div class="filters">
-      <input class="input grow" placeholder="Search by name…" bind:value={search} />
+      <input class="input grow" placeholder={m.minions_search()} bind:value={search} />
       {#if (lib?.categories.length ?? 0) > 0}
         <select class="select sm" bind:value={category}>
-          <option value="">All types</option>
+          <option value="">{m.common_all_types()}</option>
           {#each lib?.categories ?? [] as c}
             <option value={c}>{c}</option>
           {/each}
         </select>
       {/if}
-      <label class="chk small" title="Only the ones PoB marks as worth using">
+      <label class="chk small" title={m.minions_recommended_title()}>
         <input type="checkbox" bind:checked={recommendedOnly} />
-        Recommended
+        {m.minions_recommended()}
       </label>
     </div>
 
     <div class="cols">
       <section class="side">
-        <div class="shead">Available <span class="dim num">{shown.length}</span></div>
+        <div class="shead">{m.minions_available()} <span class="dim num">{shown.length}</span></div>
         <div class="scroll">
-          {#each shown as m (m.id)}
-            <button class="row" onclick={() => add(m)} title={m.id}>
-              <span class="nm">{m.name}</span>
-              {#if m.recommended}<span class="tag">★</span>{/if}
-              {#if m.category}<span class="dim small">{m.category}</span>{/if}
+          {#each shown as e (e.id)}
+            <button class="row" onclick={() => add(e)} title={e.id}>
+              <span class="nm">{e.name}</span>
+              {#if e.recommended}<span class="tag">★</span>{/if}
+              {#if e.category}<span class="dim small">{e.category}</span>{/if}
             </button>
           {:else}
-            <div class="dim small pad">Nothing matches.</div>
+            <div class="dim small pad">{m.common_nothing_matches()}</div>
           {/each}
         </div>
       </section>
       <section class="side">
-        <div class="shead">In your library <span class="dim num">{owned.length}</span></div>
+        <div class="shead">{m.minions_owned()} <span class="dim num">{owned.length}</span></div>
         <div class="scroll">
-          {#each owned as m (m.id)}
-            <button class="row own" onclick={() => remove(m.id)} title="Remove from the library">
-              <span class="nm">{m.name}</span>
+          {#each owned as e (e.id)}
+            <button class="row own" onclick={() => remove(e.id)} title={m.minions_remove()}>
+              <span class="nm">{e.name}</span>
               <span class="x">✕</span>
             </button>
           {:else}
-            <div class="dim small pad">Empty. Pick from the left.</div>
+            <div class="dim small pad">{m.minions_owned_empty()}</div>
           {/each}
         </div>
       </section>
     </div>
 
-    <p class="note dim small">
-      A {kind === "beast" ? "beast" : "spectre"} in the library does nothing until a
-      {kind === "beast" ? "Companion" : "Raise Spectre"} gem in the build is set to it.
-    </p>
+    <p class="note dim small">{kind === "beast" ? m.minions_note_beast() : m.minions_note_spectre()}</p>
 
     <div class="acts">
-      <button class="btn primary" disabled={saving || build.busy > 0} onclick={save}>Save</button>
-      <button class="btn ghost" onclick={onclose}>Cancel</button>
+      <button class="btn primary" disabled={saving || build.busy > 0} onclick={save}>{m.common_save()}</button>
+      <button class="btn ghost" onclick={onclose}>{m.common_cancel()}</button>
     </div>
   </div>
 </div>

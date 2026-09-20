@@ -9,17 +9,19 @@
   import { ui, type Theme } from "$lib/state/ui.svelte";
   import { save } from "@tauri-apps/plugin-dialog";
   import { exportDiagnostics, revealLogs } from "$lib/engine.svelte";
+  import { locale, LOCALES, LOCALE_LABEL, type LocalePreference } from "$lib/state/locale.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let reportNote = $state("");
   async function saveReport() {
     reportNote = "";
     try {
-      const path = await save({ defaultPath: "pob-redux-diagnostics.txt", filters: [{ name: "Text", extensions: ["txt"] }] });
+      const path = await save({ defaultPath: "pob-redux-diagnostics.txt", filters: [{ name: m.settings_report_filetype(), extensions: ["txt"] }] });
       if (!path) return;
       await exportDiagnostics(path);
-      reportNote = "Saved";
+      reportNote = m.settings_report_saved();
     } catch (e) {
-      reportNote = `Could not save: ${String(e)}`;
+      reportNote = m.settings_report_failed({ error: String(e) });
     }
   }
 
@@ -41,12 +43,16 @@
     } catch {}
   }
 
-  const themes: [Theme, string][] = [
-    ["system", "System"],
-    ["dark", "Dark"],
-    ["wraeclast", "Wraeclast"],
-    ["light", "Light"],
-  ];
+  const themes = $derived<[Theme, string][]>([
+    ["system", m.theme_system()],
+    ["dark", m.theme_dark()],
+    ["wraeclast", m.theme_wraeclast()],
+    ["light", m.theme_light()],
+  ]);
+  const languages = $derived<[LocalePreference, string][]>([
+    ["system", m.settings_language_system({ language: LOCALE_LABEL[locale.system] })],
+    ...LOCALES.map((l): [LocalePreference, string] => [l, LOCALE_LABEL[l]]),
+  ]);
   const scalePresets = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
   const scales = $derived(scalePresets.includes(ui.scale) ? scalePresets : [...scalePresets, ui.scale].sort((a, b) => a - b));
   const pct = (s: number) => `${Math.round(s * 100)}%`;
@@ -54,11 +60,11 @@
   const v = $derived(appOptions.values);
 
   const sections = $derived([
-    { id: "appearance", label: "Appearance" },
-    { id: "numbers", label: "Numbers and defaults" },
-    ...(game.isPoe2 ? [{ id: "mcp", label: "MCP server" }] : []),
-    { id: "updates", label: "Updates" },
-    { id: "diagnostics", label: "Diagnostics" },
+    { id: "appearance", label: m.settings_appearance() },
+    { id: "numbers", label: m.settings_numbers() },
+    ...(game.isPoe2 ? [{ id: "mcp", label: m.settings_mcp() }] : []),
+    { id: "updates", label: m.settings_updates() },
+    { id: "diagnostics", label: m.settings_diagnostics() },
   ]);
   let scroller = $state<HTMLDivElement | null>(null);
   let active = $state("appearance");
@@ -97,24 +103,35 @@
 </script>
 
 <div class="settings">
-  <nav class="snav" aria-label="Settings sections">
-    <div class="label ntitle">Settings</div>
+  <nav class="snav" aria-label={m.settings_sections()}>
+    <div class="label ntitle">{m.settings_title()}</div>
     {#each sections as s (s.id)}
       <button class="nitem" class:on={active === s.id} aria-current={active === s.id ? "true" : undefined} onclick={() => go(s.id)}>
         {s.label}
       </button>
     {/each}
-    <button class="btn sm ghost back" onclick={close}>Close <kbd>Esc</kbd></button>
+    <button class="btn sm ghost back" onclick={close}>{m.common_close()} <kbd>Esc</kbd></button>
   </nav>
 
   <div class="sbody" bind:this={scroller} onscroll={onScroll}>
     <div class="sinner">
       <section id="settings-appearance">
-        <div class="shead"><h2 class="label">Appearance</h2></div>
+        <div class="shead"><h2 class="label">{m.settings_appearance()}</h2></div>
         <div class="rows">
+          <label class="opt">
+            <span>
+              {m.settings_language()}
+              <span class="hint">{m.settings_language_hint()}</span>
+            </span>
+            <select class="select" value={locale.preference} onchange={(e) => locale.set((e.target as HTMLSelectElement).value as LocalePreference)}>
+              {#each languages as [id, label] (id)}
+                <option value={id}>{label}</option>
+              {/each}
+            </select>
+          </label>
           <div class="opt">
-            <span>Theme</span>
-            <div class="seg" role="radiogroup" aria-label="Theme">
+            <span>{m.settings_theme()}</span>
+            <div class="seg" role="radiogroup" aria-label={m.settings_theme()}>
               {#each themes as [id, label] (id)}
                 <button role="radio" aria-checked={ui.theme === id} class:on={ui.theme === id} onclick={() => ui.setTheme(id)}>{label}</button>
               {/each}
@@ -122,11 +139,11 @@
           </div>
           <div class="opt">
             <span>
-              Contrast
-              <span class="hint">Lifts the grey text tones. Auto follows the OS setting.</span>
+              {m.settings_contrast()}
+              <span class="hint">{m.settings_contrast_hint()}</span>
             </span>
             <div class="ctrast">
-              <button class="btn sm ghost" class:on={ui.contrastAuto} aria-pressed={ui.contrastAuto} onclick={() => ui.setContrastAuto(!ui.contrastAuto)}>Auto</button>
+              <button class="btn sm ghost" class:on={ui.contrastAuto} aria-pressed={ui.contrastAuto} onclick={() => ui.setContrastAuto(!ui.contrastAuto)}>{m.common_auto()}</button>
               <input
                 class="range"
                 type="range"
@@ -135,7 +152,7 @@
                 step="5"
                 value={ui.contrastEffective}
                 disabled={ui.contrastAuto}
-                aria-label="Contrast level"
+                aria-label={m.settings_contrast_level()}
                 oninput={(e) => ui.setContrastLevel(Number((e.target as HTMLInputElement).value))}
               />
               <span class="num ctval">{ui.contrastEffective}%</span>
@@ -143,10 +160,10 @@
           </div>
           <label class="opt">
             <span>
-              Interface scale
-              <span class="hint">Ctrl+= and Ctrl+- step it, Ctrl+0 resets.</span>
+              {m.settings_scale()}
+              <span class="hint">{m.settings_scale_hint()}</span>
               {#if ui.scaleLimited}
-                <span class="hint warn">The window fits {pct(ui.scaleApplied)} at most. Make it larger to use {pct(ui.scale)}.</span>
+                <span class="hint warn">{m.settings_scale_limited({ applied: pct(ui.scaleApplied), wanted: pct(ui.scale) })}</span>
               {/if}
             </span>
             <select class="select" value={String(ui.scale)} onchange={(e) => ui.setScale(Number((e.target as HTMLSelectElement).value))}>
@@ -159,15 +176,15 @@
       </section>
 
       <section id="settings-numbers">
-        <div class="shead"><h2 class="label">Numbers and defaults</h2></div>
+        <div class="shead"><h2 class="label">{m.settings_numbers()}</h2></div>
         {#if v}
           <div class="rows">
             <label class="opt">
-              <span>Show thousands separators</span>
+              <span>{m.settings_thousands_show()}</span>
               <input type="checkbox" checked={v.showThousandsSeparators} onchange={(e) => appOptions.set({ showThousandsSeparators: (e.target as HTMLInputElement).checked })} />
             </label>
             <label class="opt">
-              <span>Thousands separator</span>
+              <span>{m.settings_thousands_separator()}</span>
               <input
                 class="input chr"
                 maxlength="1"
@@ -176,7 +193,7 @@
               />
             </label>
             <label class="opt">
-              <span>Decimal separator</span>
+              <span>{m.settings_decimal_separator()}</span>
               <input
                 class="input chr"
                 maxlength="1"
@@ -185,7 +202,7 @@
               />
             </label>
             <label class="opt">
-              <span>Default gem quality</span>
+              <span>{m.settings_gem_quality()}</span>
               <input
                 class="input num"
                 type="number"
@@ -196,7 +213,7 @@
               />
             </label>
             <label class="opt">
-              <span>Default character level (new builds)</span>
+              <span>{m.settings_char_level()}</span>
               <input
                 class="input num"
                 type="number"
@@ -207,38 +224,38 @@
               />
             </label>
             <label class="opt">
-              <span>Default item affix quality</span>
+              <span>{m.settings_affix_quality()}</span>
               <select class="select" value={String(v.defaultItemAffixQuality)} onchange={(e) => appOptions.set({ defaultItemAffixQuality: Number((e.target as HTMLSelectElement).value) })}>
-                <option value="0">Worst roll</option>
+                <option value="0">{m.settings_affix_worst()}</option>
                 <option value="0.25">25%</option>
-                <option value="0.5">Average</option>
+                <option value="0.5">{m.settings_affix_average()}</option>
                 <option value="0.75">75%</option>
-                <option value="1">Best roll</option>
+                <option value="1">{m.settings_affix_best()}</option>
               </select>
             </label>
           </div>
-          <p class="note dim">Applied to the calculation engine now and re-applied on every start. Path of Building's own settings file is never touched.</p>
+          <p class="note dim">{m.settings_numbers_note()}</p>
         {:else}
-          <p class="note dim">These settings are available once the calculation engine has started.</p>
+          <p class="note dim">{m.settings_numbers_waiting()}</p>
         {/if}
       </section>
 
       {#if game.isPoe2}
         <section id="settings-mcp">
           <div class="shead">
-            <h2 class="label">MCP server</h2>
-            <span class="dim" style:color={mcp.status?.running ? "var(--ok)" : undefined}>{mcp.status?.running ? "running" : "off"}</span>
+            <h2 class="label">{m.settings_mcp()}</h2>
+            <span class="dim" style:color={mcp.status?.running ? "var(--ok)" : undefined}>{mcp.status?.running ? m.settings_mcp_running() : m.common_off()}</span>
           </div>
           <div class="rows">
             <label class="opt">
               <span>
-                Enable MCP server
-                <span class="hint">An AI client (Claude Code, Claude Desktop, Cursor) can read and edit the open build. Local only.</span>
+                {m.settings_mcp_enable()}
+                <span class="hint">{m.settings_mcp_enable_hint()}</span>
               </span>
               <input type="checkbox" checked={mcp.enabled} disabled={mcp.busy} onchange={(e) => mcp.setEnabled((e.target as HTMLInputElement).checked)} />
             </label>
             <label class="opt">
-              <span>Port</span>
+              <span>{m.settings_mcp_port()}</span>
               <input
                 class="input num"
                 type="number"
@@ -257,22 +274,22 @@
                 <div class="row">
                   <span class="dim">URL</span>
                   <code class="mono selectable">{mcpUrl}</code>
-                  <button class="btn sm ghost" onclick={() => copy("url", mcpUrl)}>{copied === "url" ? "Copied" : "Copy"}</button>
+                  <button class="btn sm ghost" onclick={() => copy("url", mcpUrl)}>{copied === "url" ? m.common_copied() : m.common_copy()}</button>
                 </div>
                 <div class="row">
                   <span class="dim">Token</span>
                   <code class="mono selectable">{mcpToken}</code>
-                  <button class="btn sm ghost" onclick={() => copy("token", mcpToken)}>{copied === "token" ? "Copied" : "Copy"}</button>
+                  <button class="btn sm ghost" onclick={() => copy("token", mcpToken)}>{copied === "token" ? m.common_copied() : m.common_copy()}</button>
                 </div>
                 <div class="row">
                   <span class="dim">Claude Code</span>
                   <code class="mono selectable">{claudeCmd}</code>
-                  <button class="btn sm ghost" onclick={() => copy("cmd", claudeCmd)}>{copied === "cmd" ? "Copied" : "Copy"}</button>
+                  <button class="btn sm ghost" onclick={() => copy("cmd", claudeCmd)}>{copied === "cmd" ? m.common_copied() : m.common_copy()}</button>
                 </div>
                 <div class="row">
                   <span class="dim">JSON</span>
                   <code class="mono selectable">{jsonCfg}</code>
-                  <button class="btn sm ghost" onclick={() => copy("json", jsonCfg)}>{copied === "json" ? "Copied" : "Copy"}</button>
+                  <button class="btn sm ghost" onclick={() => copy("json", jsonCfg)}>{copied === "json" ? m.common_copied() : m.common_copy()}</button>
                 </div>
               </div>
             {/if}
@@ -282,24 +299,24 @@
 
       <section id="settings-updates">
         <div class="shead">
-          <h2 class="label">Updates</h2>
+          <h2 class="label">{m.settings_updates()}</h2>
           <span class="dim mono">{version}</span>
         </div>
         <div class="rows">
           <div class="opt">
             <span>
-              App version
-              <span class="hint">Checked once shortly after start. Installing replaces the app and needs a restart.</span>
+              {m.settings_version()}
+              <span class="hint">{m.settings_version_hint()}</span>
             </span>
             <div class="row">
               {#if appUpdate.phase === "available" || appUpdate.phase === "ready"}
-                <span class="mono" style:color="var(--ok)">{appUpdate.version} ready</span>
+                <span class="mono" style:color="var(--ok)">{m.settings_version_ready({ version: appUpdate.version ?? "" })}</span>
               {:else if appUpdate.phase === "checking"}
-                <span class="dim">checking…</span>
+                <span class="dim">{m.settings_version_checking()}</span>
               {:else if appUpdate.phase === "error"}
-                <span class="mono" style:color="var(--bad)" title={appUpdate.error}>check failed</span>
+                <span class="mono" style:color="var(--bad)" title={appUpdate.error}>{m.settings_version_failed()}</span>
               {:else if checked}
-                <span class="dim">up to date</span>
+                <span class="dim">{m.settings_version_current()}</span>
               {/if}
               <button
                 class="btn sm ghost"
@@ -309,7 +326,7 @@
                 }}
                 disabled={appUpdate.phase === "checking" || appUpdate.phase === "downloading"}
               >
-                Check for updates
+                {m.settings_check_updates()}
               </button>
             </div>
           </div>
@@ -317,17 +334,17 @@
       </section>
 
       <section id="settings-diagnostics">
-        <div class="shead"><h2 class="label">Diagnostics</h2></div>
+        <div class="shead"><h2 class="label">{m.settings_diagnostics()}</h2></div>
         <div class="rows">
           <div class="opt">
             <span>
-              Bug report file
-              <span class="hint">A text file with app details and recent logs, for attaching to an issue. Paths, tokens and API keys are masked.</span>
+              {m.settings_report()}
+              <span class="hint">{m.settings_report_hint()}</span>
             </span>
             <div class="row">
               {#if reportNote}<span class="dim">{reportNote}</span>{/if}
-              <button class="btn sm ghost" onclick={() => revealLogs().catch((e) => (reportNote = String(e)))}>Log folder</button>
-              <button class="btn sm ghost" onclick={saveReport}>Save report…</button>
+              <button class="btn sm ghost" onclick={() => revealLogs().catch((e) => (reportNote = String(e)))}>{m.settings_log_folder()}</button>
+              <button class="btn sm ghost" onclick={saveReport}>{m.settings_save_report()}</button>
             </div>
           </div>
         </div>

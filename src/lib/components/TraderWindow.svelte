@@ -4,6 +4,7 @@
   import { engine, type PowerStat, type SlotInfo } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { game } from "$lib/state/game.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let { onclose, focusSlot = null }: { onclose: () => void; focusSlot?: string | null } = $props();
 
@@ -120,8 +121,8 @@
   /** Engine errors arrive with a Lua traceback; only the first line says anything. */
   function friendly(e: unknown) {
     const first = String(e).split("\n")[0].replace(/^EngineError: [a-z_]+: /, "").replace(/^runtime error: /, "");
-    if (first.includes("found no mods to search for")) return "Nothing here is worth weighing";
-    if (first.includes("not supported")) return "This slot cannot be searched";
+    if (first.includes("found no mods to search for")) return m.trader_nothing_to_weigh();
+    if (first.includes("not supported")) return m.trader_slot_unsupported();
     return first;
   }
 
@@ -153,8 +154,8 @@
       rows = rows.map((r) => (r.slot === slot ? { ...r, url, error: null } : r));
       return true;
     } catch (e) {
-      const msg = friendly(e);
-      rows = rows.map((r) => (r.slot === slot ? { ...r, url: null, error: msg } : r));
+      const message = friendly(e);
+      rows = rows.map((r) => (r.slot === slot ? { ...r, url: null, error: message } : r));
       return false;
     } finally {
       busySlot = null;
@@ -180,13 +181,13 @@
       done++;
     }
     runAll = false;
-    note = cancel ? `Stopped after ${done} of ${rows.length}` : `${ok} of ${rows.length} slots have a search`;
+    note = cancel ? m.trader_stopped({ done, total: rows.length }) : m.trader_summary({ ok, total: rows.length });
   }
 
   async function copy(url: string) {
     try {
       await writeText(url);
-      note = "Link copied";
+      note = m.trader_link_copied();
     } catch (e) {
       build.error = String(e);
     }
@@ -197,7 +198,7 @@
     if (!lines.length) return;
     try {
       await writeText(lines.join("\n"));
-      note = `${lines.length} links copied`;
+      note = m.trader_links_copied({ count: lines.length });
     } catch (e) {
       build.error = String(e);
     }
@@ -209,13 +210,13 @@
 <div class="modal">
   <div class="panel dialog trdlg">
     <div class="head">
-      <span class="label">Trader</span>
-      <span class="dim small">A weighted trade search for every slot. Results open in your browser.</span>
+      <span class="label">{m.trader_title()}</span>
+      <span class="dim small">{m.trader_subtitle()}</span>
     </div>
 
     <div class="opts">
       <div class="orow">
-        <span class="olabel">League</span>
+        <span class="olabel">{m.trader_league()}</span>
         {#if leagues}
           <select class="select sm grow" bind:value={league}>
             {#each leagues as l (l.id)}
@@ -223,10 +224,10 @@
             {/each}
           </select>
         {:else}
-          <input class="input sm grow" bind:value={league} placeholder="League name" />
+          <input class="input sm grow" bind:value={league} placeholder={m.trader_league_placeholder()} />
         {/if}
-        <span class="olabel">Listings</span>
-        <select class="select sm" bind:value={status} title="Which listings the search should return">
+        <span class="olabel">{m.trader_listings()}</span>
+        <select class="select sm" bind:value={status} title={m.trader_listings_title()}>
           {#each statuses as s (s.id)}
             <option value={s.id}>{s.label}</option>
           {/each}
@@ -235,13 +236,13 @@
 
       {#each weights as w, i}
         <div class="orow">
-          <span class="olabel">{i === 0 ? "Weigh by" : ""}</span>
+          <span class="olabel">{i === 0 ? m.trader_weigh_by() : ""}</span>
           <select
             class="select sm grow"
             value={w.stat}
             onchange={(e) => (weights[i] = { ...w, stat: (e.target as HTMLSelectElement).value })}
           >
-            <option value="FullDPS">Full DPS</option>
+            <option value="FullDPS">{m.trader_full_dps()}</option>
             {#each powerStats as s (s.stat)}
               <option value={s.stat}>{s.label}</option>
             {/each}
@@ -253,11 +254,11 @@
             max="10"
             step="0.1"
             value={w.weightMult}
-            title="How much this stat counts against the others"
+            title={m.trader_weight_title()}
             onchange={(e) => (weights[i] = { ...w, weightMult: Number((e.target as HTMLInputElement).value) })}
           />
           {#if weights.length > 1}
-            <button class="x" onclick={() => (weights = weights.filter((_, j) => j !== i))} title="Remove">✕</button>
+            <button class="x" onclick={() => (weights = weights.filter((_, j) => j !== i))} title={m.common_remove()}>✕</button>
           {:else}
             <span class="x"></span>
           {/if}
@@ -266,70 +267,67 @@
 
       <div class="orow">
         <span class="olabel"></span>
-        <button class="btn sm ghost" onclick={() => (weights = [...weights, { stat: "TotalEHP", weightMult: 0.5 }])}>Add stat</button>
-        <label class="chk small"><input type="checkbox" bind:checked={corrupted} /> Corrupted</label>
-        <label class="chk small"><input type="checkbox" bind:checked={runes} /> Runes</label>
-        <label class="chk small"><input type="checkbox" bind:checked={mirrored} /> Mirrored</label>
-        <span class="olabel">Max level</span>
-        <input class="input sm wnum" type="number" min="0" max="100" bind:value={maxLevel} title="Required-level cap; 0 means no cap" />
-        <span class="olabel">Jewels</span>
-        <select class="select sm" bind:value={jewelType} title="Which kind of jewel the socket rows should search for">
-          <option value="Base">Base</option>
-          <option value="Abyss">Abyss</option>
-          <option value="Any">Any</option>
+        <button class="btn sm ghost" onclick={() => (weights = [...weights, { stat: "TotalEHP", weightMult: 0.5 }])}>{m.trader_add_stat()}</button>
+        <label class="chk small"><input type="checkbox" bind:checked={corrupted} /> {m.trader_corrupted()}</label>
+        <label class="chk small"><input type="checkbox" bind:checked={runes} /> {m.trader_runes()}</label>
+        <label class="chk small"><input type="checkbox" bind:checked={mirrored} /> {m.trader_mirrored()}</label>
+        <span class="olabel">{m.trader_max_level()}</span>
+        <input class="input sm wnum" type="number" min="0" max="100" bind:value={maxLevel} title={m.trader_max_level_title()} />
+        <span class="olabel">{m.trader_jewels()}</span>
+        <select class="select sm" bind:value={jewelType} title={m.trader_jewels_title()}>
+          <option value="Base">{m.trader_jewel_base()}</option>
+          <option value="Abyss">{m.trader_jewel_abyss()}</option>
+          <option value="Any">{m.trader_jewel_any()}</option>
         </select>
       </div>
     </div>
 
     <div class="side">
       <div class="shead">
-        Slots
+        {m.trader_slots()}
         <span class="dim num">{rows.length}</span>
-        {#if ready}<span class="dim small">{ready} with a search</span>{/if}
+        {#if ready}<span class="dim small">{m.trader_with_search({ count: ready })}</span>{/if}
       </div>
       <div class="scroll">
         {#each rows as r (r.slot)}
           <div class="trow" class:focus={r.slot === focusSlot}>
             <span class="sname">{r.label}</span>
-            <span class="iname" style:color={rarityColor[r.itemRarity ?? ""] ?? "var(--fg-2)"}>{r.itemName ?? "empty"}</span>
+            <span class="iname" style:color={rarityColor[r.itemRarity ?? ""] ?? "var(--fg-2)"}>{r.itemName ?? m.trader_empty_slot()}</span>
             {#if r.error}
               <span class="dim small grow">{r.error}</span>
             {:else if r.url}
               <input class="input sm grow mono" readonly value={r.url} onfocus={(e) => (e.target as HTMLInputElement).select()} />
-              <button class="btn sm ghost" onclick={() => copy(r.url!)}>Copy</button>
-              <button class="btn sm" onclick={() => openUrl(r.url!)}>Open</button>
+              <button class="btn sm ghost" onclick={() => copy(r.url!)}>{m.common_copy_button()}</button>
+              <button class="btn sm" onclick={() => openUrl(r.url!)}>{m.common_open()}</button>
             {:else}
               <span class="grow"></span>
             {/if}
             <button class="btn sm ghost find" onclick={() => one(r.slot)} disabled={busySlot !== null || runAll}>
-              {busySlot === r.slot ? "…" : r.url ? "Redo" : "Find"}
+              {busySlot === r.slot ? "…" : r.url ? m.trader_redo() : m.trader_find()}
             </button>
           </div>
         {:else}
-          <div class="dim small pad">No slots to search.</div>
+          <div class="dim small pad">{m.trader_no_slots()}</div>
         {/each}
       </div>
     </div>
 
-    <p class="note dim small">
-      Prices, live results and whisper messages need a Path of Exile account login, which this app does not have. Path
-      of Building calls the same thing No Session Mode.
-    </p>
+    <p class="note dim small">{m.trader_note()}</p>
 
     <div class="acts">
       {#if runAll}
-        <button class="btn ghost sm" onclick={() => (cancel = true)}>Stop</button>
+        <button class="btn ghost sm" onclick={() => (cancel = true)}>{m.common_stop()}</button>
         <div class="prog"><span style:width={`${rows.length ? Math.round((done / rows.length) * 100) : 0}%`}></span></div>
         <span class="dim num small">{done} / {rows.length}</span>
       {:else}
-        <button class="btn primary" onclick={all} disabled={busySlot !== null}>Find all slots</button>
+        <button class="btn primary" onclick={all} disabled={busySlot !== null}>{m.trader_find_all()}</button>
         {#if ready}
-          <button class="btn sm ghost" onclick={copyAll}>Copy all links</button>
+          <button class="btn sm ghost" onclick={copyAll}>{m.trader_copy_all()}</button>
         {/if}
         {#if note}<span class="dim small">{note}</span>{/if}
         <span class="sp"></span>
       {/if}
-      <button class="btn ghost" onclick={onclose} disabled={runAll}>Close</button>
+      <button class="btn ghost" onclick={onclose} disabled={runAll}>{m.common_close()}</button>
     </div>
   </div>
 </div>

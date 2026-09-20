@@ -5,6 +5,7 @@
   import { engine, type BuySimilarInfo, type BuySimilarTarget } from "$lib/engine.svelte";
   import { game } from "$lib/state/game.svelte";
   import PobText from "./PobText.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let { target, onclose }: { target: BuySimilarTarget; onclose: () => void } = $props();
 
@@ -54,9 +55,9 @@
       realm = saved.realm && i.realms.includes(saved.realm) ? saved.realm : i.realms[0];
       listed = saved.listed && saved.listed >= 1 && saved.listed <= i.listed.length ? saved.listed : 1;
       defences = i.defences.map((d) => ({ checked: false, min: String(d.value), max: "" }));
-      mods = i.mods.map((m) => ({
+      mods = i.mods.map((mod) => ({
         checked: false,
-        min: m.ranged && typeof m.value === "number" && m.value !== 0 ? String(m.value) : "",
+        min: mod.ranged && typeof mod.value === "number" && mod.value !== 0 ? String(mod.value) : "",
         max: "",
       }));
       info = i;
@@ -87,7 +88,7 @@
       } catch {}
       await writeText(url).catch(() => {});
       await openUrl(url);
-      note = "Opened in your browser. The link is on your clipboard too.";
+      note = m.buy_opened();
     } catch (e) {
       error = friendly(e);
     } finally {
@@ -101,39 +102,39 @@
     class="modal"
     role="dialog"
     aria-modal="true"
-    aria-label="Buy similar"
+    aria-label={m.buy_title()}
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.key === "Escape" && onclose()}
   >
     <div class="mhead">
-      <span class="label">Buy similar</span>
+      <span class="label">{m.buy_title()}</span>
       {#if info}<span class="iname" title={info.name}>{info.name}</span>{/if}
-      <button class="btn sm ghost" onclick={onclose}>Close</button>
+      <button class="btn sm ghost" onclick={onclose}>{m.common_close()}</button>
     </div>
 
     <div class="mbody">
       {#if !info && !error}
-        <div class="dim small">Reading the item…</div>
+        <div class="dim small">{m.buy_reading()}</div>
       {:else if info}
         <div class="row">
           {#if info.realms.length > 1}
             <label class="fld">
-              <span class="label">Realm</span>
+              <span class="label">{m.buy_realm()}</span>
               <select class="select sm" bind:value={realm}>
                 {#each info.realms as r}<option value={r}>{r}</option>{/each}
               </select>
             </label>
           {/if}
           <label class="fld">
-            <span class="label">League</span>
+            <span class="label">{m.buy_league()}</span>
             <select class="select sm" bind:value={league} disabled={leagues.length === 0}>
-              {#if leagues.length === 0}<option value={league}>Loading…</option>{/if}
+              {#if leagues.length === 0}<option value={league}>{m.common_loading()}</option>{/if}
               {#each leagues as l (l.id)}<option value={l.id}>{l.text}</option>{/each}
             </select>
           </label>
           <label class="fld">
-            <span class="label">Listed</span>
+            <span class="label">{m.buy_listed()}</span>
             <select class="select sm" bind:value={listed}>
               {#each info.listed as l, i}<option value={i + 1}>{l}</option>{/each}
             </select>
@@ -141,45 +142,45 @@
         </div>
 
         {#if info.unique}
-          <div class="dim small">Searches for {info.name} by name, with the mods you tick.</div>
+          <div class="dim small">{m.buy_unique_note({ name: info.name })}</div>
         {:else}
           <div class="grid">
-            <span class="dim small">Category</span>
+            <span class="dim small">{m.buy_category()}</span>
             <span class="small">{info.category}</span>
             <span></span>
             <span></span>
             {#if info.baseName}
-              <label class="chk small span2"><input type="checkbox" bind:checked={baseType} /> Only {info.baseName}</label>
+              <label class="chk small span2"><input type="checkbox" bind:checked={baseType} /> {m.buy_only_base({ base: info.baseName })}</label>
               <span></span>
               <span></span>
             {/if}
-            <span class="small">Item level</span>
+            <span class="small">{m.buy_item_level()}</span>
             <span></span>
-            <input class="input sm num" placeholder="Min" bind:value={ilvlMin} />
-            <input class="input sm num" placeholder="Max" bind:value={ilvlMax} />
+            <input class="input sm num" placeholder={m.common_min()} bind:value={ilvlMin} />
+            <input class="input sm num" placeholder={m.common_max()} bind:value={ilvlMax} />
             {#each info.defences as d, i}
               <label class="chk small span2"><input type="checkbox" bind:checked={defences[i].checked} /> {d.label}</label>
-              <input class="input sm num" placeholder="Min" bind:value={defences[i].min} />
-              <input class="input sm num" placeholder="Max" bind:value={defences[i].max} />
+              <input class="input sm num" placeholder={m.common_min()} bind:value={defences[i].min} />
+              <input class="input sm num" placeholder={m.common_max()} bind:value={defences[i].max} />
             {/each}
           </div>
         {/if}
 
         <div class="grid mods">
-          {#each info.mods as m, i}
-            <label class="chk small span2" class:off={!m.searchable} title={m.searchable ? "" : "The trade site has no filter for this mod"}>
-              <input type="checkbox" bind:checked={mods[i].checked} disabled={!m.searchable} />
-              <span class="lines">{#each m.lines as l}<span class="line"><PobText text={l} /></span>{/each}</span>
+          {#each info.mods as mod, i}
+            <label class="chk small span2" class:off={!mod.searchable} title={mod.searchable ? "" : m.buy_mod_unsearchable()}>
+              <input type="checkbox" bind:checked={mods[i].checked} disabled={!mod.searchable} />
+              <span class="lines">{#each mod.lines as l}<span class="line"><PobText text={l} /></span>{/each}</span>
             </label>
-            {#if m.ranged && m.searchable}
-              <input class="input sm num" placeholder="Min" bind:value={mods[i].min} />
-              <input class="input sm num" placeholder="Max" bind:value={mods[i].max} />
+            {#if mod.ranged && mod.searchable}
+              <input class="input sm num" placeholder={m.common_min()} bind:value={mods[i].min} />
+              <input class="input sm num" placeholder={m.common_max()} bind:value={mods[i].max} />
             {:else}
               <span></span>
               <span></span>
             {/if}
           {:else}
-            <div class="dim small">This item has no mods to search for.</div>
+            <div class="dim small">{m.buy_no_mods()}</div>
           {/each}
         </div>
       {/if}
@@ -187,7 +188,7 @@
 
     <div class="foot">
       {#if error}<span class="err small">{error}</span>{:else if note}<span class="dim small">{note}</span>{/if}
-      <button class="btn sm primary" onclick={openSearch} disabled={!info || opening || !league}>Open search</button>
+      <button class="btn sm primary" onclick={openSearch} disabled={!info || opening || !league}>{m.buy_open()}</button>
     </div>
   </div>
 </div>

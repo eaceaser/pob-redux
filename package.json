@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "check": "bun run i18n && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "tauri": "tauri",
     "sync": "cargo run -p pob-sync -- --tree-assets && cargo run -p pob-sync -- --game poe1 --tree-assets",
     "sync:poe2": "cargo run -p pob-sync -- --tree-assets",
@@ -18,7 +18,8 @@
     "ctl": "cargo run -p pob-engine --bin pobctl --",
     "mcp": "bun scripts/mcp-call.ts",
     "check:tools": "bun scripts/check-tools.ts",
-    "release:tag": "bun scripts/release.mjs"
+    "release:tag": "bun scripts/release.mjs",
+    "i18n": "paraglide-js compile --project ./project.inlang"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.47",
@@ -35,6 +36,7 @@
     "ai": "^7.0.89"
   },
   "devDependencies": {
+    "@inlang/paraglide-js": "^2.25.4",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^26.4.0",

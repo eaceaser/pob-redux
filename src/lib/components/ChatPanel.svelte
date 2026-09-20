@@ -6,6 +6,7 @@
   import Markdown from "$lib/components/Markdown.svelte";
   import { build } from "$lib/state/build.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { m } from "$lib/paraglide/messages";
 
   let scroller = $state<HTMLDivElement | undefined>();
   let box = $state<HTMLTextAreaElement | undefined>();
@@ -37,11 +38,11 @@
     if (chat.mode === "try" && build.loaded && !chat.experiment && !chat.busy) void chat.openExperiment();
   });
 
-  const MODES: [Mode, string, string][] = [
-    ["ask", "Ask", "Reads only. Explains and recommends without changing anything."],
-    ["build", "Build", "Changes the build, asking before each one."],
-    ["try", "Try", "Checkpoints first, then changes freely. Keep or undo the lot at the end."],
-  ];
+  const MODES = $derived<[Mode, string, string][]>([
+    ["ask", m.chat_mode_ask(), m.chat_mode_ask_hint()],
+    ["build", m.chat_mode_build(), m.chat_mode_build_hint()],
+    ["try", m.chat_mode_try(), m.chat_mode_try_hint()],
+  ]);
 
   const moved = $derived(chat.experiment ? experimentDelta(chat.experiment) : []);
   const signed = (n: number, digits = 0) => `${n > 0 ? "+" : ""}${n.toFixed(digits)}`;
@@ -159,7 +160,7 @@
     class:dragging
     role="slider"
     aria-orientation="vertical"
-    aria-label="Resize assistant panel"
+    aria-label={m.chat_resize()}
     aria-valuenow={chat.width}
     aria-valuemin={MIN_WIDTH}
     aria-valuemax={MAX_WIDTH}
@@ -167,30 +168,30 @@
     onpointerdown={startResize}
     onkeydown={gripKey}
     ondblclick={() => chat.setWidth(400, true)}
-    title="Drag to resize · double-click to reset"
+    title={m.chat_resize_title()}
   ></div>
   <div class="head">
-    <span class="label">Assistant</span>
+    <span class="label">{m.chat_title()}</span>
     <div class="acts">
       <button
         class="icon fresh"
         onclick={() => chat.reset()}
         disabled={chat.busy}
-        title="New conversation"
-        aria-label="New conversation"
+        title={m.chat_new()}
+        aria-label={m.chat_new()}
       >
         <Icon name="plus-square" size={17} />
       </button>
       <button
         class="icon"
         class:on={chat.settingsOpen}
-        title="Providers and keys"
-        aria-label="Provider settings"
+        title={m.chat_providers_title()}
+        aria-label={m.chat_provider_settings()}
         onclick={() => (chat.settingsOpen = !chat.settingsOpen)}
       >
         <Icon name="gear" size={17} />
       </button>
-      <button class="icon close" onclick={() => chat.toggle()} title="Hide panel (Ctrl+K)" aria-label="Hide panel">
+      <button class="icon close" onclick={() => chat.toggle()} title={m.chat_hide_title()} aria-label={m.chat_hide()}>
         <Icon name="x-square" size={17} />
       </button>
     </div>
@@ -199,26 +200,26 @@
   {#if chat.experiment}
     <div class="trying" class:warn={chat.undoWarning}>
       <div class="trow">
-        <span class="tlabel">Trying</span>
+        <span class="tlabel">{m.chat_trying()}</span>
         {#if moved.length}
           <span class="tdelta">
-            {#each moved.slice(0, 3) as m}
-              <span class={m.pct > 0 ? "up" : "down"}>{signed(m.pct, 1)}% {m.label}</span>
+            {#each moved.slice(0, 3) as d}
+              <span class={d.pct > 0 ? "up" : "down"}>{signed(d.pct, 1)}% {d.label}</span>
             {/each}
           </span>
         {:else}
-          <span class="tdelta dim">nothing changed yet</span>
+          <span class="tdelta dim">{m.chat_nothing_changed()}</span>
         {/if}
         <div class="grow"></div>
-        <button class="btn sm" disabled={chat.busy} onclick={() => chat.keepExperiment()}>Keep</button>
-        <button class="btn sm ghost" disabled={chat.busy} onclick={() => chat.undoExperiment()}>Undo</button>
+        <button class="btn sm" disabled={chat.busy} onclick={() => chat.keepExperiment()}>{m.chat_keep()}</button>
+        <button class="btn sm ghost" disabled={chat.busy} onclick={() => chat.undoExperiment()}>{m.chat_undo()}</button>
       </div>
       {#if chat.undoWarning}
         <div class="trow sub">
           <span>{chat.undoWarning}</span>
           <div class="grow"></div>
-          <button class="btn sm" disabled={chat.busy} onclick={() => chat.undoExperiment(true)}>Undo anyway</button>
-          <button class="btn sm ghost" onclick={() => (chat.undoWarning = null)}>Cancel</button>
+          <button class="btn sm" disabled={chat.busy} onclick={() => chat.undoExperiment(true)}>{m.chat_undo_anyway()}</button>
+          <button class="btn sm ghost" onclick={() => (chat.undoWarning = null)}>{m.common_cancel()}</button>
         </div>
       {/if}
     </div>
@@ -230,13 +231,9 @@
 
   {#if !chat.anyReady && !chat.settingsOpen}
     <div class="setup">
-      <div class="label">No provider configured</div>
-      <p class="dim">
-        Add a key for Anthropic, OpenAI, OpenRouter, OpenCode Zen or Ollama Cloud — or run Ollama locally, which
-        needs no key. Keys are held in your operating system's credential manager. If Windows refuses one, it is
-        saved encrypted for your Windows account in this app's settings folder instead.
-      </p>
-      <button class="btn sm" onclick={() => (chat.settingsOpen = true)}>Open provider settings</button>
+      <div class="label">{m.chat_no_provider()}</div>
+      <p class="dim">{m.chat_no_provider_blurb()}</p>
+      <button class="btn sm" onclick={() => (chat.settingsOpen = true)}>{m.chat_open_provider_settings()}</button>
     </div>
   {:else}
     <div class="log" bind:this={scroller}>
@@ -246,7 +243,7 @@
             class="turn user"
             onclick={() => chat.rewindTo(i)}
             disabled={chat.busy}
-            title="Edit and send again. Replies after it are discarded."
+            title={m.chat_edit_resend()}
           >{turn.text}</button>
         {:else if turn.kind === "assistant"}
           <div class="botwrap">
@@ -256,7 +253,7 @@
               class:done={copied === i}
               onclick={() => copyText(i, turn.text)}
               title={copied === i ? "Copied" : "Copy this reply"}
-              aria-label="Copy this reply"
+              aria-label={m.chat_copy_reply()}
             >
               <Icon name={copied === i ? "check" : "copy"} size={13} />
             </button>
@@ -270,11 +267,11 @@
             </div>
             {#if turn.status === "awaiting"}
               <div class="approve">
-                <span>This changes the build.</span>
-                <button class="btn sm" onclick={() => chat.resolveApproval(turn.id, true)}>Run</button>
-                <button class="btn sm ghost" onclick={() => chat.resolveApproval(turn.id, true, true)}>Always</button>
-                <button class="btn sm ghost" onclick={() => chat.resolveApproval(turn.id, false)}>Skip</button>
-                <label class="always"><input type="checkbox" bind:checked={chat.allowWrites} /> allow all</label>
+                <span>{m.chat_changes_build()}</span>
+                <button class="btn sm" onclick={() => chat.resolveApproval(turn.id, true)}>{m.chat_run()}</button>
+                <button class="btn sm ghost" onclick={() => chat.resolveApproval(turn.id, true, true)}>{m.chat_always()}</button>
+                <button class="btn sm ghost" onclick={() => chat.resolveApproval(turn.id, false)}>{m.chat_skip()}</button>
+                <label class="always"><input type="checkbox" bind:checked={chat.allowWrites} /> {m.chat_allow_all()}</label>
               </div>
             {/if}
             {#if turn.error}<div class="terr">{turn.error}</div>{/if}
@@ -283,7 +280,7 @@
       {/each}
       {#if chat.busy}
         <div class="dim thinking" aria-live="polite">
-          working<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          {m.chat_working()}<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
         </div>
       {/if}
       {#if chat.notice}
@@ -291,9 +288,9 @@
           <div class="notice">{chat.notice}</div>
           <div class="failacts">
             {#if chat.canContinue}
-              <button class="btn sm ghost" onclick={() => chat.continueRun()} disabled={chat.busy}>Continue</button>
+              <button class="btn sm ghost" onclick={() => chat.continueRun()} disabled={chat.busy}>{m.chat_continue()}</button>
             {/if}
-            <button class="btn sm ghost" onclick={copyDetails} title="Copy this run's details, for a bug report">{detailsCopied ? "Copied" : "Copy details"}</button>
+            <button class="btn sm ghost" onclick={copyDetails} title={m.chat_copy_details_run_title()}>{detailsCopied ? m.common_copied() : m.chat_copy_details()}</button>
           </div>
         </div>
       {/if}
@@ -301,18 +298,18 @@
         <div class="failed">
           <div class="terr">{chat.error}</div>
           <div class="failacts">
-            <button class="btn sm ghost" onclick={() => chat.retryLast()} disabled={chat.busy}>Try again</button>
-            <button class="btn sm ghost" onclick={copyDetails} title="Copy the error with the run around it, for a bug report">{detailsCopied ? "Copied" : "Copy details"}</button>
-            <button class="btn sm ghost" onclick={() => chat.revealLog().catch((e) => (chat.error = String(e)))} title="Show the assistant log file. Every run is appended to it.">Open log</button>
+            <button class="btn sm ghost" onclick={() => chat.retryLast()} disabled={chat.busy}>{m.chat_try_again()}</button>
+            <button class="btn sm ghost" onclick={copyDetails} title={m.chat_copy_details_error_title()}>{detailsCopied ? m.common_copied() : m.chat_copy_details()}</button>
+            <button class="btn sm ghost" onclick={() => chat.revealLog().catch((e) => (chat.error = String(e)))} title={m.chat_open_log_title()}>{m.chat_open_log()}</button>
           </div>
         </div>
       {/if}
       {#if !chat.turns.length && !chat.busy}
         <div class="dim empty">
           <div class="egs">
-            <button class="eg" onclick={() => { chat.input = "Why is my EHP low?"; chat.send(); }}>Why is my EHP low?</button>
-            <button class="eg" onclick={() => { chat.input = "Summarise this build's defences."; chat.send(); }}>Summarise defences</button>
-            <button class="eg" onclick={() => { chat.input = "Are my resistances capped?"; chat.send(); }}>Are my resists capped?</button>
+            <button class="eg" onclick={() => { chat.input = m.chat_eg_ehp_prompt(); chat.send(); }}>{m.chat_eg_ehp()}</button>
+            <button class="eg" onclick={() => { chat.input = m.chat_eg_defences_prompt(); chat.send(); }}>{m.chat_eg_defences()}</button>
+            <button class="eg" onclick={() => { chat.input = m.chat_eg_resists_prompt(); chat.send(); }}>{m.chat_eg_resists()}</button>
           </div>
         </div>
       {/if}
@@ -335,14 +332,14 @@
         bind:this={box}
         class="ta"
         rows="2"
-        placeholder="Ask anything, / for tools…"
+        placeholder={m.chat_placeholder()}
         bind:value={chat.input}
         onkeydown={onKeydown}
         onfocus={() => chat.touch()}
         disabled={chat.busy}
       ></textarea>
       <div class="bar">
-        <div class="modes" role="group" aria-label="Assistant mode">
+        <div class="modes" role="group" aria-label={m.chat_mode_group()}>
           {#each MODES as [id, label, hint]}
             <button
               class="mode"
@@ -358,10 +355,10 @@
           class="pill"
           value={chat.provider}
           onchange={(e) => chat.setProvider((e.target as HTMLSelectElement).value)}
-          title="Provider"
+          title={m.chat_provider()}
         >
           {#each chat.providers as p}
-            <option value={p.id} disabled={!p.ready}>{p.label}{p.ready ? "" : " — no key"}</option>
+            <option value={p.id} disabled={!p.ready}>{p.label}{p.ready ? "" : m.chat_no_key()}</option>
           {/each}
         </select>
 
@@ -369,35 +366,35 @@
           class="pill"
           value={chat.model}
           onchange={(e) => chat.setModel((e.target as HTMLSelectElement).value)}
-          title="Model"
+          title={m.chat_model()}
           disabled={!chat.models.length}
         >
           {#if chat.models.length}
             <!-- Each model lands in exactly one group, so nothing appears twice. -->
-            {@const free = chat.models.filter((m) => m.free)}
-            {@const latest = chat.models.filter((m) => m.recommended && !m.free)}
-            {@const rest = chat.models.filter((m) => !m.recommended && !m.free)}
+            {@const free = chat.models.filter((x) => x.free)}
+            {@const latest = chat.models.filter((x) => x.recommended && !x.free)}
+            {@const rest = chat.models.filter((x) => !x.recommended && !x.free)}
             {#if [free, latest, rest].filter((g) => g.length).length > 1}
               {#if latest.length}
-                <optgroup label="Latest">
-                  {#each latest as m}<option value={m.id}>{m.label}</option>{/each}
+                <optgroup label={m.chat_models_latest()}>
+                  {#each latest as model}<option value={model.id}>{model.label}</option>{/each}
                 </optgroup>
               {/if}
               {#if free.length}
-                <optgroup label="Free ({free.length})">
-                  {#each free as m}<option value={m.id}>{m.label}</option>{/each}
+                <optgroup label={m.chat_models_free({ count: free.length })}>
+                  {#each free as model}<option value={model.id}>{model.label}</option>{/each}
                 </optgroup>
               {/if}
               {#if rest.length}
-                <optgroup label="All models ({rest.length})">
-                  {#each rest as m}<option value={m.id}>{m.label}</option>{/each}
+                <optgroup label={m.chat_models_all({ count: rest.length })}>
+                  {#each rest as model}<option value={model.id}>{model.label}</option>{/each}
                 </optgroup>
               {/if}
             {:else}
-              {#each chat.models as m}<option value={m.id}>{m.label}</option>{/each}
+              {#each chat.models as model}<option value={model.id}>{model.label}</option>{/each}
             {/if}
           {:else}
-            <option value={chat.model}>{chat.modelsError ? "unavailable" : chat.model}</option>
+            <option value={chat.model}>{chat.modelsError ? m.chat_model_unavailable() : chat.model}</option>
           {/if}
         </select>
 
@@ -406,7 +403,7 @@
             class="pill"
             value={chat.effort}
             onchange={(e) => chat.setEffort((e.target as HTMLSelectElement).value as Effort)}
-            title="Reasoning effort"
+            title={m.chat_effort()}
           >
             {#each effortsFor(chat.current?.kind ?? "anthropic", chat.provider) as e}<option value={e}>{e[0].toUpperCase() + e.slice(1)}</option>{/each}
           </select>
@@ -414,26 +411,26 @@
 
         <div class="grow"></div>
         {#if chat.needsWarm && chat.warmNote}
-          <span class="warm {chat.warm}" title={chat.warmDetail || "Ollama loads a model on first use; it is loaded and its prompt cached ahead of your first message."}>
+          <span class="warm {chat.warm}" title={chat.warmDetail || m.chat_warm_title()}>
             <span class="wdot"></span>{chat.warmNote}
           </span>
         {/if}
         {#if chat.busy}
-          <button class="send" onclick={() => chat.stop()} title="Stop" aria-label="Stop">
+          <button class="send" onclick={() => chat.stop()} title={m.chat_stop()} aria-label={m.chat_stop()}>
             <Icon name="stop" size={13} />
           </button>
         {:else}
-          <button class="send" onclick={() => chat.send()} disabled={!chat.input.trim() || chat.warm === "loading" || chat.warm === "priming"} title={chat.warm === "loading" || chat.warm === "priming" ? "Waiting for the model" : "Send"} aria-label="Send">
+          <button class="send" onclick={() => chat.send()} disabled={!chat.input.trim() || chat.warm === "loading" || chat.warm === "priming"} title={chat.warm === "loading" || chat.warm === "priming" ? m.chat_waiting_model() : m.chat_send()} aria-label={m.chat_send()}>
             <Icon name="paper-plane" size={13} />
           </button>
         {/if}
       </div>
       {#if chat.modelsError}<div class="terr small">{chat.modelsError}</div>{/if}
       {#if chat.usage.input || chat.usage.output}
-        <div class="usage" title="Tokens for this conversation. Cached input is billed at a lower rate.">
-          <span class="num">{tokens(chat.usage.input)}</span> in
-          <span class="num">{tokens(chat.usage.output)}</span> out
-          {#if chat.usage.cacheRead}<span class="num">{tokens(chat.usage.cacheRead)}</span> cached{/if}
+        <div class="usage" title={m.chat_usage_title()}>
+          <span class="num">{tokens(chat.usage.input)}</span> {m.chat_usage_in()}
+          <span class="num">{tokens(chat.usage.output)}</span> {m.chat_usage_out()}
+          {#if chat.usage.cacheRead}<span class="num">{tokens(chat.usage.cacheRead)}</span> {m.chat_usage_cached()}{/if}
         </div>
       {/if}
     </div>
@@ -500,7 +497,6 @@
   .icon:hover:not(:disabled),
   .icon.on {
     background: var(--bg-hover);
-    border-color: var(--line-1);
     color: var(--fg-0);
   }
   /* Both hovers reuse existing tokens; no new colours. Red reads as the
@@ -549,7 +545,9 @@
     text-align: left;
     cursor: pointer;
   }
-  .user:hover:not(:disabled),
+  .user:hover:not(:disabled) {
+    background: var(--bg-active);
+  }
   .user:focus-visible {
     border-color: var(--focus);
     outline: none;
@@ -605,7 +603,6 @@
   }
   .copy:hover {
     color: var(--fg-0);
-    border-color: var(--line-2);
   }
   .copy.done {
     color: var(--ok);
@@ -892,7 +889,6 @@
   }
   .pill:hover:not(:disabled) {
     background: var(--bg-hover);
-    border-color: var(--line-1);
     color: var(--fg-0);
   }
   .pill:disabled {

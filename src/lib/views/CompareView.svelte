@@ -16,6 +16,7 @@
   import { stripPobText } from "$lib/pobtext";
   import PobText from "$lib/components/PobText.svelte";
   import BuySimilarDialog from "$lib/components/BuySimilarDialog.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   type Pane = "summary" | "tree" | "items" | "skills" | "config";
 
@@ -104,7 +105,7 @@
       entries = r.entries;
       active = r.active;
       picker = false;
-      note = `Comparing against ${b.name}`;
+      note = m.compare_added({ name: b.name });
     }
   }
 
@@ -114,17 +115,17 @@
     const r = await guard(async () => {
       if (/^https?:\/\//i.test(text)) {
         const fetched = await fetchBuildCode(text);
-        return engine.compareAdd({ code: fetched.code, label: fetched.site || "Linked build" });
+        return engine.compareAdd({ code: fetched.code, label: fetched.site || m.compare_linked_build() });
       }
-      if (text.startsWith("<")) return engine.compareAdd({ xml: text, label: "Pasted build" });
-      return engine.compareAdd({ code: text, label: "Pasted build" });
+      if (text.startsWith("<")) return engine.compareAdd({ xml: text, label: m.compare_pasted_build() });
+      return engine.compareAdd({ code: text, label: m.compare_pasted_build() });
     });
     if (r) {
       entries = r.entries;
       active = r.active;
       picker = false;
       codeText = "";
-      note = "Comparison build loaded";
+      note = m.compare_loaded();
     }
   }
 
@@ -166,7 +167,7 @@
   async function takeItem(slot: string) {
     const r = await guard(() => engine.compareCopyItem(slot));
     if (r) {
-      note = `${r.itemName} equipped in ${r.slot}`;
+      note = m.compare_item_equipped({ item: r.itemName, slot: r.slot });
       await build.sync();
     }
   }
@@ -174,7 +175,7 @@
   async function takeTree() {
     const r = await guard(() => engine.compareCopyTree());
     if (r) {
-      note = `Added "${r.title}" as tree ${r.index}. Open the Tree tab to compare it against your own.`;
+      note = m.compare_tree_added({ title: r.title, index: r.index });
       await build.sync();
     }
   }
@@ -197,8 +198,8 @@
 
   function cfgText(v: string | number | boolean | null) {
     if (v === null || v === undefined) return "—";
-    if (v === true) return "on";
-    if (v === false) return "off";
+    if (v === true) return m.common_on_value();
+    if (v === false) return m.common_off_value();
     return String(v);
   }
 </script>
@@ -206,29 +207,29 @@
 <div class="page cmppage">
   <div class="bar">
     <div class="group">
-      <span class="label">Compare with</span>
+      <span class="label">{m.compare_with()}</span>
       {#if entries.length}
         <select class="select sm cmp" value={active} onchange={(e) => pick(Number((e.target as HTMLSelectElement).value))} disabled={busy}>
           {#each entries as e (e.index)}
             <option value={e.index}>{e.label}{e.className ? ` · ${e.ascendClassName ?? e.className} ${e.level}` : ""}</option>
           {/each}
         </select>
-        <button class="btn sm ghost" onclick={() => drop(active)} disabled={busy} title="Stop comparing against this build">Remove</button>
+        <button class="btn sm ghost" onclick={() => drop(active)} disabled={busy} title={m.compare_remove_title()}>{m.compare_remove()}</button>
       {:else}
-        <span class="dim small">nothing loaded</span>
+        <span class="dim small">{m.compare_nothing()}</span>
       {/if}
-      <button class="btn sm" class:on={picker} onclick={openPicker} disabled={busy}>Add build…</button>
+      <button class="btn sm" class:on={picker} onclick={openPicker} disabled={busy}>{m.compare_add()}</button>
     </div>
     {#if entries.length}
       <div class="group">
         <span class="seg">
-          {#each [["summary", "Summary"], ["tree", "Tree"], ["items", "Items"], ["skills", "Skills"], ["config", "Config"]] as [id, label] (id)}
+          {#each [["summary", m.compare_pane_summary()], ["tree", m.compare_pane_tree()], ["items", m.compare_pane_items()], ["skills", m.compare_pane_skills()], ["config", m.compare_pane_config()]] as [id, label] (id)}
             <button class:on={pane === id} onclick={() => (pane = id as Pane)}>{label}</button>
           {/each}
         </span>
-        <label class="chk small" title="Hide anything the two builds have in common">
+        <label class="chk small" title={m.compare_only_diff_title()}>
           <input type="checkbox" bind:checked={onlyDiff} />
-          Only differences
+          {m.compare_only_diff()}
         </label>
         {#if note}<span class="dim small">{note}</span>{/if}
       </div>
@@ -238,11 +239,11 @@
   {#if picker}
     <div class="panel picker">
       <div class="prow">
-        <input class="input sm grow" placeholder="Paste a build code or a pobb.in link…" bind:value={codeText} onkeydown={(e) => e.key === "Enter" && addFromText()} />
-        <button class="btn sm primary" onclick={addFromText} disabled={busy || !codeText.trim()}>Load</button>
+        <input class="input sm grow" placeholder={m.compare_paste_placeholder()} bind:value={codeText} onkeydown={(e) => e.key === "Enter" && addFromText()} />
+        <button class="btn sm primary" onclick={addFromText} disabled={busy || !codeText.trim()}>{m.common_load()}</button>
       </div>
       <div class="prow">
-        <input class="input sm grow" placeholder="Search your saved builds…" bind:value={pickQuery} />
+        <input class="input sm grow" placeholder={m.compare_search_saved()} bind:value={pickQuery} />
         <span class="dim num small">{shownBuilds.length}</span>
       </div>
       <div class="plist">
@@ -253,7 +254,7 @@
             <span class="dim small">{b.ascend_class_name ?? b.class_name ?? ""} {b.level ?? ""}</span>
           </button>
         {:else}
-          <div class="dim small pad">No saved builds match.</div>
+          <div class="dim small pad">{m.compare_no_saved()}</div>
         {/each}
       </div>
     </div>
@@ -261,16 +262,13 @@
 
   {#if !entries.length}
     <div class="empty">
-      <p>Load a second build to compare this one against.</p>
-      <p class="dim small">
-        It runs through the same calculator as the open build, so every number lines up. Nothing you do here changes
-        the comparison build.
-      </p>
+      <p>{m.compare_empty()}</p>
+      <p class="dim small">{m.compare_empty_hint()}</p>
     </div>
   {:else}
     {#if loadouts}
       <div class="loadout">
-        <span class="olabel">Their loadout</span>
+        <span class="olabel">{m.compare_their_loadout()}</span>
         <select class="select sm" value={loadouts.theirs.specs.find((s) => s.active)?.index ?? 1} onchange={(e) => setLoadout({ spec: Number((e.target as HTMLSelectElement).value) })} disabled={busy}>
           {#each loadouts.theirs.specs as s (s.index)}
             <option value={s.index}>{stripPobText(s.title)} · {s.nodes}</option>
@@ -298,10 +296,10 @@
       {#if pane === "summary"}
         {#if summary}
           <div class="thead">
-            <span class="tlabel">Stat</span>
+            <span class="tlabel">{m.compare_col_stat()}</span>
             <span class="tnum">{summary.mine.label}</span>
-            <span class="tnum">{current?.label ?? "Comparison"}</span>
-            <span class="tnum">Change</span>
+            <span class="tnum">{current?.label ?? m.compare_fallback_label()}</span>
+            <span class="tnum">{m.compare_col_change()}</span>
             <span class="tpct"></span>
           </div>
           <div class="scroll">
@@ -315,7 +313,7 @@
                 <span class="tpct num" class:up={r.better === true} class:down={r.better === false}>{pct(r)}</span>
               </div>
             {:else}
-              <div class="dim small pad">The two builds produce the same numbers.</div>
+              <div class="dim small pad">{m.compare_same_numbers()}</div>
             {/each}
           </div>
         {/if}
@@ -325,10 +323,10 @@
             <div class="tcard">
               <div class="label">{stripPobText(tree.mine.title)}</div>
               <div class="big num">{tree.mine.nodes}</div>
-              <div class="dim small">{tree.mine.className} · passives allocated</div>
+              <div class="dim small">{m.compare_passives_allocated({ className: tree.mine.className })}</div>
               {#if tree.keystonesLost.length}
                 <div class="klist">
-                  <span class="dim small">Only yours</span>
+                  <span class="dim small">{m.compare_only_yours()}</span>
                   {#each tree.keystonesLost as k}<span class="key down">{k}</span>{/each}
                 </div>
               {/if}
@@ -336,30 +334,27 @@
             <div class="tcard">
               <div class="label">{stripPobText(tree.theirs.title)}</div>
               <div class="big num">{tree.theirs.nodes}</div>
-              <div class="dim small">{tree.theirs.className} · passives allocated</div>
+              <div class="dim small">{m.compare_passives_allocated({ className: tree.theirs.className })}</div>
               {#if tree.keystonesGained.length}
                 <div class="klist">
-                  <span class="dim small">Only theirs</span>
+                  <span class="dim small">{m.compare_only_theirs()}</span>
                   {#each tree.keystonesGained as k}<span class="key up">{k}</span>{/each}
                 </div>
               {/if}
             </div>
           </div>
           <div class="tsum">
-            <span><b class="num up">{tree.gained.length}</b> passives they take that you do not</span>
-            <span><b class="num down">{tree.lost.length}</b> passives you take that they do not</span>
-            <button class="btn sm" onclick={takeTree} disabled={busy}>Copy their tree into my build</button>
+            <span><b class="num up">{tree.gained.length}</b> {m.compare_gained()}</span>
+            <span><b class="num down">{tree.lost.length}</b> {m.compare_lost()}</span>
+            <button class="btn sm" onclick={takeTree} disabled={busy}>{m.compare_copy_tree()}</button>
           </div>
-          <p class="dim small hint">
-            The copy lands as a new tree on the Tree tab, where the compare overlay draws what to take and what to
-            drop.
-          </p>
+          <p class="dim small hint">{m.compare_copy_tree_hint()}</p>
         {/if}
       {:else if pane === "items"}
         <div class="thead">
-          <span class="tlabel">Slot</span>
-          <span class="tside">Yours</span>
-          <span class="tside">Theirs</span>
+          <span class="tlabel">{m.compare_col_slot()}</span>
+          <span class="tside">{m.compare_col_yours()}</span>
+          <span class="tside">{m.compare_col_theirs()}</span>
           <span class="tact"></span>
         </div>
         <div class="scroll">
@@ -370,25 +365,25 @@
               <span class="tside" style:color={rarityColor[r.theirs?.rarity ?? ""] ?? "var(--fg-2)"}>{r.theirs?.name ?? "—"}</span>
               <span class="tact">
                 {#if r.theirs}
-                  <button class="btn sm ghost" onclick={() => (buySimilarSlot = r.slot)} disabled={busy} title="Search the trade site for items like theirs">Buy similar</button>
-                  <button class="btn sm ghost" onclick={() => takeItem(r.slot)} disabled={busy} title="Equip their item in this slot">Use theirs</button>
+                  <button class="btn sm ghost" onclick={() => (buySimilarSlot = r.slot)} disabled={busy} title={m.compare_buy_similar_title()}>{m.compare_buy_similar()}</button>
+                  <button class="btn sm ghost" onclick={() => takeItem(r.slot)} disabled={busy} title={m.compare_use_theirs_title()}>{m.compare_use_theirs()}</button>
                 {/if}
               </span>
             </div>
           {:else}
-            <div class="dim small pad">Both builds wear the same items.</div>
+            <div class="dim small pad">{m.compare_same_items()}</div>
           {/each}
         </div>
       {:else if pane === "skills"}
         <div class="thead">
-          <span class="tlabel">Group</span>
-          <span class="tside">Yours</span>
-          <span class="tside">Theirs</span>
+          <span class="tlabel">{m.compare_col_group()}</span>
+          <span class="tside">{m.compare_col_yours()}</span>
+          <span class="tside">{m.compare_col_theirs()}</span>
         </div>
         <div class="scroll">
           {#each skills as r (r.index)}
             <div class="srow tall">
-              <span class="tlabel"><PobText text={r.mine?.label ?? r.theirs?.label ?? `Group ${r.index}`} /></span>
+              <span class="tlabel"><PobText text={r.mine?.label ?? r.theirs?.label ?? m.compare_group_fallback({ index: r.index })} /></span>
               <span class="tside gems">
                 {#each r.mine?.gems ?? [] as g}
                   <span class="gem" class:off={!g.enabled}>{g.name} <span class="dim num">{g.level}/{g.quality}</span></span>
@@ -405,14 +400,14 @@
               </span>
             </div>
           {:else}
-            <div class="dim small pad">Both builds use the same skills.</div>
+            <div class="dim small pad">{m.compare_same_skills()}</div>
           {/each}
         </div>
       {:else}
         <div class="thead">
-          <span class="tlabel">Option</span>
-          <span class="tside">Yours</span>
-          <span class="tside">Theirs</span>
+          <span class="tlabel">{m.compare_col_option()}</span>
+          <span class="tside">{m.compare_col_yours()}</span>
+          <span class="tside">{m.compare_col_theirs()}</span>
         </div>
         <div class="scroll">
           {#each config as r (r.var)}
@@ -422,7 +417,7 @@
               <span class="tside num">{cfgText(r.theirs)}</span>
             </div>
           {:else}
-            <div class="dim small pad">Both builds are configured the same way.</div>
+            <div class="dim small pad">{m.compare_same_config()}</div>
           {/each}
         </div>
       {/if}

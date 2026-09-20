@@ -1,5 +1,6 @@
 <script lang="ts">
   import { confirm } from "$lib/state/confirm.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   const c = $derived(confirm.current);
   let cancelEl = $state<HTMLButtonElement | null>(null);
@@ -26,8 +27,8 @@
       <div class="mhead"><span class="label">{c.title}</span></div>
       <div class="body">{c.message}</div>
       <div class="foot">
-        <button class="btn sm ghost" bind:this={cancelEl} onclick={() => confirm.answer(false)}>{c.cancel ?? "Cancel"}</button>
-        <button class="btn sm primary" onclick={() => confirm.answer(true)}>{c.ok ?? "OK"}</button>
+        <button class="btn sm ghost" bind:this={cancelEl} onclick={() => confirm.answer(false)}>{c.cancel ?? m.common_cancel()}</button>
+        <button class="btn sm primary" onclick={() => confirm.answer(true)}>{c.ok ?? m.confirm_ok()}</button>
       </div>
     </div>
   </div>

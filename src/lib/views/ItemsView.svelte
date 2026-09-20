@@ -27,6 +27,7 @@
   import PobTooltip from "$lib/components/PobTooltip.svelte";
   import TraderWindow from "$lib/components/TraderWindow.svelte";
   import BuySimilarDialog from "$lib/components/BuySimilarDialog.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let slotsResp = $state<SlotsResponse | null>(null);
   let items = $state<ItemInfo[]>([]);
@@ -81,7 +82,7 @@
   }
   let enchantable = $state(false);
 
-  const SOCKET_NAMES: Record<string, string> = { R: "Red", G: "Green", B: "Blue", W: "White", A: "Abyssal" };
+  const SOCKET_NAMES = $derived<Record<string, string>>({ R: m.items_socket_red(), G: m.items_socket_green(), B: m.items_socket_blue(), W: m.items_socket_white(), A: m.items_socket_abyssal() });
 
   /** PoB allows two influences, so picking a third drops the oldest. */
   function toggleInfluence(key: string) {
@@ -238,8 +239,8 @@
   }
   const corruptModList = $derived(corruptInfo ? [...corruptInfo.mods, ...corruptInfo.specialMods] : []);
   function corruptOptions(i: number) {
-    const takenGroups = corruptSel.filter((id, j) => j !== i && id).map((id) => corruptModList.find((m) => m.id === id)?.group);
-    return corruptModList.filter((m) => !m.group || !takenGroups.includes(m.group));
+    const takenGroups = corruptSel.filter((id, j) => j !== i && id).map((id) => corruptModList.find((o) => o.id === id)?.group);
+    return corruptModList.filter((o) => !o.group || !takenGroups.includes(o.group));
   }
   async function applyCorrupt(mode: "implicits" | "ranges") {
     if (selectedItem == null) return;
@@ -436,50 +437,50 @@
 
 <div class="page">
   <div class="toolbar">
-    <select class="select setsel" value={activeSet?.id ?? 1} onchange={(e) => build.run(() => engine.selectItemSet(Number((e.target as HTMLSelectElement).value)))} disabled={build.busy > 0} title="Item set">
+    <select class="select setsel" value={activeSet?.id ?? 1} onchange={(e) => build.run(() => engine.selectItemSet(Number((e.target as HTMLSelectElement).value)))} disabled={build.busy > 0} title={m.items_set_title()}>
       {#each itemSets as s}
         <option value={s.id}>{stripPobText(s.title)}</option>
       {/each}
     </select>
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.createItemSet())}>New</button>
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.copyItemSet())}>Copy</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.createItemSet())}>{m.common_new()}</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.copyItemSet())}>{m.common_copy_button()}</button>
     <button
       class="btn sm ghost"
       onclick={() => {
-        const t = prompt("Item set name", activeSet?.title ?? "");
+        const t = prompt(m.items_set_name_prompt(), activeSet?.title ?? "");
         if (t && activeSet) build.run(() => engine.renameItemSet(activeSet.id, t));
-      }}>Rename</button
+      }}>{m.common_rename()}</button
     >
-    <button class="btn sm ghost" disabled={itemSets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteItemSet(activeSet.id))}>Delete</button>
+    <button class="btn sm ghost" disabled={itemSets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteItemSet(activeSet.id))}>{m.common_delete()}</button>
     <span class="vr"></span>
-    <span class="label">Weapon set</span>
+    <span class="label">{m.items_weapon_set()}</span>
     <div class="wset">
       <button class="btn sm" class:on={!slotsResp?.useSecondWeaponSet} onclick={() => build.run(() => engine.setWeaponSet(1))}>I</button>
       <button class="btn sm" class:on={slotsResp?.useSecondWeaponSet} onclick={() => build.run(() => engine.setWeaponSet(2))}>II</button>
     </div>
     <span class="vr"></span>
-    <button class="btn sm" onclick={openCraft}>Craft item…</button>
-    <button class="btn sm" onclick={() => openEdit(null)}>New item from text</button>
-    <button class="btn sm ghost" title="A weighted trade search for every slot at once" onclick={() => openTrader(null)}>Trader…</button>
+    <button class="btn sm" onclick={openCraft}>{m.items_craft()}</button>
+    <button class="btn sm" onclick={() => openEdit(null)}>{m.items_new_from_text()}</button>
+    <button class="btn sm ghost" title={m.items_trader_title()} onclick={() => openTrader(null)}>{m.items_trader()}</button>
     {#if statDiff !== null}
       <span class="vr"></span>
-      <label class="chk small" title="Show what removing or swapping an item changes, in its tooltip (Ctrl+D)">
+      <label class="chk small" title={m.items_stat_diff_title()}>
         <input type="checkbox" checked={statDiff} onchange={(e) => setStatDiff((e.target as HTMLInputElement).checked)} />
-        Stat differences
+        {m.items_stat_diff()}
       </label>
     {/if}
   </div>
 
   <div class="cols">
     <section class="col slots">
-      <div class="panel-head"><span class="label">Equipment</span></div>
+      <div class="panel-head"><span class="label">{m.items_equipment()}</span></div>
       <div class="scroll">
         {#each gearSlots as s (s.slot)}
           {@render slotRow(s)}
         {/each}
         {#if socketSlots.length}
-          <div class="subhead" title="Jewel sockets allocated on the tree; each takes a jewel">
-            <span>Jewel sockets</span>
+          <div class="subhead" title={m.items_jewel_sockets_title()}>
+            <span>{m.items_jewel_sockets()}</span>
             <span class="dim num">{socketSlots.length}</span>
           </div>
           {#each socketSlots as s (s.slot)}
@@ -490,7 +491,7 @@
     </section>
 
     <section class="col">
-      <div class="panel-head"><span class="label">Items in build</span><span class="dim num">{items.length}</span></div>
+      <div class="panel-head"><span class="label">{m.items_in_build()}</span><span class="dim num">{items.length}</span></div>
       <div class="scroll">
         {#each items as it (it.id)}
           <div
@@ -506,34 +507,34 @@
             <span class="itag dim">{it.equippedSlot ?? ""}</span>
             <span class="iops">
               {#if !it.equippedSlot && it.primarySlot}
-                <button class="mini w" title={`Equip in ${it.primarySlot}`} onclick={() => it.primarySlot && build.run(() => engine.equipItem(it.primarySlot!, it.id))}>Equip</button>
+                <button class="mini w" title={m.items_equip_in({ slot: it.primarySlot })} onclick={() => it.primarySlot && build.run(() => engine.equipItem(it.primarySlot!, it.id))}>{m.items_equip()}</button>
               {/if}
-              <button class="mini w" onclick={() => openEdit(it.id)}>Edit</button>
-              <button class="mini x" title="Delete item" onclick={() => build.run(() => engine.deleteItem(it.id))}>✕</button>
+              <button class="mini w" onclick={() => openEdit(it.id)}>{m.common_edit()}</button>
+              <button class="mini x" title={m.items_delete()} onclick={() => build.run(() => engine.deleteItem(it.id))}>✕</button>
             </span>
           </div>
         {/each}
         {#if items.length === 0}
-          <div class="dim small pad">No items yet.</div>
+          <div class="dim small pad">{m.items_none()}</div>
         {/if}
       </div>
       <div class="panel-head">
-        <span class="label">Shared items</span>
+        <span class="label">{m.items_shared()}</span>
         <span class="dim num">{shared.length}</span>
       </div>
-      <div class="scroll sharedlist" title="Shared items are available in every build. Items from PoB's own settings show here too; ones you add are kept by this app.">
+      <div class="scroll sharedlist" title={m.items_shared_title()}>
         {#each shared as it (it.index)}
           <div class="item">
             <span class="iname" style:color={rarityColor[it.rarity ?? ""] ?? "var(--fg-1)"}>{it.name}</span>
             <span class="itag dim">{it.baseName ?? ""}</span>
             <span class="iops">
-              <button class="mini w" title="Copy into this build and equip" onclick={() => build.run(() => engine.equipSharedItem(it.index))}>Equip</button>
-              <button class="mini x" title="Remove from shared items" onclick={() => removeShared(it)}>✕</button>
+              <button class="mini w" title={m.items_shared_equip_title()} onclick={() => build.run(() => engine.equipSharedItem(it.index))}>{m.items_equip()}</button>
+              <button class="mini x" title={m.items_shared_remove_title()} onclick={() => removeShared(it)}>✕</button>
             </span>
           </div>
         {/each}
         {#if shared.length === 0}
-          <div class="dim small pad">Nothing shared yet.</div>
+          <div class="dim small pad">{m.items_shared_none()}</div>
         {/if}
       </div>
     </section>
@@ -541,9 +542,9 @@
     <section class="col db">
       {#if selectedItem != null && detail}
         <div class="panel-head">
-          <span class="label">Item</span>
-          <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title="Search the trade site for items like this one">Buy similar</button>
-          <button class="btn sm ghost" onclick={() => (selectedItem = null)}>Back to database</button>
+          <span class="label">{m.items_item()}</span>
+          <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
+          <button class="btn sm ghost" onclick={() => (selectedItem = null)}>{m.items_back_to_database()}</button>
         </div>
         <div class="scroll detailpane">
           {#if detail.tt.header}
@@ -564,11 +565,11 @@
 
           {#if detail.affixes}
             <div class="craftsec">
-              <div class="label">Prefixes</div>
+              <div class="label">{m.items_prefixes()}</div>
               {#each detail.affixes.prefixes as slot (slot.index)}
                 <div class="affix">
                   <select class="select" value={slot.modId} onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "prefixes", slot.index, (e.target as HTMLSelectElement).value, slot.range))}>
-                    <option value="None">— empty prefix —</option>
+                    <option value="None">{m.items_empty_prefix()}</option>
                     {#each slot.options as o (o.modId)}
                       <option value={o.modId}>{(o.affix ? o.affix + "  ·  " : "") + o.label}</option>
                     {/each}
@@ -586,11 +587,11 @@
                   {/if}
                 </div>
               {/each}
-              <div class="label">Suffixes</div>
+              <div class="label">{m.items_suffixes()}</div>
               {#each detail.affixes.suffixes as slot (slot.index)}
                 <div class="affix">
                   <select class="select" value={slot.modId} onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "suffixes", slot.index, (e.target as HTMLSelectElement).value, slot.range))}>
-                    <option value="None">— empty suffix —</option>
+                    <option value="None">{m.items_empty_suffix()}</option>
                     {#each slot.options as o (o.modId)}
                       <option value={o.modId}>{(o.affix ? o.affix + "  ·  " : "") + o.label}</option>
                     {/each}
@@ -613,7 +614,7 @@
 
           {#if detail.runes}
             <div class="craftsec">
-              <div class="label">Runes</div>
+              <div class="label">{m.items_runes()}</div>
               {#each detail.runes.runes as rune, i}
                 <div class="affix">
                   <select class="select" value={rune} onchange={(e) => selectedItem != null && build.run(() => engine.setItemRune(selectedItem!, i + 1, (e.target as HTMLSelectElement).value))}>
@@ -642,7 +643,7 @@
           {/if}
 
           <div class="craftsec">
-            <div class="label">Modify</div>
+            <div class="label">{m.items_modify()}</div>
             <div class="modrow">
               {#if anointFlags?.anointable}
                 <button class="btn sm" onclick={openAnoint}>
@@ -650,38 +651,38 @@
                 </button>
               {/if}
               {#if enchantable}
-                <button class="btn sm" onclick={() => (enchantOpen = true)}>Enchant…</button>
+                <button class="btn sm" onclick={() => (enchantOpen = true)}>{m.items_enchant()}</button>
               {/if}
               {#if corruptInfo?.corruptible || corruptInfo?.corrupted}
-                <button class="btn sm" onclick={openCorrupt}>{corruptInfo.corrupted ? "Corrupted — modify…" : "Corrupt…"}</button>
+                <button class="btn sm" onclick={openCorrupt}>{corruptInfo.corrupted ? m.items_corrupted_modify() : m.items_corrupt()}</button>
               {/if}
-              <button class="btn sm ghost" onclick={() => selectedItem != null && addShared(selectedItem)}>Add to shared</button>
+              <button class="btn sm ghost" onclick={() => selectedItem != null && addShared(selectedItem)}>{m.items_add_to_shared()}</button>
               {#if selectedEquippedSlot}
-                <button class="btn sm ghost" title="Open the Trader with this slot highlighted" onclick={() => openTrader(selectedEquippedSlot!)}>Find upgrades on trade…</button>
+                <button class="btn sm ghost" title={m.items_find_upgrades_title()} onclick={() => openTrader(selectedEquippedSlot!)}>{m.items_find_upgrades()}</button>
               {/if}
             </div>
             {#if shape && (shape.canBeInfluenced || shape.socketLimit > 0 || shape.cluster)}
               <div class="shape">
                 {#if shape.canBeInfluenced}
                   <div class="srow">
-                    <span class="label">Influence</span>
+                    <span class="label">{m.items_influence()}</span>
                     <span class="chips">
                       {#each shape.influences as inf (inf.key)}
-                        <button class="chip" class:on={inf.on} title="PoB allows two" onclick={() => toggleInfluence(inf.key)}>{inf.name}</button>
+                        <button class="chip" class:on={inf.on} title={m.items_influence_title()} onclick={() => toggleInfluence(inf.key)}>{inf.name}</button>
                       {/each}
                     </span>
                   </div>
                 {/if}
                 {#if shape.socketLimit > 0}
                   <div class="srow">
-                    <span class="label">Sockets</span>
+                    <span class="label">{m.items_sockets()}</span>
                     <span class="socks">
                       {#each shape.sockets as sock, i (i)}
                         {#if i > 0}
                           <button
                             class="link"
                             class:on={shape.sockets[i - 1].group === sock.group}
-                            title={shape.sockets[i - 1].group === sock.group ? "Linked; click to break" : "Not linked; click to link"}
+                            title={shape.sockets[i - 1].group === sock.group ? m.items_linked_title() : m.items_not_linked_title()}
                             onclick={() => toggleLink(i)}>—</button
                           >
                         {/if}
@@ -691,22 +692,22 @@
                               <option value={c}>{SOCKET_NAMES[c] ?? c}</option>
                             {/each}
                           </select>
-                          <button class="mini x" title="Remove this socket" onclick={() => removeSocket(i)}>✕</button>
+                          <button class="mini x" title={m.items_remove_socket()} onclick={() => removeSocket(i)}>✕</button>
                         </span>
                       {/each}
                       {#if shape.sockets.length < shape.socketLimit}
-                        <button class="btn sm ghost" onclick={addSocket}>+ socket</button>
+                        <button class="btn sm ghost" onclick={addSocket}>{m.items_add_socket()}</button>
                       {/if}
                     </span>
                   </div>
                 {/if}
                 {#if crucible}
                   <div class="srow cruc">
-                    <span class="label">Crucible</span>
+                    <span class="label">{m.items_crucible()}</span>
                     <div class="crucnodes">
                       {#each crucible.nodes as options, i (i)}
-                        <select class="select xs crucsel" title={`Node ${i + 1}`} value={crucible.selected[i] ?? ""} onchange={(e) => setCrucible(i, (e.target as HTMLSelectElement).value)}>
-                          <option value="">Node {i + 1}: empty</option>
+                        <select class="select xs crucsel" title={m.items_crucible_node({ index: i + 1 })} value={crucible.selected[i] ?? ""} onchange={(e) => setCrucible(i, (e.target as HTMLSelectElement).value)}>
+                          <option value="">{m.items_crucible_node_empty({ index: i + 1 })}</option>
                           {#each options as o (o.id)}
                             <option value={o.id}>T{o.tier} · {o.label}</option>
                           {/each}
@@ -717,19 +718,19 @@
                 {/if}
                 {#if shape.cluster}
                   <div class="srow">
-                    <span class="label">Cluster jewel</span>
+                    <span class="label">{m.items_cluster()}</span>
                     <select
                       class="select xs"
                       value={shape.cluster.skill ?? ""}
                       onchange={(e) => selectedItem != null && build.run(() => engine.setItemShape(selectedItem!, { clusterSkill: (e.target as HTMLSelectElement).value }).then((r) => (shape = r)))}
                     >
-                      <option value="">— default —</option>
+                      <option value="">{m.items_cluster_default()}</option>
                       {#each shape.cluster.skills as sk (sk.id)}
                         <option value={sk.id}>{sk.name}</option>
                       {/each}
                     </select>
-                    <label class="fld-inline" title="How many passives the jewel adds">
-                      <span class="label">Passives</span>
+                    <label class="fld-inline" title={m.items_cluster_passives_title()}>
+                      <span class="label">{m.items_cluster_passives()}</span>
                       <input
                         class="input xs num"
                         type="number"
@@ -748,12 +749,12 @@
                 <select
                   class="select"
                   value={catInfo.catalyst}
-                  title="Catalyst"
+                  title={m.items_catalyst()}
                   onchange={(e) => selectedItem != null && build.run(() => engine.setItemProps(selectedItem!, { catalyst: Number((e.target as HTMLSelectElement).value) }))}
                 >
-                  <option value={0}>— no catalyst —</option>
+                  <option value={0}>{m.items_catalyst_none()}</option>
                   {#each catInfo.names as n, i}
-                    <option value={i + 1}>{n} Catalyst</option>
+                    <option value={i + 1}>{m.items_catalyst_named({ name: n })}</option>
                   {/each}
                 </select>
                 {#if catInfo.catalyst > 0}
@@ -763,7 +764,7 @@
                     min="0"
                     max="100"
                     value={catInfo.quality}
-                    title="Catalyst quality %"
+                    title={m.items_catalyst_quality_title()}
                     onchange={(e) => selectedItem != null && build.run(() => engine.setItemProps(selectedItem!, { catalystQuality: Number((e.target as HTMLInputElement).value) }))}
                   />
                 {/if}
@@ -774,15 +775,15 @@
       {:else}
       <div class="panel-head">
         <span class="tabs2">
-          <button class="t2" class:on={dbTab === "unique"} onclick={() => { dbTab = "unique"; dbType = ""; }}>Uniques</button>
-          <button class="t2" class:on={dbTab === "rare"} onclick={() => { dbTab = "rare"; dbType = ""; }}>Rare templates</button>
+          <button class="t2" class:on={dbTab === "unique"} onclick={() => { dbTab = "unique"; dbType = ""; }}>{m.items_db_uniques()}</button>
+          <button class="t2" class:on={dbTab === "rare"} onclick={() => { dbTab = "rare"; dbType = ""; }}>{m.items_db_rares()}</button>
         </span>
         <span class="dim num">{dbTotal}</span>
       </div>
       <div class="dbbar">
-        <input class="input" placeholder="Search…" bind:value={dbQuery} />
+        <input class="input" placeholder={m.common_search()} bind:value={dbQuery} />
         <select class="select typesel" bind:value={dbType}>
-          <option value="">All types</option>
+          <option value="">{m.common_all_types()}</option>
           {#each dbTypes as t}
             <option value={t.type}>{t.type} ({t.count})</option>
           {/each}
@@ -790,7 +791,7 @@
       </div>
       <div class="scroll">
         {#if dbLoading}
-          <div class="dim small pad">Parsing item database (one-time)…</div>
+          <div class="dim small pad">{m.items_db_parsing()}</div>
         {/if}
         {#each dbRows as row (dbTab + row.name)}
           <div
@@ -802,12 +803,12 @@
             <span class="iname" style:color={rarityColor[row.rarity ?? ""] ?? "var(--fg-1)"}>{row.name}</span>
             <span class="itag dim">{row.baseName ?? row.type}</span>
             <span class="iops">
-              <button class="mini w" title="Add to build and equip" onclick={() => build.run(() => engine.itemDbEquip(dbTab, row.name))}>Equip</button>
+              <button class="mini w" title={m.items_db_equip_title()} onclick={() => build.run(() => engine.itemDbEquip(dbTab, row.name))}>{m.items_equip()}</button>
             </span>
           </div>
         {/each}
         {#if !dbLoading && dbRows.length === 0}
-          <div class="dim small pad">No matches.</div>
+          <div class="dim small pad">{m.items_db_none()}</div>
         {/if}
       </div>
       {/if}
@@ -821,21 +822,21 @@
   {#if craftOpen}
     <div class="modal">
       <div class="panel dialog craftdlg">
-        <div class="label">Craft item</div>
+        <div class="label">{m.items_craft_title()}</div>
         <div class="crow">
-          <span class="clabel">Rarity</span>
+          <span class="clabel">{m.items_rarity()}</span>
           <select class="select" bind:value={craftRarity}>
-            <option value="NORMAL">Normal</option>
-            <option value="MAGIC">Magic</option>
-            <option value="RARE">Rare</option>
-            <option value="UNIQUE">Unique</option>
+            <option value="NORMAL">{m.items_rarity_normal()}</option>
+            <option value="MAGIC">{m.items_rarity_magic()}</option>
+            <option value="RARE">{m.items_rarity_rare()}</option>
+            <option value="UNIQUE">{m.items_rarity_unique()}</option>
           </select>
         </div>
         {#if craftRarity === "RARE" || craftRarity === "UNIQUE"}
-          <div class="crow"><span class="clabel">Name</span><input class="input" bind:value={craftTitle} /></div>
+          <div class="crow"><span class="clabel">{m.items_name()}</span><input class="input" bind:value={craftTitle} /></div>
         {/if}
         <div class="crow">
-          <span class="clabel">Type</span>
+          <span class="clabel">{m.items_type()}</span>
           <select class="select" bind:value={craftType} onchange={() => (craftBase = craftData?.bases[craftType]?.[0]?.name ?? "")}>
             {#each craftData?.types ?? [] as t}
               <option value={t}>{t}</option>
@@ -843,7 +844,7 @@
           </select>
         </div>
         <div class="crow">
-          <span class="clabel">Base</span>
+          <span class="clabel">{m.items_base()}</span>
           <select class="select" bind:value={craftBase}>
             {#each craftData?.bases[craftType] ?? [] as b (b.name)}
               <option value={b.name}>{b.name}{b.subType ? ` (${b.subType})` : ""}</option>
@@ -852,11 +853,11 @@
         </div>
         <div class="crow">
           <span class="clabel"></span>
-          <label class="chk small"><input type="checkbox" bind:checked={craftEquip} /> Equip after creating</label>
+          <label class="chk small"><input type="checkbox" bind:checked={craftEquip} /> {m.items_equip_after()}</label>
         </div>
         <div class="actions">
-          <button class="btn primary" onclick={doCraft} disabled={!craftBase || build.busy > 0}>Create</button>
-          <button class="btn ghost" onclick={() => (craftOpen = false)}>Cancel</button>
+          <button class="btn primary" onclick={doCraft} disabled={!craftBase || build.busy > 0}>{m.common_create()}</button>
+          <button class="btn ghost" onclick={() => (craftOpen = false)}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>
@@ -865,17 +866,17 @@
   {#if editOpen}
     <div class="modal">
       <div class="panel dialog">
-        <div class="label">{editItemId != null ? "Edit item" : "New item"}</div>
-        <textarea class="textarea" rows="18" bind:value={editText} placeholder={"Rarity: Rare\nItem name\nBase Type\n...mod lines..."}></textarea>
+        <div class="label">{editItemId != null ? m.items_edit_title() : m.items_new_title()}</div>
+        <textarea class="textarea" rows="18" bind:value={editText} placeholder={m.items_edit_placeholder()}></textarea>
         {#if editError}<div class="err small">{editError}</div>{/if}
         <div class="actions">
           {#if editItemId != null}
-            <button class="btn" onclick={() => saveEdit(true)}>Save as copy</button>
+            <button class="btn" onclick={() => saveEdit(true)}>{m.items_save_as_copy()}</button>
           {/if}
           <button class="btn primary" onclick={() => saveEdit(editItemId == null)} disabled={!editText.trim()}>
-            {editItemId != null ? "Save" : "Create"}
+            {editItemId != null ? m.common_save() : m.common_create()}
           </button>
-          <button class="btn ghost" onclick={() => (editOpen = false)}>Cancel</button>
+          <button class="btn ghost" onclick={() => (editOpen = false)}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>
@@ -884,13 +885,13 @@
   {#if anointOpen && anointInfo}
     <div class="modal">
       <div class="panel dialog anointdlg">
-        <div class="label">Anoint item</div>
+        <div class="label">{m.items_anoint_title()}</div>
         <div class="crow">
-          <input class="input grow2" placeholder="Search notables…" bind:value={anointQuery} />
+          <input class="input grow2" placeholder={m.items_anoint_search()} bind:value={anointQuery} />
           {#if anointInfo.slots > 1}
-            <select class="select" bind:value={anointSlot} title="Anoint slot">
+            <select class="select" bind:value={anointSlot} title={m.items_anoint_slot()}>
               {#each Array(anointInfo.slots) as _, i}
-                <option value={i + 1}>Slot {i + 1}</option>
+                <option value={i + 1}>{m.items_anoint_slot_n({ index: i + 1 })}</option>
               {/each}
             </select>
           {/if}
@@ -903,14 +904,14 @@
             </button>
           {/each}
           {#if !anointList.length}
-            <div class="dim small pad">No matching notables.</div>
+            <div class="dim small pad">{m.items_anoint_none()}</div>
           {/if}
         </div>
         <div class="actions">
           {#if anointInfo.current.length}
-            <button class="btn" onclick={() => applyAnoint(null)}>Remove {anointInfo.current[anointSlot - 1] ?? "anoint"}</button>
+            <button class="btn" onclick={() => applyAnoint(null)}>{m.items_anoint_remove({ name: anointInfo.current[anointSlot - 1] ?? m.items_anoint_fallback() })}</button>
           {/if}
-          <button class="btn ghost" onclick={() => (anointOpen = false)}>Cancel</button>
+          <button class="btn ghost" onclick={() => (anointOpen = false)}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>
@@ -919,20 +920,20 @@
   {#if corruptOpen && corruptInfo}
     <div class="modal">
       <div class="panel dialog">
-        <div class="label">Corrupt item</div>
+        <div class="label">{m.items_corrupt_title()}</div>
         {#each corruptSel as sel, i}
           <div class="crow">
-            <span class="clabel">Implicit {i + 1}</span>
+            <span class="clabel">{m.items_implicit_n({ index: i + 1 })}</span>
             <select class="select grow2" value={sel} onchange={(e) => (corruptSel[i] = (e.target as HTMLSelectElement).value)}>
-              <option value="">— none —</option>
-              {#each corruptOptions(i) as m (m.id)}
-                <option value={m.id}>{m.label}</option>
+              <option value="">{m.items_implicit_none()}</option>
+              {#each corruptOptions(i) as opt (opt.id)}
+                <option value={opt.id}>{opt.label}</option>
               {/each}
             </select>
           </div>
         {/each}
         {#if corruptInfo.ranges.length}
-          <div class="label">Roll ranges (0.78–1.22)</div>
+          <div class="label">{m.items_roll_ranges()}</div>
           {#each corruptInfo.ranges as r (r.index)}
             <div class="crow">
               <input
@@ -950,11 +951,11 @@
           {/each}
         {/if}
         <div class="actions">
-          <button class="btn primary" onclick={() => applyCorrupt("implicits")} disabled={build.busy > 0}>Corrupt with implicits</button>
+          <button class="btn primary" onclick={() => applyCorrupt("implicits")} disabled={build.busy > 0}>{m.items_corrupt_implicits()}</button>
           {#if corruptInfo.ranges.length}
-            <button class="btn" onclick={() => applyCorrupt("ranges")} disabled={build.busy > 0}>Corrupt rerolling ranges</button>
+            <button class="btn" onclick={() => applyCorrupt("ranges")} disabled={build.busy > 0}>{m.items_corrupt_ranges()}</button>
           {/if}
-          <button class="btn ghost" onclick={() => (corruptOpen = false)}>Cancel</button>
+          <button class="btn ghost" onclick={() => (corruptOpen = false)}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>
@@ -1181,7 +1182,6 @@
   }
   .mini:hover {
     color: var(--fg-0);
-    border-color: var(--line-2);
   }
   .mini.x:hover {
     color: var(--bad);

@@ -3,6 +3,7 @@
   import { engine } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let text = $state("");
   let loadedFor = -1;
@@ -71,18 +72,18 @@
 <div class="page">
   <div class="toolbar">
     {#each COLOURS as [name, code] (name)}
-      <button class="swatch" disabled={!editing} title={`Insert ${name} (${code})`} onclick={() => insert(code)}>
+      <button class="swatch" disabled={!editing} title={m.notes_insert({ name, code })} onclick={() => insert(code)}>
         <PobText text={code + name} />
       </button>
     {/each}
     <span class="vr"></span>
-    <button class="btn sm ghost" class:on={editing} aria-pressed={editing} title="Edit the notes as text, with the colour codes shown" onclick={toggleEdit}>Edit</button>
+    <button class="btn sm ghost" class:on={editing} aria-pressed={editing} title={m.notes_edit_title()} onclick={toggleEdit}>{m.notes_edit()}</button>
   </div>
   {#if editing}
-    <textarea class="notes selectable" bind:this={area} bind:value={text} oninput={onInput} placeholder="Notes are saved with the build."></textarea>
+    <textarea class="notes selectable" bind:this={area} bind:value={text} oninput={onInput} placeholder={m.notes_placeholder()}></textarea>
   {:else}
     <div class="notes preview selectable">
-      {#if text.trim()}<PobText text={text} />{:else}<span class="dim">No notes. Choose Edit to add some.</span>{/if}
+      {#if text.trim()}<PobText text={text} />{:else}<span class="dim">{m.notes_empty()}</span>{/if}
     </div>
   {/if}
 </div>
@@ -114,7 +115,6 @@
     cursor: pointer;
   }
   .swatch:hover:not(:disabled) {
-    border-color: var(--line-2);
     background: var(--bg-hover);
   }
   .swatch:disabled {

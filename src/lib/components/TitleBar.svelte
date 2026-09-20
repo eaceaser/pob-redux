@@ -1,17 +1,15 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import { build, type ViewId } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { appOptions } from "$lib/state/options.svelte";
-  import { game, GAME_SHORT, GAME_LABEL } from "$lib/state/game.svelte";
+  import { game, GAMES, GAME_SHORT, GAME_LABEL, type Game } from "$lib/state/game.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import { m } from "$lib/paraglide/messages";
 
-  const otherGame = $derived(game.isPoe2 ? "poe1" : "poe2");
   import logo from "$lib/assets/logo.png";
 
-  const DISCORD_URL = "https://discord.pobredux.com/";
   const win = getCurrentWindow();
   let maximized = $state(false);
   let tabsEl = $state<HTMLDivElement | null>(null);
@@ -21,24 +19,31 @@
     build.view = id;
   }
 
+  // Declining the unsaved-changes prompt leaves the game as it was, which the
+  // select cannot know, so put it back.
+  async function onGame(e: Event) {
+    const el = e.currentTarget as HTMLSelectElement;
+    if (!(await game.choose(el.value as Game))) el.value = game.current;
+  }
+
   $effect(() => {
     void build.view;
     void appOptions.open;
     tabsEl?.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
 
-  const tabs: { id: ViewId; label: string; key: string }[] = [
-    { id: "import", label: "Builds", key: "1" },
-    { id: "tree", label: "Tree", key: "2" },
-    { id: "skills", label: "Skills", key: "3" },
-    { id: "items", label: "Items", key: "4" },
-    { id: "calcs", label: "Calcs", key: "5" },
-    { id: "config", label: "Config", key: "6" },
-    { id: "notes", label: "Notes", key: "7" },
-    { id: "party", label: "Party", key: "8" },
-    { id: "optimise", label: "Optimise", key: "9" },
-    { id: "compare", label: "Compare", key: "0" },
-  ];
+  const tabs = $derived<{ id: ViewId; label: string; key: string }[]>([
+    { id: "import", label: m.view_builds(), key: "1" },
+    { id: "tree", label: m.view_tree(), key: "2" },
+    { id: "skills", label: m.view_skills(), key: "3" },
+    { id: "items", label: m.view_items(), key: "4" },
+    { id: "calcs", label: m.view_calcs(), key: "5" },
+    { id: "config", label: m.view_config(), key: "6" },
+    { id: "notes", label: m.view_notes(), key: "7" },
+    { id: "party", label: m.view_party(), key: "8" },
+    { id: "optimise", label: m.view_optimise(), key: "9" },
+    { id: "compare", label: m.view_compare(), key: "0" },
+  ]);
 
   // the build name lives in the sidebar; the OS title carries it for the taskbar
   $effect(() => {
@@ -47,7 +52,7 @@
   });
 
   onMount(() => {
-    win.isMaximized().then((m) => (maximized = m));
+    win.isMaximized().then((v) => (maximized = v));
     const un = win.onResized(async () => (maximized = await win.isMaximized()));
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
@@ -117,8 +122,8 @@
     <button
       class="sb"
       class:on={!ui.sidebarCollapsed}
-      aria-label={ui.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-      title={`${ui.sidebarCollapsed ? "Show" : "Hide"} sidebar (Ctrl+B)`}
+      aria-label={ui.sidebarCollapsed ? m.titlebar_sidebar_show() : m.titlebar_sidebar_hide()}
+      title={ui.sidebarCollapsed ? m.titlebar_sidebar_show_title() : m.titlebar_sidebar_hide_title()}
       onclick={() => ui.toggleSidebar()}
     >
       <svg width="14" height="12" viewBox="0 0 14 12" fill="none" stroke="currentColor" stroke-width="1">
@@ -129,19 +134,18 @@
   </div>
 
   <div class="game">
-    <button
-      class="gswitch"
-      role="switch"
-      aria-checked={game.isPoe2}
-      aria-label="Game"
-      disabled={game.switching || build.busy > 0 || !game.has(otherGame)}
-      title={game.has(otherGame) ? `Switch to ${GAME_LABEL[otherGame]}` : `${GAME_LABEL[otherGame]} is not installed`}
-      onclick={() => game.choose(otherGame)}
+    <select
+      class="select gsel"
+      aria-label={m.titlebar_game()}
+      value={game.current}
+      disabled={game.switching || build.busy > 0}
+      title={GAME_LABEL[game.current]}
+      onchange={onGame}
     >
-      <span class="glabel" class:on={game.isPoe1}>{GAME_SHORT.poe1}</span>
-      <span class="track" class:right={game.isPoe2}><span class="thumb"></span></span>
-      <span class="glabel" class:on={game.isPoe2}>{GAME_SHORT.poe2}</span>
-    </button>
+      {#each GAMES as g (g)}
+        <option value={g}>{GAME_SHORT[g]}</option>
+      {/each}
+    </select>
   </div>
 
   <div class="tabs" role="tablist" bind:this={tabsEl}>
@@ -163,23 +167,20 @@
   <div class="spacer" data-tauri-drag-region></div>
 
   <div class="controls">
-    <button class="wc link" aria-label="Discord" title="PoB Redux Discord" onclick={() => openUrl(DISCORD_URL).catch(() => {})}>
-      <Icon name="discord-logo" size={16} />
-    </button>
     <button
       class="wc opts"
       class:on={appOptions.open}
-      aria-label="Settings"
+      aria-label={m.titlebar_settings()}
       aria-pressed={appOptions.open}
-      title="Settings (Ctrl+,)"
+      title={m.titlebar_settings_title()}
       onclick={() => (appOptions.open = !appOptions.open)}
     >
       <Icon name="gear" size={15} />
     </button>
-    <button class="wc" aria-label="Minimize" onclick={() => win.minimize()}>
+    <button class="wc" aria-label={m.titlebar_minimize()} onclick={() => win.minimize()}>
       <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5.5h10" stroke="currentColor" stroke-width="1" /></svg>
     </button>
-    <button class="wc" aria-label="Maximize" onclick={() => win.toggleMaximize()}>
+    <button class="wc" aria-label={m.titlebar_maximize()} onclick={() => win.toggleMaximize()}>
       {#if maximized}
         <svg width="10" height="10" viewBox="0 0 10 10"
           ><path d="M2.5 0.5h7v7M0.5 2.5h7v7h-7z" fill="none" stroke="currentColor" stroke-width="1" /></svg
@@ -188,7 +189,7 @@
         <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1" /></svg>
       {/if}
     </button>
-    <button class="wc close" aria-label="Close" onclick={() => win.close()}>
+    <button class="wc close" aria-label={m.titlebar_close()} onclick={() => win.close()}>
       <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" stroke="currentColor" stroke-width="1.1" /></svg>
     </button>
   </div>
@@ -261,53 +262,29 @@
     border-right: 1px solid var(--line-0);
     -webkit-app-region: no-drag;
   }
-  .gswitch {
-    appearance: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    border: 0;
-    background: transparent;
-    padding: 3px 2px;
-    border-radius: var(--r-1);
-    cursor: pointer;
+  .gsel {
+    height: 22px;
+    /* Fixed, so a longer option cannot widen the closed control. */
+    width: 68px;
+    padding: 0 20px 0 7px;
+    background-color: transparent;
+    background-position: right 6px center;
+    border-color: transparent;
+    color: var(--fg-0);
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
     letter-spacing: 0.06em;
   }
-  .gswitch:hover:not(:disabled) {
-    background: var(--bg-hover);
+  .gsel:hover:not(:disabled) {
+    background-color: var(--bg-hover);
   }
-  .gswitch:disabled {
+  .gsel:disabled {
     cursor: default;
     opacity: 0.6;
   }
-  .glabel {
-    color: var(--fg-2);
-  }
-  .glabel.on {
-    color: var(--ok);
-  }
-  .track {
-    position: relative;
-    width: 26px;
-    height: 14px;
-    border: 1px solid var(--line-1);
-    border-radius: 999px;
-    background: var(--bg-0);
-  }
-  .thumb {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--ok);
-    transition: transform 120ms ease;
-  }
-  .track.right .thumb {
-    transform: translateX(12px);
+  .gsel option {
+    background: var(--bg-1);
+    color: var(--fg-0);
   }
   .tabs {
     display: flex;
@@ -387,10 +364,6 @@
   .wc:hover {
     background: var(--bg-hover);
     color: var(--fg-0);
-  }
-  .wc.link {
-    width: 40px;
-    cursor: pointer;
   }
   .wc.opts.on {
     color: var(--fg-0);

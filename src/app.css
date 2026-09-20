@@ -6,112 +6,124 @@
 
 /* Design tokens: monochrome, hairline. Accents are semantic only.
    Dark is the base; `.scope-dark` pins an element (the tree canvas, which
-   draws PoB's dark art) to it in either theme. */
+   draws PoB's dark art) to it in either theme.
+
+   Every colour is authored in oklch(L C H): L is perceived lightness, so the
+   ramps step evenly and a hue can be moved without changing how heavy it
+   looks. Each theme owns a hue family rather than inverting another's —
+   dark is cool violet-grey (286), light is warm paper and warm ink (78-88),
+   wraeclast is brown and parchment (62-74). Ground and line steps are a
+   lightness ladder at one hue; ink clears 4.5:1 on dark grounds and 7:1 on
+   paper, with ramp-4 left below it because it marks disabled text. The warm
+   accents (unique, currency, spirit, rare, lightning) are spread across hue
+   so they stay apart on paper, where contrast pins them to one lightness. */
 :root,
 .scope-dark {
   color-scheme: dark;
 
-  --bg-0: #0b0b0c;
-  --bg-1: #101012;
-  --bg-2: #151518;
-  --bg-3: #1b1b1f;
-  --bg-hover: #202025;
-  --bg-active: #26262c;
+  --bg-0: oklch(15.0% 0.002 286);
+  --bg-1: oklch(17.4% 0.004 286);
+  --bg-2: oklch(19.7% 0.006 286);
+  --bg-3: oklch(22.4% 0.008 286);
+  --bg-hover: oklch(24.6% 0.009 286);
+  --bg-active: oklch(27.1% 0.011 286);
 
-  --line-0: #1c1c21;
-  --line-1: #27272d;
-  --line-2: #35353d;
+  --line-0: oklch(22.9% 0.010 286);
+  --line-1: oklch(27.5% 0.011 286);
+  --line-2: oklch(33.2% 0.014 286);
 
-  --fg-0: #f2f2f4;
+  --fg-0: oklch(96.2% 0.003 286);
   /* The contrast control lifts fg-1..4 from the ramp toward fg-0, so the ramp
      holds the unlifted end and fg-1..4 are whatever the control resolved to. */
-  --ramp-1: #b9b9c1;
-  --ramp-2: #8a8a94;
-  --ramp-3: #76767f;
-  --ramp-4: #484850;
+  --ramp-1: oklch(78.8% 0.011 286);
+  --ramp-2: oklch(63.7% 0.015 286);
+  --ramp-3: oklch(58.5% 0.014 286);
+  --ramp-4: oklch(46.0% 0.013 286);
   --fg-1: var(--ramp-1);
   --fg-2: var(--ramp-2);
   --fg-3: var(--ramp-3);
   --fg-4: var(--ramp-4);
 
-  --focus: #7f9dff;
-  --ok: #67d38a;
-  --warn: #e7b04e;
-  --bad: #f06a6a;
+  --focus: oklch(71.6% 0.147 270);
+  --ok: oklch(78.4% 0.145 152);
+  --warn: oklch(79.0% 0.130 79);
+  --bad: oklch(68.8% 0.166 22);
 
   /* Path of Exile semantics, tuned for a dark neutral ground */
-  --c-life: #f25c5c;
-  --c-mana: #6f9cff;
-  --c-es: #5fd0e4;
-  --c-fire: #ff7c47;
-  --c-cold: #5fbfff;
-  --c-lightning: #ffd94f;
-  --c-chaos: #c67cff;
-  --c-physical: #d9c8a8;
-  --c-unique: #cf8a2e;
-  --c-rare: #e8d25f;
-  --c-magic: #7f8dff;
-  --c-normal: #d7d7dc;
-  --c-gem: #47d7b4;
-  --c-spirit: #f0cf74;
-  --c-currency: #cba64c;
+  --c-life: oklch(67.1% 0.185 24);
+  --c-mana: oklch(70.5% 0.154 264);
+  --c-es: oklch(80.0% 0.106 211);
+  --c-fire: oklch(73.0% 0.173 42);
+  --c-cold: oklch(77.2% 0.129 240);
+  --c-lightning: oklch(89.4% 0.156 106);
+  --c-chaos: oklch(71.7% 0.194 308);
+  --c-physical: oklch(83.9% 0.047 83);
+  --c-unique: oklch(68.8% 0.133 58);
+  --c-rare: oklch(82.0% 0.137 95);
+  --c-magic: oklch(68.5% 0.167 276);
+  --c-normal: oklch(88.1% 0.007 286);
+  --c-gem: oklch(79.4% 0.132 173);
+  --c-spirit: oklch(86.4% 0.117 84);
+  --c-currency: oklch(74.1% 0.117 72);
 
   --accent: var(--fg-0);
   --accent-fg: var(--bg-0);
   --primary-hover: #ffffff;
-  --fade-off: 0.45;
+  --fade-off: 0.55;
   --pob-mix: 100%;
   --backdrop: rgb(0 0 0 / 0.55);
   --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.55);
   --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
-/* Light: warm paper ground, cool ink. Chrome sits a step darker than the
-   work area, and the game colours are deepened to hold contrast on white. */
+/* Light: warm paper, warm ink. Chrome sits a step darker than the work area.
+   Paper carries no neon, so the game colours drop to roughly half the
+   lightness they have on dark and give up most of their chroma. */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg-0: #fbfaf7;
-  --bg-1: #f3f1ec;
-  --bg-2: #ebe8e1;
-  --bg-3: #e2dfd6;
-  --bg-hover: #e4e1d9;
-  --bg-active: #d9d5cb;
+  --bg-0: oklch(98.5% 0.004 88);
+  --bg-1: oklch(95.8% 0.007 88);
+  --bg-2: oklch(93.1% 0.010 88);
+  --bg-3: oklch(90.4% 0.013 88);
+  --bg-hover: oklch(91.0% 0.011 88);
+  --bg-active: oklch(87.3% 0.014 88);
 
-  --line-0: #e4e0d8;
-  --line-1: #d6d1c7;
-  --line-2: #c2bcb0;
+  --line-0: oklch(90.8% 0.012 85);
+  --line-1: oklch(86.2% 0.015 85);
+  --line-2: oklch(79.7% 0.018 85);
 
-  --fg-0: #1b1b1f;
-  --ramp-1: #3f3f47;
-  --ramp-2: #5f5f69;
-  --ramp-3: #686872;
-  --ramp-4: #8a8a96;
+  --fg-0: oklch(22.0% 0.010 78);
+  --ramp-1: oklch(37.1% 0.013 78);
+  --ramp-2: oklch(42.3% 0.013 78);
+  --ramp-3: oklch(45.8% 0.013 78);
+  --ramp-4: oklch(57.4% 0.018 78);
 
-  --focus: #3b5bdb;
-  --ok: #1a783e;
-  --warn: #945c0b;
-  --bad: #c72a2a;
+  --focus: oklch(47.0% 0.221 266);
+  --ok: oklch(44.5% 0.108 150);
+  --warn: oklch(45.8% 0.098 65);
+  --bad: oklch(47.4% 0.172 27);
 
-  --c-life: #c72a2a;
-  --c-mana: #2f5fd0;
-  --c-es: #0a7287;
-  --c-fire: #bb3e0d;
-  --c-cold: #186ab6;
-  --c-lightning: #846400;
-  --c-chaos: #8b3fc9;
-  --c-physical: #766748;
-  --c-unique: #9c5719;
-  --c-rare: #7e6600;
-  --c-magic: #495cd5;
-  --c-normal: #3f3f47;
-  --c-gem: #0c7663;
-  --c-spirit: #84640f;
-  --c-currency: #846412;
+  --c-life: oklch(47.4% 0.172 27);
+  --c-mana: oklch(46.5% 0.169 264);
+  --c-es: oklch(44.5% 0.078 215);
+  --c-fire: oklch(46.6% 0.149 38);
+  --c-cold: oklch(45.5% 0.126 250);
+  --c-lightning: oklch(44.0% 0.092 103);
+  --c-chaos: oklch(47.7% 0.200 305);
+  --c-physical: oklch(44.0% 0.038 80);
+  --c-unique: oklch(46.0% 0.103 55);
+  --c-rare: oklch(45.5% 0.092 92);
+  --c-magic: oklch(47.5% 0.222 272);
+  --c-normal: oklch(37.1% 0.014 78);
+  --c-gem: oklch(44.0% 0.080 176);
+  --c-spirit: oklch(45.0% 0.088 80);
+  --c-currency: oklch(45.5% 0.087 68);
 
   --primary-hover: #000000;
-  /* The same opacity washes text out faster on paper than on near-black. */
-  --fade-off: 0.6;
+  /* Paper washes text out faster than near-black does, so the same recessed
+     look costs a faded control more of its ink here. */
+  --fade-off: 0.7;
   /* PoB emits raw hex for mod text; on paper it needs deepening to stay legible. */
   --pob-mix: 38%;
   --backdrop: rgb(40 40 50 / 0.35);
@@ -119,51 +131,54 @@
   --shadow-modal: 0 12px 40px rgba(30, 30, 40, 0.2);
 }
 
+/* Wraeclast: candlelit parchment over brown, with Path of Exile's red as the
+   one true accent. Its ink is warm like the light theme's but far lighter, so
+   the two never read as the same palette. */
 :root[data-theme="wraeclast"] {
   color-scheme: dark;
 
-  --bg-0: #2a2521;
-  --bg-1: #2f2a26;
-  --bg-2: #35302b;
-  --bg-3: #3b3530;
-  --bg-hover: #413a34;
-  --bg-active: #4a423b;
+  --bg-0: oklch(26.9% 0.010 62);
+  --bg-1: oklch(28.9% 0.010 62);
+  --bg-2: oklch(31.3% 0.011 62);
+  --bg-3: oklch(33.4% 0.012 62);
+  --bg-hover: oklch(35.4% 0.014 62);
+  --bg-active: oklch(38.5% 0.016 62);
 
-  --line-0: #3f3833;
-  --line-1: #4c443d;
-  --line-2: #5f564c;
+  --line-0: oklch(34.6% 0.013 64);
+  --line-1: oklch(39.2% 0.016 64);
+  --line-2: oklch(45.9% 0.020 64);
 
-  --fg-0: #f2dec4;
-  --ramp-1: #d8c8b2;
-  --ramp-2: #b5a999;
-  --ramp-3: #a1968a;
-  --ramp-4: #72695f;
+  --fg-0: oklch(91.0% 0.041 74);
+  --ramp-1: oklch(84.0% 0.035 74);
+  --ramp-2: oklch(74.0% 0.026 74);
+  --ramp-3: oklch(69.5% 0.022 74);
+  --ramp-4: oklch(56.5% 0.019 74);
 
-  --focus: #8fa8f0;
-  --ok: #74d494;
-  --warn: #e9b85c;
-  --bad: #f47a78;
+  --focus: oklch(74.1% 0.108 269);
+  --ok: oklch(79.4% 0.130 153);
+  --warn: oklch(80.9% 0.123 81);
+  --bad: oklch(77.5% 0.150 23);
 
-  --c-life: #f47373;
-  --c-mana: #7fa6ff;
-  --c-es: #6fd3e5;
-  --c-fire: #ff8a5a;
-  --c-cold: #6cc4ff;
-  --c-lightning: #ffd94f;
-  --c-chaos: #cf8cff;
-  --c-physical: #dccbab;
-  --c-unique: #d99a45;
-  --c-rare: #e8d25f;
-  --c-magic: #8f9aff;
-  --c-normal: #e0d6c8;
-  --c-gem: #52d9b8;
-  --c-spirit: #f0cf74;
-  --c-currency: #d2ae57;
+  --c-life: oklch(73.0% 0.159 22);
+  --c-mana: oklch(75.0% 0.128 265);
+  --c-es: oklch(81.3% 0.097 211);
+  --c-fire: oklch(75.3% 0.155 42);
+  --c-cold: oklch(78.9% 0.120 240);
+  --c-lightning: oklch(89.4% 0.156 106);
+  --c-chaos: oklch(75.1% 0.172 310);
+  --c-physical: oklch(84.8% 0.047 83);
+  --c-unique: oklch(73.2% 0.125 58);
+  --c-rare: oklch(82.0% 0.137 95);
+  --c-magic: oklch(74.0% 0.135 277);
+  --c-normal: oklch(88.0% 0.022 77);
+  --c-gem: oklch(80.3% 0.127 174);
+  --c-spirit: oklch(86.4% 0.117 84);
+  --c-currency: oklch(76.6% 0.114 72);
 
-  --accent: #a60a27;
-  --accent-fg: #f2dec4;
-  --primary-hover: #b8122f;
-  --fade-off: 0.5;
+  --accent: oklch(46.2% 0.181 21);
+  --accent-fg: oklch(91.0% 0.041 74);
+  --primary-hover: oklch(50.1% 0.193 21);
+  --fade-off: 0.55;
   --pob-mix: 100%;
   --backdrop: rgb(13 13 13 / 0.5);
   --shadow-pop: 0 8px 30px rgba(13, 13, 13, 0.5);
@@ -171,8 +186,10 @@
 }
 
 :root {
-  --font-ui: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /* Geist carries Latin and Cyrillic only; the rest cover Japanese, Korean and Thai. */
+  --font-cjk: "Yu Gothic UI", "Meiryo", "Malgun Gothic", "Leelawadee UI", "Noto Sans CJK JP", "Noto Sans Thai", "Hiragino Sans", "Apple SD Gothic Neo", "Thonburi";
+  --font-ui: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", var(--font-cjk), sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Mono", Consolas, var(--font-cjk), monospace;
 
   --fs-2xs: 10px;
   --fs-xs: 11px;
@@ -294,7 +311,6 @@ label:has(input:disabled) {
 }
 .btn:hover {
   background: var(--bg-hover);
-  border-color: var(--line-2);
   color: var(--fg-0);
 }
 .btn:active {
@@ -316,9 +332,6 @@ label:has(input:disabled) {
 .btn.ghost {
   background: transparent;
   border-color: transparent;
-}
-.btn.ghost:hover {
-  border-color: var(--line-1);
 }
 .btn.sm {
   height: 22px;

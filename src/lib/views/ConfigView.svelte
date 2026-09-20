@@ -3,6 +3,7 @@
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
   import { stripPobText } from "$lib/pobtext";
+  import { m } from "$lib/paraglide/messages";
 
   let options = $state<ConfigOption[]>([]);
   let config = $state<Record<string, unknown>>({});
@@ -49,7 +50,7 @@
         const v = config[o.var];
         if (v === undefined || v === null || v === false) continue;
       }
-      const name = o.section ?? "General";
+      const name = o.section ?? m.config_section_general();
       let s = out.find((x) => x.name === name);
       if (!s) out.push((s = { name, items: [] }));
       s.items.push(o);
@@ -91,8 +92,8 @@
     if (!browserMods) return [];
     const words = browserQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return browserMods.slice(0, 200);
-    return browserMods.filter((m) => {
-      const t = m.text.toLowerCase();
+    return browserMods.filter((mod) => {
+      const t = mod.text.toLowerCase();
       return words.every((w) => t.includes(w));
     }).slice(0, 200);
   });
@@ -127,32 +128,32 @@
         value={activeSet?.id ?? 1}
         onchange={(e) => build.run(() => engine.selectConfigSet(Number((e.target as HTMLSelectElement).value)))}
         disabled={build.busy > 0}
-        title="Config set"
+        title={m.config_set_title()}
       >
         {#each sets as s}
-          <option value={s.id}>{stripPobText(s.title ?? "Default")}</option>
+          <option value={s.id}>{stripPobText(s.title ?? m.config_set_default())}</option>
         {/each}
       </select>
     {/if}
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.createConfigSet())}>New</button>
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.copyConfigSet())}>Copy</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.createConfigSet())}>{m.common_new()}</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.copyConfigSet())}>{m.common_copy_button()}</button>
     <button
       class="btn sm ghost"
       onclick={() => {
         setDraft = activeSet?.title ?? "";
         renamingSet = true;
-      }}>Rename</button
+      }}>{m.common_rename()}</button
     >
-    <button class="btn sm ghost" disabled={sets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteConfigSet(activeSet.id))}>Delete</button>
+    <button class="btn sm ghost" disabled={sets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteConfigSet(activeSet.id))}>{m.common_delete()}</button>
     <span class="vr"></span>
-    <input class="input" placeholder="Filter options…" bind:value={filter} />
-    <label class="chk small" title="Hide options PoB deems irrelevant to this build's skills and gear (set options always show)">
+    <input class="input" placeholder={m.config_filter()} bind:value={filter} />
+    <label class="chk small" title={m.config_relevant_only_title()}>
       <input type="checkbox" bind:checked={relevantOnly} disabled={!visibility} />
-      Relevant only
+      {m.config_relevant_only()}
     </label>
     <span class="dim small">
       {#if visibility}
-        {Object.values(visibility).filter(Boolean).length} of {options.length} apply
+        {m.config_apply_count({ shown: Object.values(visibility).filter(Boolean).length, total: options.length })}
       {/if}
     </span>
   </div>
@@ -160,7 +161,7 @@
     <div class="section">
       <button class="shead" onclick={() => toggle("__custom")}>
         <span class="caret" class:open={!collapsed.has("__custom")}>▸</span>
-        <span>Custom Modifiers</span>
+        <span>{m.config_custom_mods()}</span>
         <span class="dim num">{customBlocks.length}</span>
       </button>
       {#if !collapsed.has("__custom")}
@@ -171,23 +172,23 @@
                 <input
                   type="checkbox"
                   checked={b.enabled}
-                  title="Enable this mod group"
+                  title={m.config_block_enable()}
                   onchange={(e) => build.run(() => engine.setCustomModBlock(b.index, { enabled: (e.target as HTMLInputElement).checked }))}
                 />
                 <input
                   class="input btitle"
                   value={b.title ?? ""}
-                  placeholder="Group name"
+                  placeholder={m.config_block_name()}
                   onchange={(e) => build.run(() => engine.setCustomModBlock(b.index, { title: (e.target as HTMLInputElement).value }))}
                 />
-                <button class="btn sm ghost" onclick={() => openBrowser(b.index)} title="Browse supported mod lines from tree nodes and item mods">Browse…</button>
-                <button class="btn sm ghost" disabled={customBlocks.length <= 1 && !b.text} onclick={() => build.run(() => engine.deleteCustomModBlock(b.index))}>Delete</button>
+                <button class="btn sm ghost" onclick={() => openBrowser(b.index)} title={m.config_browse_title()}>{m.config_browse()}</button>
+                <button class="btn sm ghost" disabled={customBlocks.length <= 1 && !b.text} onclick={() => build.run(() => engine.deleteCustomModBlock(b.index))}>{m.common_delete()}</button>
               </div>
               <textarea
                 class="bmods mono"
                 rows={Math.max(3, b.lines.length + 1)}
                 value={b.text}
-                placeholder="One modifier per line, e.g. +50 to maximum Life"
+                placeholder={m.config_mods_placeholder()}
                 spellcheck="false"
                 onchange={(e) => build.run(() => engine.setCustomModBlock(b.index, { text: (e.target as HTMLTextAreaElement).value }))}
               ></textarea>
@@ -197,14 +198,14 @@
                     <div class="bline" class:partial={l.status === "partial"}>
                       <span class="mark">{l.status === "partial" ? "~" : "✕"}</span>
                       <span class="mono"><PobText text={l.text.trim()} /></span>
-                      <span class="dim">{l.status === "partial" ? "partially recognised" : "not recognised"}</span>
+                      <span class="dim">{l.status === "partial" ? m.config_line_partial() : m.config_line_unknown()}</span>
                     </div>
                   {/each}
                 </div>
               {/if}
             </div>
           {/each}
-          <button class="btn sm ghost addblock" onclick={() => build.run(() => engine.addCustomModBlock())}>Add mod group</button>
+          <button class="btn sm ghost addblock" onclick={() => build.run(() => engine.addCustomModBlock())}>{m.config_add_block()}</button>
         </div>
       {/if}
     </div>
@@ -246,24 +247,24 @@
 
 {#if browser != null}
   <div class="overlay" role="presentation" onclick={() => (browser = null)} onkeydown={(e) => e.key === "Escape" && (browser = null)}>
-    <div class="modal" role="dialog" aria-label="Mod browser" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (browser = null)}>
+    <div class="modal" role="dialog" aria-label={m.config_browser_title()} tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (browser = null)}>
       <div class="mhead">
-        <span class="label">Mod browser</span>
-        <button class="btn sm ghost" onclick={() => (browser = null)}>Close</button>
+        <span class="label">{m.config_browser_title()}</span>
+        <button class="btn sm ghost" onclick={() => (browser = null)}>{m.common_close()}</button>
       </div>
       <!-- svelte-ignore a11y_autofocus -->
-      <input class="input msearch" placeholder="Search tree and item modifiers…" bind:value={browserQuery} autofocus />
+      <input class="input msearch" placeholder={m.config_browser_search()} bind:value={browserQuery} autofocus />
       <div class="mlist">
         {#if !browserMods}
-          <div class="dim small pad">Loading…</div>
+          <div class="dim small pad">{m.common_loading()}</div>
         {:else if !browserList.length}
-          <div class="dim small pad">No matching modifiers found</div>
+          <div class="dim small pad">{m.config_browser_none()}</div>
         {:else}
-          {#each browserList as m}
-            <button class="mrow" title={m.sources.join(", ")} onclick={() => addModFromBrowser(m.text)}>{m.text}</button>
+          {#each browserList as mod}
+            <button class="mrow" title={mod.sources.join(", ")} onclick={() => addModFromBrowser(mod.text)}>{mod.text}</button>
           {/each}
           {#if browserMods.length > browserList.length && !browserQuery.trim()}
-            <div class="dim small pad">{browserMods.length - browserList.length} more — search to narrow down</div>
+            <div class="dim small pad">{m.config_browser_more({ count: browserMods.length - browserList.length })}</div>
           {/if}
         {/if}
       </div>

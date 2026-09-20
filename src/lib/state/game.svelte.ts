@@ -2,18 +2,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { build } from "$lib/state/build.svelte";
 import { app } from "$lib/state/app.svelte";
 import { confirm } from "$lib/state/confirm.svelte";
+import { m } from "$lib/paraglide/messages";
 
 export type Game = "poe1" | "poe2";
 
 export interface GameStatus {
   game: Game;
   firstRun: boolean;
-  available: Game[];
 }
 
 export const GAMES: Game[] = ["poe1", "poe2"];
 export const GAME_LABEL: Record<Game, string> = { poe1: "Path of Exile 1", poe2: "Path of Exile 2" };
-export const GAME_SHORT: Record<Game, string> = { poe1: "PoE1", poe2: "PoE2" };
+export const GAME_SHORT: Record<Game, string> = { poe1: "POE1", poe2: "POE2" };
 
 /**
  * Which game the session is on. Each game runs its own Path of Building in
@@ -23,7 +23,6 @@ export const GAME_SHORT: Record<Game, string> = { poe1: "PoE1", poe2: "PoE2" };
 class GameStore {
   current = $state<Game>("poe2");
   firstRun = $state(false);
-  available = $state<Game[]>(["poe2"]);
   switching = $state(false);
   error = $state<string | null>(null);
 
@@ -33,9 +32,6 @@ class GameStore {
   get isPoe1() {
     return this.current === "poe1";
   }
-  has(g: Game) {
-    return this.available.includes(g);
-  }
 
   async init() {
     this.apply(await invoke<GameStatus>("game_status"));
@@ -44,7 +40,6 @@ class GameStore {
   private apply(s: GameStatus) {
     this.current = s.game;
     this.firstRun = s.firstRun;
-    this.available = s.available;
   }
 
   /** Choose a game. A different game reboots the engine. Returns false if the user kept the current one. */
@@ -57,10 +52,10 @@ class GameStore {
     // and reopened its last snapshot on its own.
     if (build.info?.unsaved && !this.firstRun) {
       const ok = await confirm.ask({
-        title: "Switch game",
-        message: `The open build has unsaved changes. Switch to ${GAME_LABEL[g]} anyway?`,
-        ok: "Switch",
-        cancel: "Stay",
+        title: m.game_switch_title(),
+        message: m.game_switch_message({ game: GAME_LABEL[g] }),
+        ok: m.game_switch_ok(),
+        cancel: m.game_switch_cancel(),
       });
       if (!ok) return false;
     }

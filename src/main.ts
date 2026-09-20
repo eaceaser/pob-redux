@@ -1,3 +1,5 @@
+// First import: it overwrites Paraglide's getLocale() before any component module loads.
+import "$lib/state/locale.svelte";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./app.css";

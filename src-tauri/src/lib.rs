@@ -987,10 +987,6 @@ fn find_pob_root(app: &tauri::AppHandle, game: Game) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.join("Launch.lua").is_file())
 }
 
-fn available_games(app: &tauri::AppHandle) -> Vec<Game> {
-    Game::ALL.into_iter().filter(|g| find_pob_root(app, *g).is_some()).collect()
-}
-
 /// The game to boot: `POB_REDUX_GAME`, then the link or build file the app
 /// was opened with, then the saved choice. With none of those the app boots
 /// PoE2 and asks (`first_run`).
@@ -1031,20 +1027,18 @@ fn boot_runtime(app: &tauri::AppHandle, game: Game, user_dir: &Path) -> Runtime 
 struct GameStatus {
     game: Game,
     first_run: bool,
-    available: Vec<Game>,
 }
 
-fn game_status_of(app: &tauri::AppHandle, state: &AppState) -> GameStatus {
+fn game_status_of(state: &AppState) -> GameStatus {
     GameStatus {
         game: state.game(),
         first_run: state.first_run.load(std::sync::atomic::Ordering::Relaxed),
-        available: available_games(app),
     }
 }
 
 #[tauri::command]
-fn game_status(app: tauri::AppHandle, state: State<'_, AppState>) -> GameStatus {
-    game_status_of(&app, &state)
+fn game_status(state: State<'_, AppState>) -> GameStatus {
+    game_status_of(&state)
 }
 
 /// Choose the game. A change swaps the engine and pool for ones booted on the
@@ -1056,7 +1050,7 @@ fn set_game(app: tauri::AppHandle, state: State<'_, AppState>, game: Game) -> Re
     game::save_settings(&app, &game::Settings { game: Some(game) })?;
     if state.game() != game {
         if find_pob_root(&app, game).is_none() {
-            return Err(format!("{} is not installed: run pob-sync --game {}", game.user_subdir(), game.id()));
+            return Err(format!("{} data is missing: run pob-sync --game {}", game.user_subdir(), game.id()));
         }
         if game == Game::Poe1 {
             // The MCP server and the assistant are PoE2 features.
@@ -1067,7 +1061,7 @@ fn set_game(app: tauri::AppHandle, state: State<'_, AppState>, game: Game) -> Re
         old.pool.release();
         old.engine.shutdown();
     }
-    Ok(game_status_of(&app, &state))
+    Ok(game_status_of(&state))
 }
 
 /// Which game a build file belongs to, from its root element.

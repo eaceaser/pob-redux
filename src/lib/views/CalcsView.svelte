@@ -5,6 +5,7 @@
   import PobText from "$lib/components/PobText.svelte";
   import { stripPobText } from "$lib/pobtext";
   import BreakdownPanel from "$lib/components/BreakdownPanel.svelte";
+  import { m } from "$lib/paraglide/messages";
 
   let mode = $state<"sections" | "raw">("sections");
   let actor = $state<"player" | "minion">("player");
@@ -12,9 +13,12 @@
   // Which buffs these numbers assume. PoB keeps the sidebar on EFFECTIVE whatever this says.
   let calcMode = $state("EFFECTIVE");
   let calcModes = $state<string[]>(["UNBUFFED", "BUFFED", "COMBAT", "EFFECTIVE"]);
-  const BUFF_LABELS: Record<string, string> = { UNBUFFED: "Unbuffed", BUFFED: "Buffed", COMBAT: "In combat", EFFECTIVE: "Effective DPS" };
-  const BUFF_HELP =
-    "What these numbers assume. Unbuffed is standing in town. Buffed adds your auras. In combat adds charges. Effective DPS adds the enemy. The sidebar always shows Effective DPS.";
+  const BUFF_LABELS = $derived<Record<string, string>>({
+    UNBUFFED: m.calcs_buff_unbuffed(),
+    BUFFED: m.calcs_buff_buffed(),
+    COMBAT: m.calcs_buff_combat(),
+    EFFECTIVE: m.calcs_buff_effective(),
+  });
 
   $effect(() => {
     build.rev;
@@ -91,26 +95,26 @@
 <div class="page">
   <div class="toolbar">
     <span class="tabs2">
-      <button class="t2" class:on={mode === "sections"} onclick={() => (mode = "sections")}>Sections</button>
-      <button class="t2" class:on={mode === "raw"} onclick={() => (mode = "raw")}>Raw output</button>
+      <button class="t2" class:on={mode === "sections"} onclick={() => (mode = "sections")}>{m.calcs_sections()}</button>
+      <button class="t2" class:on={mode === "raw"} onclick={() => (mode = "raw")}>{m.calcs_raw()}</button>
     </span>
     {#if mode === "sections"}
       <span class="vr"></span>
       <span class="tabs2">
-        <button class="t2" class:on={actor === "player"} onclick={() => (actor = "player")}>Player</button>
-        <button class="t2" class:on={actor === "minion"} onclick={() => (actor = "minion")}>Minion</button>
+        <button class="t2" class:on={actor === "player"} onclick={() => (actor = "player")}>{m.calcs_player()}</button>
+        <button class="t2" class:on={actor === "minion"} onclick={() => (actor = "minion")}>{m.calcs_minion()}</button>
       </span>
       <span class="vr"></span>
-      <label class="fld-inline" title={BUFF_HELP}>
-        <span class="label">Assuming</span>
+      <label class="fld-inline" title={m.calcs_buff_help()}>
+        <span class="label">{m.calcs_assuming()}</span>
         <select class="select sm" value={calcMode} disabled={build.busy > 0} onchange={(e) => setCalcMode((e.target as HTMLSelectElement).value)}>
-          {#each calcModes as m}
-            <option value={m}>{BUFF_LABELS[m] ?? m}</option>
+          {#each calcModes as cm}
+            <option value={cm}>{BUFF_LABELS[cm] ?? cm}</option>
           {/each}
         </select>
       </label>
     {:else}
-      <input class="input rawfilter" placeholder="Filter output keys…" bind:value={filter} />
+      <input class="input rawfilter" placeholder={m.calcs_filter()} bind:value={filter} />
       <span class="dim num">{rows.length} / {Object.keys(stats).length}</span>
     {/if}
   </div>
@@ -157,7 +161,7 @@
         <aside class="bdside">
           <div class="bdhead">
             <span class="label">{bd.title}</span>
-            <button class="btn sm ghost" onclick={() => (bd = null)}>Close</button>
+            <button class="btn sm ghost" onclick={() => (bd = null)}>{m.common_close()}</button>
           </div>
           <div class="bdscroll">
             <BreakdownPanel sections={bd.sections} />

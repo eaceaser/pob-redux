@@ -1,3 +1,4 @@
+import { m } from "$lib/paraglide/messages";
 import {
   engine,
   poolPresync,
@@ -195,7 +196,7 @@ class BuildStore {
     if (!this.info) return undefined;
     if (!this.info.file) return this.saveAs();
     const r = await this.run(() => engine.saveBuildFile(), { user: false });
-    if (r) this.say(`Saved ${r.path}`);
+    if (r) this.say(m.build_saved({ path: r.path }));
     return r;
   }
 
@@ -209,13 +210,13 @@ class BuildStore {
         filters: [{ name: "Path of Building", extensions: ["xml"] }],
       });
     } catch (e) {
-      this.error = `Save dialog: ${String(e)}`;
+      this.error = m.build_save_dialog_failed({ error: String(e) });
       return undefined;
     }
     if (!picked) return undefined;
     const path = /\.xml$/i.test(picked) ? picked : `${picked}.xml`;
     const r = await this.run(() => engine.saveBuildFile(path), { user: false });
-    if (r) this.say(`Saved ${r.path}`);
+    if (r) this.say(m.build_saved({ path: r.path }));
     return r;
   }
 

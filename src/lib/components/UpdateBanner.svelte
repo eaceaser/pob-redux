@@ -1,29 +1,30 @@
 <script lang="ts">
   import { appUpdate } from "$lib/state/update.svelte";
+  import { m } from "$lib/paraglide/messages";
 </script>
 
 {#if appUpdate.showBanner}
   <div class="banner" role="status">
     {#if appUpdate.phase === "available"}
-      <span class="txt">Version <span class="mono">{appUpdate.version}</span> is available.</span>
+      <span class="txt">{m.update_available()} <span class="mono">{appUpdate.version}</span> {m.update_available_suffix()}</span>
       {#if appUpdate.method === "self"}
-        <button class="btn sm" onclick={() => appUpdate.install()}>Update</button>
+        <button class="btn sm" onclick={() => appUpdate.install()}>{m.update_install()}</button>
       {:else if appUpdate.method === "aur"}
-        <span class="dim">Update <span class="mono">pob-redux-bin</span> with your AUR helper.</span>
+        <span class="dim">{m.update_aur_before()} <span class="mono">pob-redux-bin</span> {m.update_aur_after()}</span>
       {:else}
-        <button class="btn sm" onclick={() => appUpdate.openReleases()} title="A package install is replaced by its package manager, not by the app">Download</button>
+        <button class="btn sm" onclick={() => appUpdate.openReleases()} title={m.update_download_title()}>{m.update_download()}</button>
       {/if}
-      <button class="btn sm ghost" onclick={() => appUpdate.dismiss()}>Later</button>
+      <button class="btn sm ghost" onclick={() => appUpdate.dismiss()}>{m.update_later()}</button>
     {:else if appUpdate.phase === "downloading"}
       <span class="txt">
-        Downloading <span class="mono">{appUpdate.version}</span>
+        {m.update_downloading()} <span class="mono">{appUpdate.version}</span>
         {#if appUpdate.progress !== null}<span class="mono">{appUpdate.progress}%</span>{/if}
       </span>
       <div class="bar"><div class="fill" style:width="{appUpdate.progress ?? 15}%" class:idle={appUpdate.progress === null}></div></div>
     {:else if appUpdate.phase === "ready"}
-      <span class="txt">Update installed. Restart to finish.</span>
-      <button class="btn sm" onclick={() => appUpdate.restart()}>Restart</button>
-      <button class="btn sm ghost" onclick={() => appUpdate.dismiss()}>Later</button>
+      <span class="txt">{m.update_ready()}</span>
+      <button class="btn sm" onclick={() => appUpdate.restart()}>{m.update_restart()}</button>
+      <button class="btn sm ghost" onclick={() => appUpdate.dismiss()}>{m.update_later()}</button>
     {/if}
   </div>
 {/if}
