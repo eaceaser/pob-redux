@@ -123,25 +123,25 @@
             {#each secs as sec (sec.index)}
               <div class="section" style:border-left-color={sec.colour ?? "var(--line-1)"}>
                 {#each sec.subSections as sub (sub.index)}
+                  {@const cols = Math.max(1, ...sub.rows.map((r) => r.cells.length))}
                   <div class="subhead">
                     <span class="sublabel"><PobText text={sub.label} /></span>
                     {#if sub.extra}<span class="extra num"><PobText text={sub.extra} /></span>{/if}
                   </div>
-                  <div class="rows">
+                  <div class="rows" class:wide={cols > 1} style:--cols={cols} style:--colw={`${Math.round((sub.colWidth ?? 95) * 0.72)}px`}>
                     {#each sub.rows as row (row.index)}
-                      <div class="crow">
-                        {#if row.label}<span class="rlabel"><PobText text={row.label} /></span>{/if}
-                        {#each row.cells as cell (cell.index)}
-                          {#if cell.text || cell.hasBreakdown}
-                            <button
-                              class="cell num"
-                              class:link={cell.hasBreakdown}
-                              disabled={!cell.hasBreakdown}
-                              onclick={() => openCell(sec, sub.index, row.index, cell.index, stripPobText(`${sub.label} · ${row.label ?? ""}`))}
-                            >
-                              <PobText text={cell.text} />
-                            </button>
-                          {/if}
+                      <div class="crow" class:small={row.textSize != null && row.textSize < 16}>
+                        <span class="rlabel">{#if row.label}<PobText text={row.label} />{/if}</span>
+                        {#each row.cells as cell, i (cell.index)}
+                          <button
+                            class="cell num"
+                            class:link={cell.hasBreakdown}
+                            disabled={!cell.hasBreakdown}
+                            style:grid-column={cols > 1 && i === row.cells.length - 1 && row.cells.length < cols ? `${i + 2} / -1` : null}
+                            onclick={() => openCell(sec, sub.index, row.index, cell.index, stripPobText(`${sub.label} · ${row.label ?? ""}`))}
+                          >
+                            <span class="ct">{#if cell.text}<PobText text={cell.text} />{/if}</span>
+                          </button>
                         {/each}
                       </div>
                     {/each}
@@ -238,11 +238,10 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    min-width: 330px;
-    max-width: 430px;
-    flex: 1;
+    flex: 1 1 auto;
   }
   .section {
+    min-width: 290px;
     background: var(--bg-1);
     border: 1px solid var(--line-0);
     border-left-width: 2px;
@@ -271,19 +270,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* One grid per subsection, so a table's columns line up across its rows as PoB draws them. */
   .rows {
-    padding: 4px 10px;
-  }
-  .crow {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(118px, max-content) minmax(0, 1fr);
+    column-gap: 8px;
+    row-gap: 2px;
     align-items: baseline;
-    gap: 10px;
-    padding: 1px 0;
+    padding: 4px 10px;
     font-size: var(--fs-sm);
   }
+  .rows.wide {
+    grid-template-columns: minmax(118px, max-content) repeat(var(--cols), minmax(auto, max-content));
+  }
+  .crow {
+    display: contents;
+  }
+  .crow.small {
+    font-size: var(--fs-xs);
+  }
   .rlabel {
+    grid-column: 1;
     color: var(--fg-1);
-    min-width: 118px;
     font-size: var(--fs-xs);
   }
   .cell {
@@ -292,11 +300,20 @@
     background: none;
     padding: 0 2px;
     color: var(--fg-0);
-    font-size: var(--fs-sm);
+    font-size: inherit;
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .wide .cell {
+    overflow: visible;
+  }
+  /* The floor sits inside the button: a min-width on the button itself would replace the
+     automatic minimum, and the track would stop seeing the text width. */
+  .wide .ct {
+    display: inline-block;
+    min-width: var(--colw);
   }
   .cell.link {
     cursor: pointer;

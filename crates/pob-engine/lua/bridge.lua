@@ -961,14 +961,14 @@ M.calc_sections = function(p)
 			}
 			if enabled then
 				for si, subSec in ipairs(section.subSection) do
-					local sub = { index = si, label = subSec.label or "", rows = array({}) }
+					local sub = { index = si, label = subSec.label or "", colWidth = opt(subSec.data.colWidth), rows = array({}) }
 					local okExtra, extra = pcall(function()
 						return subSec.data.extra and formatCalcStr(section, subSec.data.extra, actor)
 					end)
 					sub.extra = (okExtra and extra) and extra or null
 					for ri, rowData in ipairs(subSec.data) do
 						if calcsTab:CheckFlag(rowData) then
-							local row = { index = ri, label = opt(rowData.label), cells = array({}) }
+							local row = { index = ri, label = opt(rowData.label), textSize = opt(rowData.textSize), cells = array({}) }
 							for ci, colData in ipairs(rowData) do
 								local text = ""
 								if colData.control then

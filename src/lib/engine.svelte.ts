@@ -409,6 +409,8 @@ export interface CalcCell {
 export interface CalcRow {
   index: number;
   label: string | null;
+  /** PoB draws wide tables (the per-damage-type rows) at 12px instead of 16. */
+  textSize: number | null;
   cells: CalcCell[];
 }
 
@@ -416,6 +418,8 @@ export interface CalcSubSection {
   index: number;
   label: string;
   extra: string | null;
+  /** PoB's fixed value-column width for tables; null means one column that takes the rest. */
+  colWidth: number | null;
   rows: CalcRow[];
 }
 
