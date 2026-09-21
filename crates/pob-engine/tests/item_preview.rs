@@ -192,16 +192,33 @@ fn preview_is_temporary_and_commit_matches_candidate() {
     }
     assert_eq!(snapshot(&engine), replaced);
 
-    for raw in [
-        "Rarity: Normal\nLesser Life Flask",
-        "Rarity: Normal\nThawing Charm",
-        "Rarity: Normal\nRuby",
-    ] {
+    let version = engine.call("version", &Value::Null).unwrap();
+    let (cases, weapon_base): (&[(&str, bool)], &str) = match version["game"].as_str() {
+        Some("poe1") => (
+            &[
+                ("Rarity: Normal\nSmall Life Flask", false),
+                ("Rarity: Normal\nCrimson Jewel", true),
+            ],
+            "Rusted Hatchet",
+        ),
+        Some("poe2") => (
+            &[
+                ("Rarity: Normal\nLesser Life Flask", false),
+                ("Rarity: Normal\nThawing Charm", false),
+                ("Rarity: Normal\nRuby", true),
+            ],
+            "Dull Hatchet",
+        ),
+        other => panic!("unsupported game: {other:?}"),
+    };
+    for &(raw, jewel) in cases {
         let before = snapshot(&engine);
-        let preview = engine.call("item_preview", &json!({ "raw": raw })).unwrap();
+        let preview = engine
+            .call("item_preview", &json!({ "raw": raw }))
+            .unwrap_or_else(|e| panic!("previewing {raw:?}: {e}"));
         assert!(!preview["tooltip"]["lines"].as_array().unwrap().is_empty());
         assert_eq!(snapshot(&engine), before);
-        if raw.ends_with("Ruby") {
+        if jewel {
             assert!(preview["slots"].as_array().unwrap().is_empty());
             assert!(
                 engine
@@ -223,7 +240,7 @@ fn preview_is_temporary_and_commit_matches_candidate() {
         let weapon = engine
             .call(
                 "item_preview",
-                &json!({ "raw": "Rarity: Normal\nDull Hatchet\nQuality: 0" }),
+                &json!({ "raw": format!("Rarity: Normal\n{weapon_base}\nQuality: 0") }),
             )
             .unwrap();
         assert!(!weapon["slots"].as_array().unwrap().is_empty());
