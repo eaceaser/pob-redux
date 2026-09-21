@@ -695,8 +695,6 @@
     </section>
   </div>
 
-
-
   {#if craftOpen}
     <div class="modal">
       <div class="panel dialog craftdlg">
