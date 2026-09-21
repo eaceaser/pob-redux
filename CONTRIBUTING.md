@@ -10,6 +10,9 @@ in the app and compare the sidebar against Path of Building itself.
 
 Keep the numbers PoB's own. Do not reimplement calculations in Rust or TypeScript.
 
+Add a code comment only where the code cannot show why, such as a PoB quirk, a workaround or an invariant
+that is easy to break. Keep it to one short line.
+
 ## Build
 
 You need:
