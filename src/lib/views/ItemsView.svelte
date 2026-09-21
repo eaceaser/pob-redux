@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
+  import { readText } from "@tauri-apps/plugin-clipboard-manager";
   import {
     engine,
     type AnointInfo,
@@ -28,6 +29,7 @@
   import TraderWindow from "$lib/components/TraderWindow.svelte";
   import BuySimilarDialog from "$lib/components/BuySimilarDialog.svelte";
   import { m } from "$lib/paraglide/messages";
+  import { confirm } from "$lib/state/confirm.svelte";
 
   let slotsResp = $state<SlotsResponse | null>(null);
   let items = $state<ItemInfo[]>([]);
@@ -50,6 +52,120 @@
   let editText = $state("");
   let editItemId = $state<number | null>(null);
   let editError = $state<string | null>(null);
+  let editBusy = $state(false);
+
+  type Preview = Awaited<ReturnType<typeof engine.itemPreview>> & { text: string };
+  let preview = $state<Preview | null>(null);
+  let previewError = $state<string | null>(null);
+  let previewLoading = $state(false);
+  let previewCommitting = $state(false);
+  let previewSlot = $state("");
+  let previewStamp = 0;
+  let alive = true;
+  const generation = untrack(() => build.info!.generation);
+  const previewStale = $derived(preview?.rev !== build.rev);
+
+  onDestroy(() => {
+    alive = false;
+    previewStamp++;
+    clearTimeout(tipTimer);
+  });
+
+  function discardPreview() {
+    previewStamp++;
+    preview = null;
+    previewError = null;
+    previewLoading = false;
+  }
+
+  async function requestPreview(text: string, stamp = ++previewStamp) {
+    previewLoading = true;
+    previewError = null;
+    try {
+      if (!text.trim()) throw new Error(m.items_paste_empty());
+      let result: Awaited<ReturnType<typeof engine.itemPreview>>;
+      // A build change while awaiting a candidate must recalculate that same
+      // candidate, not replace it with the previously displayed draft.
+      for (;;) {
+        const showDifferences = statDiff;
+        const revision = build.rev;
+        result = await engine.itemPreview(text, generation);
+        if (!alive || stamp !== previewStamp) return false;
+        if (revision !== build.rev || showDifferences !== statDiff) continue;
+        // An external mutation may have reached Lua before build.sync(). Wait
+        // for the next UI revision instead of repeatedly querying the engine.
+        break;
+      }
+      preview = { ...result, text };
+      if (!result.slots.some((s) => s.slot === previewSlot)) previewSlot = result.slots[0]?.slot ?? "";
+      hideTip();
+      return true;
+    } catch (e) {
+      if (alive && stamp === previewStamp) previewError = String(e);
+      return false;
+    } finally {
+      if (alive && stamp === previewStamp) previewLoading = false;
+    }
+  }
+
+  async function pasteItem() {
+    if (previewCommitting || build.busy > 0) return;
+    const stamp = ++previewStamp;
+    previewLoading = true;
+    previewError = null;
+    try {
+      const text = (await readText()) ?? "";
+      if (alive && stamp === previewStamp) await requestPreview(text, stamp);
+    } catch (e) {
+      if (alive && stamp === previewStamp) {
+        previewError = m.items_paste_failed({ error: String(e) });
+        previewLoading = false;
+      }
+    }
+  }
+
+  function editPreview() {
+    editItemId = null;
+    editText = preview?.text ?? "";
+    editError = null;
+    editOpen = true;
+  }
+
+  async function addPreview(equip: boolean) {
+    if (!preview || previewLoading || previewCommitting || previewStale || build.busy > 0) return;
+    const candidate = preview;
+    const slot = previewSlot;
+    if (equip && !candidate.slots.some((s) => s.slot === slot)) return;
+    previewCommitting = true;
+    previewError = null;
+    // Synchronize only after committing. A failed sync must not leave an Add
+    // button for an item that was already inserted successfully.
+    const result = await build.run(async () => {
+      try {
+        return equip
+          ? await engine.equipItemRaw(candidate.text, slot, generation)
+          : await engine.itemEdit(candidate.text, undefined, generation);
+      } catch (e) {
+        if (alive) previewError = String(e);
+        throw e;
+      }
+    }, { sync: false });
+    if (result && alive) {
+      discardPreview();
+      selectedItem = result.itemId;
+    }
+    if (result) await build.run(() => build.sync(), { sync: false, user: false });
+    previewCommitting = false;
+  }
+
+  // The draft belongs to this Items view; leaving the view discards it.
+  $effect(() => {
+    build.rev;
+    statDiff;
+    untrack(() => {
+      if (preview && !previewCommitting && !previewLoading) void requestPreview(preview.text);
+    });
+  });
 
   let craftOpen = $state(false);
   let craftData = $state<{ types: string[]; bases: Record<string, CraftBase[]> } | null>(null);
@@ -347,6 +463,15 @@
     } catch {}
   }
   function onKey(e: KeyboardEvent) {
+    if (e.defaultPrevented) return;
+    const target = e.target;
+    if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="dialog"]')) return;
+    if (editOpen || craftOpen || anointOpen || corruptOpen || enchantOpen || traderOpen || buySimilarFor != null || confirm.current) return;
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "v") {
+      e.preventDefault();
+      if (!e.repeat) void pasteItem();
+      return;
+    }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d" && statDiff !== null) {
       e.preventDefault();
       void setStatDiff(!statDiff);
@@ -396,13 +521,22 @@
     editOpen = true;
   }
   async function saveEdit(asNew: boolean) {
+    if (editBusy) return;
+    editBusy = true;
     editError = null;
     try {
+      if (editItemId == null) {
+        if (await requestPreview(editText)) editOpen = false;
+        else editError = previewError;
+        return;
+      }
       await engine.itemEdit(editText, asNew ? undefined : (editItemId ?? undefined));
       await build.sync();
       editOpen = false;
     } catch (e) {
       editError = String(e);
+    } finally {
+      editBusy = false;
     }
   }
 
@@ -460,7 +594,8 @@
     </div>
     <span class="vr"></span>
     <button class="btn sm" onclick={openCraft}>{m.items_craft()}</button>
-    <button class="btn sm" onclick={() => openEdit(null)}>{m.items_new_from_text()}</button>
+    <button class="btn sm" onclick={() => openEdit(null)} disabled={previewCommitting}>{m.items_new_from_text()}</button>
+    <button class="btn sm" onclick={pasteItem} disabled={previewCommitting || build.busy > 0} title={m.items_paste_hint()}>{m.items_paste()}</button>
     <button class="btn sm ghost" title={m.items_trader_title()} onclick={() => openTrader(null)}>{m.items_trader()}</button>
     {#if statDiff !== null}
       <span class="vr"></span>
@@ -470,6 +605,9 @@
       </label>
     {/if}
   </div>
+
+  {#if previewError}<div class="err small pad" role="alert">{previewError}</div>{/if}
+  {#if previewLoading}<div class="dim small pad" role="status">{m.items_preview_loading()}</div>{/if}
 
   <div class="cols">
     <section class="col slots">
@@ -540,7 +678,39 @@
     </section>
 
     <section class="col db">
-      {#if selectedItem != null && detail}
+      {#if preview}
+        <div class="panel-head">
+          <span class="label">{m.items_preview_title()}</span>
+          <button class="btn sm ghost" onclick={discardPreview} disabled={previewCommitting}>{m.items_preview_discard()}</button>
+        </div>
+        <div class="scroll detailpane">
+          <p class="dim small">{m.items_preview_note()}</p>
+          {#if preview.tooltip.header}
+            <ItemFrame lines={preview.tooltip.lines} header={preview.tooltip.header} runic={preview.tooltip.runic} uniqueGem={preview.tooltip.uniqueGem} />
+          {:else}
+            <div class="ttbox plain">
+              {#each preview.tooltip.lines as l}
+                {#if l.sep}<div class="tsep"></div>
+                {:else}<div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>{/if}
+              {/each}
+            </div>
+          {/if}
+          <div class="modrow">
+            <button class="btn sm" onclick={editPreview} disabled={previewLoading || previewCommitting}>{m.items_preview_edit()}</button>
+            <button class="btn sm primary" onclick={() => addPreview(false)} disabled={previewLoading || previewCommitting || previewStale || build.busy > 0}>{m.items_preview_add()}</button>
+          </div>
+          {#if preview.slots.length}
+            <div class="modrow">
+              <select class="select" bind:value={previewSlot} aria-label={m.items_preview_slot()} disabled={previewLoading || previewCommitting}>
+                {#each preview.slots as s}<option value={s.slot}>{s.label}</option>{/each}
+              </select>
+              <button class="btn sm" onclick={() => addPreview(true)} disabled={previewLoading || previewCommitting || previewStale || build.busy > 0}>{m.items_preview_equip()}</button>
+            </div>
+          {:else}
+            <p class="dim small">{m.items_preview_no_slot()}</p>
+          {/if}
+        </div>
+      {:else if selectedItem != null && detail}
         <div class="panel-head">
           <span class="label">{m.items_item()}</span>
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
@@ -871,12 +1041,12 @@
         {#if editError}<div class="err small">{editError}</div>{/if}
         <div class="actions">
           {#if editItemId != null}
-            <button class="btn" onclick={() => saveEdit(true)}>{m.items_save_as_copy()}</button>
+            <button class="btn" onclick={() => saveEdit(true)} disabled={editBusy}>{m.items_save_as_copy()}</button>
           {/if}
-          <button class="btn primary" onclick={() => saveEdit(editItemId == null)} disabled={!editText.trim()}>
-            {editItemId != null ? m.common_save() : m.common_create()}
+          <button class="btn primary" onclick={() => saveEdit(editItemId == null)} disabled={!editText.trim() || editBusy}>
+            {editItemId != null ? m.common_save() : m.items_preview_action()}
           </button>
-          <button class="btn ghost" onclick={() => (editOpen = false)}>{m.common_cancel()}</button>
+          <button class="btn ghost" onclick={() => (editOpen = false)} disabled={editBusy}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>

@@ -12,6 +12,8 @@ local dkjson = require("dkjson")
 
 local main = launch.main
 local build = main.modes["BUILD"]
+-- Runtime-only identity, independent of the build's name and calc revision.
+main.__reduxBuildGeneration = 0
 
 -- PoB's sidebar rows carry only text. Feeding AddDisplayStatList one entry at
 -- a time tags every row it appends with the entry's stat key and actor, which
@@ -86,7 +88,10 @@ local function refresh()
 	frame()
 end
 
-local function ensureBuild()
+local function ensureBuild(p)
+	if p and p.generation ~= nil and p.generation ~= main.__reduxBuildGeneration then
+		error("the build changed; paste the item again", 0)
+	end
 	if not build or not build.calcsTab or not build.calcsTab.mainOutput then
 		error("no build is loaded; call new_build, load_build_xml or load_build_code first", 0)
 	end
@@ -616,6 +621,7 @@ end
 -- A file saved by PoB carries its own Calcs selections; one more pass brings
 -- them in line before anything reads the CALCS output.
 local function loaded()
+	main.__reduxBuildGeneration = main.__reduxBuildGeneration + 1
 	build = main.modes["BUILD"]
 	ensureBuild()
 	if syncCalcsSelection() then refresh() end
@@ -786,6 +792,7 @@ M.get_build = function()
 		mainSocketGroup = build.mainSocketGroup,
 		treeVersion = spec.treeVersion,
 		rev = build.outputRevision,
+		generation = main.__reduxBuildGeneration,
 		unsaved = build.unsaved == true,
 		title = __window_title,
 		targetVersion = build.targetVersion,
@@ -2710,7 +2717,7 @@ local function resolveSlotName(name)
 end
 
 M.equip_item_raw = function(p)
-	ensureBuild()
+	ensureBuild(p)
 	if not p or type(p.text) ~= "string" then error("params.text (raw item text) is required", 0) end
 	local item = new("Item"):Item(p.text)
 	if not item.base then error("could not parse item text (unrecognised base type or format)", 0) end
@@ -2718,7 +2725,6 @@ M.equip_item_raw = function(p)
 	if slotName and not build.itemsTab:IsItemValidForSlot(item, slotName) then
 		error(item.name .. " does not fit " .. slotName, 0)
 	end
-	build.itemsTab:AddItem(item, true)
 	if not slotName then
 		for _, slot in ipairs(build.itemsTab.orderedSlots) do
 			if not slot.inactive and build.itemsTab:IsItemValidForSlot(item, slot.slotName) then
@@ -2730,6 +2736,7 @@ M.equip_item_raw = function(p)
 	if not slotName or not build.itemsTab.slots[slotName] then
 		error("no compatible slot found for this item; pass params.slot", 0)
 	end
+	build.itemsTab:AddItem(item, true)
 	build.itemsTab.slots[slotName]:SetSelItemId(item.id)
 	build.itemsTab:AddUndoState()
 	refresh()
@@ -3972,6 +3979,29 @@ M.item_tooltip = function(p)
 	return r
 end
 
+-- A candidate stays outside the build. Return PoB's comparisons and eligible
+-- active slots together so the UI never guesses equipment compatibility.
+M.item_preview = function(p)
+	ensureBuild(p)
+	if not p or type(p.raw) ~= "string" or not p.raw:match("%S") then
+		error("item text is required", 0)
+	end
+	local item = resolveItem({ raw = p.raw })
+	local slots = array({})
+	local tab = build.itemsTab
+	-- Jewel/socket availability is normally updated by the legacy draw path.
+	M.list_slots()
+	local weaponSet = build.calcsTab.mainEnv.weaponSet or (tab.activeItemSet.useSecondWeaponSet and 2 or 1)
+	for _, slot in ipairs(tab.orderedSlots) do
+		if not slot.inactive and (not slot.weaponSet or slot.weaponSet == weaponSet)
+			and (slot.weaponSet or slot.shown()) and tab:IsItemValidForSlot(item, slot.slotName) then
+			slots[#slots + 1] = { slot = slot.slotName, label = slot.label or slot.slotName }
+		end
+	end
+	return { tooltip = M.item_tooltip({ raw = p.raw, slotName = false }), slots = slots,
+		generation = main.__reduxBuildGeneration, rev = build.outputRevision }
+end
+
 -- PoB's Ctrl+D: whether item tooltips carry the "removing this item" lines.
 -- With no `show` it only reports the current state.
 M.stat_differences = function(p)
@@ -4018,7 +4048,7 @@ end
 -- Create a new item from raw text, or replace an existing one (same id keeps
 -- every slot assignment pointing at the edited item).
 M.item_edit = function(p)
-	ensureBuild()
+	ensureBuild(p)
 	if not p or type(p.text) ~= "string" or p.text == "" then error("params.text is required", 0) end
 	local item = new("Item"):Item(p.text)
 	if not item.base then error("unrecognised item text (check the base type line)", 0) end

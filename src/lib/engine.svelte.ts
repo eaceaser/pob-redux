@@ -363,6 +363,8 @@ export interface Points {
 }
 
 export interface BuildInfo {
+  /** Changes whenever another build is loaded, even with the same name/path. */
+  generation: number;
   name: string;
   file: string | null;
   level: number;
@@ -1526,7 +1528,7 @@ export const engine = {
     call<Skills>("set_gem", { groupIndex, gemIndex, ...patch }),
   listSlots: () => call<SlotsResponse>("list_slots"),
   getItems: () => call<{ items: ItemInfo[] }>("get_items"),
-  equipItemRaw: (text: string, slot?: string) => call<{ ok: boolean; itemId: number; slot: string; itemName: string }>("equip_item_raw", { text, slot }),
+  equipItemRaw: (text: string, slot?: string, generation?: number) => call<{ ok: boolean; itemId: number; slot: string; itemName: string }>("equip_item_raw", { text, slot, generation }),
   equipItem: (slot: string, itemId: number) => call<SlotsResponse>("equip_item", { slot, itemId }),
   deleteItem: (itemId: number) => call<{ items: ItemInfo[] }>("delete_item", { itemId }),
   itemDbList: (opts: { db: "unique" | "rare"; query?: string; type?: string; limit?: number; offset?: number }) =>
@@ -1534,11 +1536,13 @@ export const engine = {
   statDifferences: (show?: boolean) => call<{ show: boolean }>("stat_differences", show === undefined ? undefined : { show }),
   itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; raw?: string; slotName?: string | false }) =>
     call<Tooltip & { rarity: string | null }>("item_tooltip", opts),
+  itemPreview: (raw: string, generation: number) =>
+    call<{ tooltip: Tooltip; slots: { slot: string; label: string }[]; generation: number; rev: number }>("item_preview", { raw, generation }),
   /** `variants`: one entry per pick, a variant's name, a substring of it, or its index. */
   itemDbEquip: (db: "unique" | "rare", name: string, slotName?: string, variants?: (string | number)[]) =>
     call<{ ok: boolean; itemId: number; slot: string; itemName: string; variants: string[]; mods: string[] }>("item_db_equip", { db, name, slotName, variants }),
   itemRaw: (itemId: number) => call<{ raw: string }>("item_raw", { itemId }),
-  itemEdit: (text: string, itemId?: number) => call<{ ok: boolean; itemId: number; name: string }>("item_edit", { text, itemId }),
+  itemEdit: (text: string, itemId?: number, generation?: number) => call<{ ok: boolean; itemId: number; name: string }>("item_edit", { text, itemId, generation }),
   setWeaponSet: (set: 1 | 2) => call<SlotsResponse>("set_weapon_set", { set }),
   craftBases: () => call<{ types: string[]; bases: Record<string, CraftBase[]> }>("craft_bases"),
   craftItem: (opts: { type: string; baseName: string; rarity?: string; title?: string; equip?: boolean }) =>
