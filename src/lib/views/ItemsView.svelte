@@ -54,6 +54,7 @@
   let previewLoading = $state(false);
   let previewCommitting = $state(false);
   let previewSlot = $state("");
+  let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
   let previewStamp = 0;
   let alive = true;
   const generation = untrack(() => build.info!.generation);
@@ -67,6 +68,7 @@
 
   function discardPreview() {
     previewStamp++;
+    pendingPaste = null;
     preview = null;
     previewError = null;
     previewLoading = false;
@@ -118,13 +120,14 @@
   }
 
   async function pasteItem() {
-    if (previewCommitting || build.busy > 0) return;
+    if (previewCommitting) return;
     const stamp = ++previewStamp;
+    pendingPaste = null;
     previewLoading = true;
     previewError = null;
     try {
       const text = (await readText()) ?? "";
-      if (alive && stamp === previewStamp) await requestPreview(text, stamp);
+      if (alive && stamp === previewStamp) pendingPaste = { text, stamp };
     } catch (e) {
       if (alive && stamp === previewStamp) {
         previewError = m.items_paste_failed({ error: String(e) });
@@ -132,6 +135,15 @@
       }
     }
   }
+
+  $effect(() => {
+    const pending = pendingPaste;
+    if (!pending || build.busy > 0) return;
+    untrack(() => {
+      pendingPaste = null;
+      if (alive && pending.stamp === previewStamp) void requestPreview(pending.text, pending.stamp);
+    });
+  });
 
   function editPreview() {
     editItemId = null;
@@ -472,7 +484,7 @@
     <span class="vr"></span>
     <button class="btn sm" onclick={openCraft}>{m.items_craft()}</button>
     <button class="btn sm" onclick={() => openEdit(null)} disabled={previewCommitting}>{m.items_new_from_text()}</button>
-    <button class="btn sm" onclick={pasteItem} disabled={previewCommitting || build.busy > 0} title={m.items_paste_hint()}>{m.items_paste()}</button>
+    <button class="btn sm" onclick={pasteItem} disabled={previewCommitting} title={m.items_paste_hint()}>{m.items_paste()}</button>
     <button class="btn sm ghost" title={m.items_trader_title()} onclick={() => openTrader(null)}>{m.items_trader()}</button>
     {#if statDiff !== null}
       <span class="vr"></span>
