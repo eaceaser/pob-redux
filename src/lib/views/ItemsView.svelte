@@ -45,6 +45,7 @@
   let editOpen = $state(false);
   let editText = $state("");
   let editItemId = $state<number | null>(null);
+  let editingPreview = $state(false);
   let editError = $state<string | null>(null);
   let editBusy = $state(false);
 
@@ -74,11 +75,15 @@
     previewLoading = false;
   }
 
-  async function requestPreview(text: string, stamp = ++previewStamp) {
+  async function requestPreview(text: string, stamp = ++previewStamp, normalise?: boolean) {
     previewLoading = true;
     previewError = null;
     try {
       if (!text.trim()) throw new Error(m.items_paste_empty());
+      if (normalise !== undefined) {
+        text = (await engine.prepareItemPreview(text, generation, normalise)).raw;
+        if (!alive || stamp !== previewStamp) return false;
+      }
       let result: Awaited<ReturnType<typeof engine.itemPreview>>;
       let customization: ItemCustomization;
       for (;;) {
@@ -141,12 +146,13 @@
     if (!pending || build.busy > 0) return;
     untrack(() => {
       pendingPaste = null;
-      if (alive && pending.stamp === previewStamp) void requestPreview(pending.text, pending.stamp);
+      if (alive && pending.stamp === previewStamp) void requestPreview(pending.text, pending.stamp, true);
     });
   });
 
   function editPreview() {
     editItemId = null;
+    editingPreview = true;
     editText = preview?.text ?? "";
     editError = null;
     editOpen = true;
@@ -401,6 +407,7 @@
   async function openEdit(itemId: number | null) {
     editError = null;
     editItemId = itemId;
+    editingPreview = false;
     if (itemId != null) {
       const r = await engine.itemRaw(itemId).catch(() => null);
       editText = r?.raw ?? "";
@@ -415,7 +422,7 @@
     editError = null;
     try {
       if (editItemId == null) {
-        if (await requestPreview(editText)) editOpen = false;
+        if (await requestPreview(editText, undefined, !editingPreview)) editOpen = false;
         else editError = previewError;
         return;
       }

@@ -252,7 +252,7 @@ fn preview_is_temporary_and_commit_matches_candidate() {
         }
         assert!(
             lines(&weapon).contains("0%"),
-            "preview must retain the pasted quality"
+            "preview refresh must retain the candidate quality"
         );
         assert_eq!(snapshot(&engine), before);
     }
@@ -889,6 +889,226 @@ fn crafted_customization_preserves_custom_edits_across_affix_changes() {
             .unwrap();
         assert_eq!(data["raw"], roundtrip["raw"]);
     }
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+fn prepared_like_legacy(engine: &Engine, raw: &str, normalise: bool) -> Value {
+    let before = snapshot(engine);
+    let prepared = engine
+        .call(
+            "item_prepare_preview",
+            &json!({"raw":raw,"normalise":normalise}),
+        )
+        .unwrap();
+    let preview = engine.call("item_preview", &prepared).unwrap();
+    assert_eq!(
+        snapshot(engine),
+        before,
+        "paste preparation changed the build"
+    );
+    let legacy = engine.eval(&format!(r#"
+        local tab = launch.main.modes.BUILD.itemsTab
+        local previous = tab.displayItem
+        tab:CreateDisplayItemFromRaw([=[{raw}]=], {normalise})
+        local raw = tab.displayItem:BuildRaw()
+        local lines = {{}}
+        for _, line in ipairs(tab.displayItemTooltip.lines) do
+            if line.text and not line.text:find("Tip: Hold Shift", 1, true) then lines[#lines + 1] = line.text end
+        end
+        tab:SetDisplayItem(previous)
+        return {{ raw = raw, tooltip = table.concat(lines, "\n") }}
+    "#)).unwrap();
+    assert_eq!(prepared["raw"], legacy["raw"]);
+    assert_eq!(
+        lines(&preview)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        legacy["tooltip"].as_str().unwrap()
+    );
+    engine.call("item_customization", &prepared).unwrap()
+}
+
+#[test]
+fn paste_defaults_match_legacy() {
+    let root = std::env::var_os("POB_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../src-tauri/resources/pob")
+        });
+    if !root.join("Launch.lua").is_file() {
+        return;
+    }
+    let user_dir = std::env::temp_dir().join(format!("pob-paste-defaults-{}", std::process::id()));
+    let engine = Engine::boot(EngineConfig {
+        pob_root: root,
+        user_dir: user_dir.clone(),
+    })
+    .unwrap();
+    engine.call("new_build", &json!({})).unwrap();
+    let poe2 = engine.call("version", &Value::Null).unwrap()["game"] == "poe2";
+    let base = if poe2 { "Full Plate" } else { "Plate Vest" };
+    let armour = format!(
+        "Rarity: Rare\nPaste Armour\n{base}\nQuality: +7%\nItem Level: 80\nImplicits: 0\n+70 to maximum Life"
+    );
+    engine.eval("launch.main.defaultItemQuality = 15").unwrap();
+    let prepared = prepared_like_legacy(&engine, &armour, true);
+    assert_eq!(prepared["quality"], if poe2 { 15 } else { 20 });
+    assert_eq!(prepared_like_legacy(&engine, &armour, false)["quality"], 7);
+    for suffix in ["\nCorrupted", "\nMirrored"] {
+        assert_eq!(
+            prepared_like_legacy(&engine, &format!("{armour}{suffix}"), true)["quality"],
+            7
+        );
+    }
+    prepared_like_legacy(&engine, &armour.replace("+7%", "+30%"), true);
+
+    let source = if poe2 {
+        let socketed = engine
+            .call(
+                "item_customize",
+                &json!({"raw":armour,"operation":"rune_sockets","count":1}),
+            )
+            .unwrap();
+        let rune = socketed["runes"]["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] != "None")
+            .unwrap();
+        engine
+            .call(
+                "item_customize",
+                &json!({"raw":socketed["raw"],"operation":"rune","index":1,"name":rune["name"]}),
+            )
+            .unwrap()["raw"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    } else {
+        format!(
+            "Rarity: Rare\nSource Armour\n{base}\nSearing Exarch Item\nImplicits: 1\n+12% to Fire Resistance\n+90 to maximum Life"
+        )
+    };
+    engine
+        .call(
+            "equip_item_raw",
+            &json!({"text":source,"slot":"Body Armour"}),
+        )
+        .unwrap();
+    let migration = if poe2 {
+        "migrateAugments"
+    } else {
+        "migrateEldritchImplicits"
+    };
+    engine
+        .eval(&format!("launch.main.{migration} = true"))
+        .unwrap();
+    let migrated = prepared_like_legacy(&engine, &armour, true);
+    if poe2 {
+        assert_ne!(migrated["runes"]["runes"][0], "None");
+        assert_eq!(migrated["runes"]["runes"].as_array().unwrap().len(), 1);
+    } else {
+        assert!(
+            migrated["raw"]
+                .as_str()
+                .unwrap()
+                .contains("Searing Exarch Item")
+        );
+        assert!(
+            migrated["raw"]
+                .as_str()
+                .unwrap()
+                .contains("+12% to Fire Resistance")
+        );
+    }
+    prepared_like_legacy(&engine, &source, true);
+    prepared_like_legacy(&engine, &armour, false);
+    prepared_like_legacy(&engine, &format!("{armour}\nCorrupted"), true);
+    engine
+        .eval(&format!("launch.main.{migration} = false"))
+        .unwrap();
+    let unmigrated = prepared_like_legacy(&engine, &armour, true);
+    assert_ne!(migrated["raw"], unmigrated["raw"]);
+
+    let amulet = "Rarity: Rare\nPaste Amulet\nJade Amulet\nImplicits: 0\n+40 to maximum Life";
+    let anoints = engine
+        .call("item_anoints", &json!({"raw":amulet,"withNodes":true}))
+        .unwrap();
+    let node = anoints["nodes"][0]["name"].as_str().unwrap();
+    engine
+        .call(
+            "equip_item_raw",
+            &json!({"text":format!("{amulet}\n{{enchant}}Allocates {node}"),"slot":"Amulet"}),
+        )
+        .unwrap();
+    let anointed = prepared_like_legacy(&engine, amulet, true);
+    assert!(
+        anointed["raw"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("Allocates {node}"))
+    );
+    let other_node = anoints["nodes"][1]["name"].as_str().unwrap();
+    let preserved = prepared_like_legacy(
+        &engine,
+        &format!("{amulet}\n{{enchant}}Allocates {other_node}"),
+        true,
+    );
+    assert!(
+        preserved["raw"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("Allocates {other_node}"))
+    );
+    prepared_like_legacy(&engine, amulet, false);
+
+    let edited = engine
+        .call(
+            "item_customize",
+            &json!({"raw":migrated["raw"],"operation":"props","quality":3}),
+        )
+        .unwrap();
+    engine
+        .call("item_preview", &json!({"raw":edited["raw"]}))
+        .unwrap();
+    assert_eq!(
+        engine
+            .call("item_customization", &json!({"raw":edited["raw"]}))
+            .unwrap()["quality"],
+        3
+    );
+    let added = engine
+        .call(
+            "equip_item_raw",
+            &json!({"text":edited["raw"],"slot":"Body Armour"}),
+        )
+        .unwrap();
+    assert_eq!(
+        engine
+            .call("item_customization", &json!({"itemId":added["itemId"]}))
+            .unwrap()["raw"],
+        edited["raw"]
+    );
+    for raw in ["", "not an item"] {
+        assert!(
+            engine
+                .call("item_prepare_preview", &json!({"raw":raw}))
+                .is_err()
+        );
+    }
+    let generation = engine.call("get_build", &Value::Null).unwrap()["generation"].clone();
+    engine.call("new_build", &json!({})).unwrap();
+    assert!(
+        engine
+            .call(
+                "item_prepare_preview",
+                &json!({"raw":armour,"generation":generation})
+            )
+            .is_err()
+    );
     drop(engine);
     std::fs::remove_dir_all(user_dir).unwrap();
 }

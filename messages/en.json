@@ -837,7 +837,7 @@
   "items_paste_failed": "Could not read the clipboard. Use New item from text to paste manually. {error}",
   "items_preview_title": "Item preview",
   "items_preview_loading": "Calculating item preview…",
-  "items_preview_note": "Comparing as pasted. This item has not been added to your build. Leaving Items discards the preview.",
+  "items_preview_note": "This item has not been added to your build. Leaving Items discards the preview.",
   "items_preview_discard": "Discard",
   "items_preview_edit": "Edit text",
   "items_preview_add": "Add to build",
