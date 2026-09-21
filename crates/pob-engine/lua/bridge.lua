@@ -3967,7 +3967,7 @@ M.item_tooltip = function(p)
 		slot = slotName and build.itemsTab.slots[slotName] or nil
 	end
 	local tt = new("Tooltip"):Tooltip()
-	build.itemsTab:AddItemTooltip(tt, item, slot, dbMode and p.itemId == nil)
+	build.itemsTab:AddItemTooltip(tt, item, slot, dbMode and p.itemId == nil and p.dbMode ~= false)
 	local r = tooltipPayload(tt)
 	-- PoB's Shift-hover tip describes its own window; there is no such hover here.
 	local kept = array({})
@@ -3998,7 +3998,7 @@ M.item_preview = function(p)
 			slots[#slots + 1] = { slot = slot.slotName, label = slot.label or slot.slotName }
 		end
 	end
-	return { tooltip = M.item_tooltip({ raw = p.raw, slotName = false }), slots = slots,
+	return { tooltip = M.item_tooltip({ raw = p.raw, slotName = false, dbMode = false }), slots = slots,
 		generation = main.__reduxBuildGeneration, rev = build.outputRevision }
 end
 
@@ -4063,17 +4063,34 @@ M.item_edit = function(p)
 	return { ok = true, itemId = item.id, name = item.name }
 end
 
-local function requireItem(p)
-	local item = build.itemsTab.items[tonumber(p and p.itemId) or -1]
-	if not item then error("unknown item id " .. tostring(p and p.itemId), 0) end
-	return item
-end
-
-local function commitItemEdit(item)
-	item:BuildAndParseRaw()
-	build.itemsTab:PopulateSlots()
-	build.itemsTab:AddUndoState()
-	refresh()
+local requireItem, commitItemEdit
+do
+	-- Cache by request, not by text: nested readers/setters share the same
+	-- standalone object, while separate requests can never share a draft.
+	local requests = setmetatable({}, { __mode = "k" })
+	local drafts = setmetatable({}, { __mode = "k" })
+	requireItem = function(p)
+		ensureBuild(p)
+		if p and p.raw ~= nil then
+			if p.itemId ~= nil then error("provide raw or itemId, not both", 0) end
+			if not requests[p] then
+				if type(p.raw) ~= "string" then error("raw item text is required", 0) end
+				requests[p] = resolveItem({ raw = p.raw })
+				drafts[requests[p]] = true
+			end
+			return requests[p]
+		end
+		local item = build.itemsTab.items[tonumber(p and p.itemId) or -1]
+		if not item then error("unknown item id " .. tostring(p and p.itemId), 0) end
+		return item
+	end
+	commitItemEdit = function(item)
+		item:BuildAndParseRaw()
+		if drafts[item] then return end
+		build.itemsTab:PopulateSlots()
+		build.itemsTab:AddUndoState()
+		refresh()
+	end
 end
 
 -- ---------------------------------------------------------------------------
@@ -4485,7 +4502,7 @@ M.item_affixes = function(p)
 			out[#out + 1] = {
 				index = i,
 				modId = cur.modId,
-				range = cur.range or (main.defaultItemAffixQuality or 0.5),
+				range = type(cur.range) == "table" and null or (cur.range or (main.defaultItemAffixQuality or 0.5)),
 				label = curMod and table.concat(curMod, "/") or null,
 				affix = curMod and opt(curMod.affix) or null,
 				options = affixSlotOptions(item, affixType, tableName, i),
@@ -4508,14 +4525,21 @@ M.set_item_affix = function(p)
 	local tableName = p.table == "suffixes" and "suffixes" or "prefixes"
 	local index = tonumber(p.index) or 1
 	local limit = item[tableName].limit or (item.affixLimit / 2)
-	if index < 1 or index > limit then error("affix index out of range", 0) end
+	if index % 1 ~= 0 or index < 1 or index > limit then error("affix index out of range", 0) end
+	local modId = p.modId or "None"
+	local valid = modId == "None"
+	for _, option in ipairs(affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)) do
+		if option.modId == modId then valid = true; break end
+	end
+	if not valid then error("affix is not compatible with this item", 0) end
+	if p.range ~= nil and (type(p.range) ~= "number" or p.range < 0 or p.range > 1) then error("invalid affix roll", 0) end
 	item[tableName][index] = {
-		modId = p.modId or "None",
+		modId = modId,
 		range = tonumber(p.range) or (main.defaultItemAffixQuality or 0.5),
 	}
 	item:Craft()
 	commitItemEdit(item)
-	return M.item_affixes({ itemId = p.itemId })
+	return M.item_affixes(p)
 end
 
 M.item_runes = function(p)
@@ -4546,11 +4570,16 @@ M.set_item_rune = function(p)
 	ensureBuild()
 	local item = requireItem(p)
 	local index = tonumber(p and p.index)
-	if not index or index < 1 or index > (item.itemSocketCount or 0) then error("rune index out of range", 0) end
+	if not index or index % 1 ~= 0 or index < 1 or index > (item.itemSocketCount or 0) then error("rune index out of range", 0) end
+	local valid = false
+	for _, rune in ipairs(build.itemsTab:GetValidRunesForItem(item)) do
+		if rune.name == (p.name or "None") then valid = true; break end
+	end
+	if not valid then error("rune is not compatible with this item", 0) end
 	item.runes[index] = p.name or "None"
 	item:UpdateRunes()
 	commitItemEdit(item)
-	return M.item_runes({ itemId = p.itemId })
+	return M.item_runes(p)
 end
 
 -- Catalysts (rings/amulets): same list and defaults as ItemsTab's dropdown.
@@ -4564,7 +4593,7 @@ local catalystNames = {
 M.set_item_props = function(p)
 	ensureBuild()
 	local item = requireItem(p)
-	if p.quality ~= nil and item.base and item.base.quality then
+	if p.quality ~= nil and item.base and (item.base.quality or (not IS_POE2 and (item.base.weapon or item.base.armour or item.base.flask or item.base.tincture))) then
 		item.quality = math.max(0, math.min(tonumber(p.quality) or 0, 50))
 	end
 	if p.itemLevel ~= nil then
@@ -4913,6 +4942,120 @@ M.catalyst_info = function(p)
 	}
 end
 
+-- Shared controls for saved items and standalone candidates. The request-scoped
+-- item resolver and commit helper above keep draft edits out of build/undo state.
+do
+	local lineTables = { explicit = "explicitModLines", implicit = "implicitModLines", enchant = "enchantModLines" }
+	local function ranged(line)
+		return not line.extra and type(line.range) ~= "table" and line.line:match("%(%-?[%d%.]+%-%-?[%d%.]+%)") ~= nil
+	end
+	local function singleLine(text)
+		if type(text) ~= "string" or not text:match("%S") or text:find("[\r\n{}]") then
+			error("enter one modifier line without item-text metadata", 0)
+		end
+		return text
+	end
+
+	M.item_customization = function(p)
+		local item = requireItem(p)
+		local lines = array({})
+		for _, section in ipairs({ "implicit", "enchant", "explicit" }) do
+			for index, line in ipairs(item[lineTables[section]] or {}) do
+				if not line.rune then
+					lines[#lines + 1] = { section = section, index = index, text = line.line,
+						disabled = line.disabled == true, range = ranged(line) and (line.range or main.defaultItemAffixQuality or 1) or null,
+						parsed = not line.extra and line.modList and #line.modList > 0 or false }
+				end
+			end
+		end
+		return { raw = item:BuildRaw(), quality = item.quality or 0,
+			canQuality = not not (item.base.quality or (not IS_POE2 and (item.base.weapon or item.base.armour or item.base.flask or item.base.tincture))),
+			itemLevel = item.itemLevel or 1, corrupted = item.corrupted == true,
+			runeSocketLimit = IS_POE2 and (item.base.socketLimit or 0) or 0,
+			affixes = M.item_affixes(p), runes = M.item_runes(p), variants = M.item_variants(p),
+			catalyst = M.catalyst_info(p), modifiers = lines,
+			canCopyAnoints = item.canBeAnointed == true or item.base.type == "Amulet",
+			canCopyAugments = IS_POE2 and (item.base.socketLimit or 0) > 0 }
+	end
+
+	M.item_modifier_options = function(p)
+		local item = requireItem(p)
+		local result = array({})
+		local source = p.source == "Suffix" and "Suffix" or "Prefix"
+		local query = tostring(p.query or ""):lower()
+		for id, mod in pairs(item.affixes or {}) do
+			if mod.type == source and item:GetModSpawnWeight(mod) > 0 then
+				local label = table.concat(mod, " / ")
+				local match = true
+				for word in query:gmatch("%S+") do
+					if not label:lower():find(word, 1, true) then match = false; break end
+				end
+				if match then result[#result + 1] = { id = id, label = label, level = mod.level or 0 } end
+			end
+		end
+		table.sort(result, function(a, b) return a.label == b.label and a.id < b.id or a.label < b.label end)
+		local total = #result
+		while #result > 100 do table.remove(result) end
+		return { options = result, total = total }
+	end
+
+	M.item_customize = function(p)
+		local item = requireItem(p)
+		local setters = { props = M.set_item_props, affix = M.set_item_affix, rune = M.set_item_rune, variant = M.set_item_variant }
+		if setters[p.operation] then
+			setters[p.operation](p)
+		else
+			if p.operation == "normalize" then
+				item:NormaliseQuality()
+			elseif p.operation == "copy_anoints" or p.operation == "copy_augments" then
+				local copy = build.itemsTab.CopyAnointsAndAugments or build.itemsTab.CopyAnointsAndEldritchImplicits
+				if not copy or (p.operation == "copy_augments" and not IS_POE2) then error("copy is not available for this game", 0) end
+				local slotName = p.sourceSlot or item:GetPrimarySlot()
+				local slot = build.itemsTab.slots[slotName]
+				if not slot or not build.itemsTab.items[slot.selItemId] then error("no equipped item in the source slot", 0) end
+				if not build.itemsTab:IsItemValidForSlot(item, slotName) then error("source slot is not compatible with this item", 0) end
+				local enchants = copyTable(item.enchantModLines, true)
+				copy(build.itemsTab, item, p.operation == "copy_augments", true, slotName)
+				if p.operation == "copy_augments" then item.enchantModLines = enchants end
+			elseif p.operation == "rune_sockets" then
+				local limit = IS_POE2 and (item.base.socketLimit or 0) or 0
+				local count = tonumber(p.count)
+				if not count or count % 1 ~= 0 or count < 0 or count > limit then error("invalid rune socket count", 0) end
+				item.itemSocketCount = count
+				item:UpdateRunes()
+			elseif p.operation == "add_modifier" then
+				if p.modId then
+					local mod = item.affixes and item.affixes[p.modId]
+					if not mod or (mod.type ~= "Prefix" and mod.type ~= "Suffix") or item:GetModSpawnWeight(mod) <= 0 then
+						error("modifier is not compatible with this item", 0)
+					end
+					for _, line in ipairs(mod) do
+						table.insert(item.explicitModLines, { line = line, range = main.defaultItemAffixQuality or 0.5,
+							modTags = mod.modTags, [mod.type:lower()] = true, custom = item.crafted or nil })
+					end
+				else
+					table.insert(item.explicitModLines, { line = singleLine(p.text), custom = true, range = main.defaultItemAffixQuality or 0.5 })
+				end
+			elseif p.operation == "modifier" then
+				local list = item[lineTables[p.section] or ""]
+				local index = tonumber(p.index)
+				local line = list and index and list[index]
+				if not line or line.rune then error("unknown modifier", 0) end
+				if p.text ~= nil then singleLine(p.text) end
+				if p.range ~= nil and (not ranged(line) or type(p.range) ~= "number" or p.range < 0 or p.range > 1) then error("invalid modifier roll", 0) end
+				if p.remove then table.remove(list, index)
+				else
+					if p.text ~= nil then line.line = p.text end
+					if p.disabled ~= nil then line.disabled = p.disabled == true end
+					if p.range ~= nil then line.range = p.range end
+				end
+			else error("unknown customization operation", 0) end
+			commitItemEdit(item)
+		end
+		return M.item_customization(p)
+	end
+end
+
 -- ---------------------------------------------------------------------------
 -- Anoints: Distilled Emotion recipes allocating a notable (enchant line
 -- "Allocates <name>"), mirroring ItemsTab:AnointDisplayItem/anointItem.
@@ -4947,6 +5090,7 @@ end
 
 M.set_item_anoint = function(p)
 	ensureBuild()
+	if p and p.raw ~= nil then error("anoint selection requires a saved item", 0) end
 	local item = requireItem(p)
 	local node
 	if p.nodeId ~= nil and p.nodeId ~= null then
@@ -5011,6 +5155,7 @@ end
 
 M.corrupt_item = function(p)
 	ensureBuild()
+	if p and p.raw ~= nil then error("corruption crafting requires a saved item", 0) end
 	local item0 = requireItem(p)
 	local item = new("Item"):Item(item0:BuildRaw())
 	item.id = item0.id

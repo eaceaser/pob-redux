@@ -6,15 +6,14 @@
     type AnointInfo,
     type CorruptionInfo,
     type CraftBase,
-    type ItemAffixes,
+    type ItemCustomization,
+    type ItemCustomizationEdit,
     type ItemDbRow,
     type ItemInfo,
-    type ItemRunes,
     type ItemSetInfo,
     type ItemCrucible,
     type ItemShape,
     type ItemSocket,
-    type ItemVariants,
     type SharedItem,
     type SlotsResponse,
     type Tooltip,
@@ -24,6 +23,7 @@
   import PobText from "$lib/components/PobText.svelte";
   import { stripPobText } from "$lib/pobtext";
   import EnchantDialog from "$lib/components/EnchantDialog.svelte";
+  import ItemCustomizationControls from "$lib/components/ItemCustomizationControls.svelte";
   import ItemFrame from "$lib/components/ItemFrame.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
   import TraderWindow from "$lib/components/TraderWindow.svelte";
@@ -54,7 +54,7 @@
   let editError = $state<string | null>(null);
   let editBusy = $state(false);
 
-  type Preview = Awaited<ReturnType<typeof engine.itemPreview>> & { text: string };
+  type Preview = Awaited<ReturnType<typeof engine.itemPreview>> & { text: string; customization: ItemCustomization };
   let preview = $state<Preview | null>(null);
   let previewError = $state<string | null>(null);
   let previewLoading = $state(false);
@@ -84,25 +84,44 @@
     try {
       if (!text.trim()) throw new Error(m.items_paste_empty());
       let result: Awaited<ReturnType<typeof engine.itemPreview>>;
+      let customization: ItemCustomization;
       // A build change while awaiting a candidate must recalculate that same
       // candidate, not replace it with the previously displayed draft.
       for (;;) {
         const showDifferences = statDiff;
         const revision = build.rev;
-        result = await engine.itemPreview(text, generation);
+        [result, customization] = await Promise.all([
+          engine.itemPreview(text, generation),
+          engine.itemCustomization({ raw: text, generation }),
+        ]);
         if (!alive || stamp !== previewStamp) return false;
         if (revision !== build.rev || showDifferences !== statDiff) continue;
         // An external mutation may have reached Lua before build.sync(). Wait
         // for the next UI revision instead of repeatedly querying the engine.
         break;
       }
-      preview = { ...result, text };
+      preview = { ...result, text, customization };
       if (!result.slots.some((s) => s.slot === previewSlot)) previewSlot = result.slots[0]?.slot ?? "";
       hideTip();
       return true;
     } catch (e) {
       if (alive && stamp === previewStamp) previewError = String(e);
       return false;
+    } finally {
+      if (alive && stamp === previewStamp) previewLoading = false;
+    }
+  }
+
+  async function customizePreview(edit: ItemCustomizationEdit) {
+    if (!preview || previewLoading || previewCommitting) return;
+    const stamp = ++previewStamp;
+    previewLoading = true;
+    previewError = null;
+    try {
+      const updated = await engine.customizeItem({ raw: preview.text, generation }, edit);
+      if (alive && stamp === previewStamp) await requestPreview(updated.raw, stamp);
+    } catch (e) {
+      if (alive && stamp === previewStamp) previewError = String(e);
     } finally {
       if (alive && stamp === previewStamp) previewLoading = false;
     }
@@ -176,19 +195,12 @@
   let craftEquip = $state(true);
 
   // selected item detail (tooltip, affixes, runes, modify flags)
-  let detail = $state<{ tt: Tooltip; affixes: ItemAffixes | null; runes: ItemRunes | null } | null>(null);
+  let detail = $state<{ itemId: number; tt: Tooltip; customization: ItemCustomization } | null>(null);
   let anointFlags = $state<AnointInfo | null>(null);
   let corruptInfo = $state<CorruptionInfo | null>(null);
-  let catInfo = $state<{ usable: boolean; names: string[]; catalyst: number; quality: number } | null>(null);
   let shape = $state<ItemShape | null>(null);
-  let variants = $state<ItemVariants | null>(null);
   let enchantOpen = $state(false);
 
-  function setVariant(pick: number, index: number) {
-    if (selectedItem == null || !variants) return;
-    const next = variants.picks.map((p, i) => (i === pick ? index : p));
-    build.run(() => engine.setItemVariant(selectedItem!, next).then((r) => (variants = r)));
-  }
   let crucible = $state<ItemCrucible | null>(null);
 
   function setCrucible(node: number, id: string) {
@@ -242,12 +254,12 @@
     untrack(() => {
       if (id == null) {
         detail = null;
-        anointFlags = corruptInfo = catInfo = null;
+        anointFlags = corruptInfo = null;
         return;
       }
-      Promise.all([engine.itemTooltip({ itemId: id }), engine.itemAffixes(id), engine.itemRunes(id)])
-        .then(([t, a, r]) => {
-          if (selectedItem === id) detail = { tt: t, affixes: a.crafted ? a : null, runes: r.socketCount > 0 ? r : null };
+      Promise.all([engine.itemTooltip({ itemId: id }), engine.itemCustomization({ itemId: id, generation })])
+        .then(([t, customization]) => {
+          if (selectedItem === id) detail = { itemId: id, tt: t, customization };
         })
         .catch(() => {
           detail = null;
@@ -258,10 +270,6 @@
         .then((r) => (shape = r))
         .catch(() => (shape = null));
       engine
-        .itemVariants(id)
-        .then((r) => (variants = r.names.length > 1 ? r : null))
-        .catch(() => (variants = null));
-      engine
         .itemEnchants(id)
         .then((r) => (enchantable = r.available))
         .catch(() => (enchantable = false));
@@ -269,15 +277,14 @@
         .itemCrucible(id)
         .then((r) => (crucible = r.available ? r : null))
         .catch(() => (crucible = null));
-      Promise.all([engine.itemAnoints(id), engine.itemCorruptions(id), engine.catalystInfo(id)])
-        .then(([an, co, ca]) => {
+      Promise.all([engine.itemAnoints(id), engine.itemCorruptions(id)])
+        .then(([an, co]) => {
           if (selectedItem === id) {
             anointFlags = an;
             corruptInfo = co;
-            catInfo = ca;
           }
         })
-        .catch(() => (anointFlags = corruptInfo = catInfo = null));
+        .catch(() => (anointFlags = corruptInfo = null));
     });
   });
 
@@ -709,8 +716,15 @@
           {:else}
             <p class="dim small">{m.items_preview_no_slot()}</p>
           {/if}
+          <ItemCustomizationControls
+            data={preview.customization}
+            target={{ raw: preview.text, generation }}
+            busy={previewLoading || previewCommitting || build.busy > 0}
+            sourceSlot={previewSlot || undefined}
+            onchange={customizePreview}
+          />
         </div>
-      {:else if selectedItem != null && detail}
+      {:else if selectedItem != null && detail?.itemId === selectedItem}
         <div class="panel-head">
           <span class="label">{m.items_item()}</span>
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
@@ -733,84 +747,12 @@
             </div>
           {/if}
 
-          {#if detail.affixes}
-            <div class="craftsec">
-              <div class="label">{m.items_prefixes()}</div>
-              {#each detail.affixes.prefixes as slot (slot.index)}
-                <div class="affix">
-                  <select class="select" value={slot.modId} onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "prefixes", slot.index, (e.target as HTMLSelectElement).value, slot.range))}>
-                    <option value="None">{m.items_empty_prefix()}</option>
-                    {#each slot.options as o (o.modId)}
-                      <option value={o.modId}>{(o.affix ? o.affix + "  ·  " : "") + o.label}</option>
-                    {/each}
-                  </select>
-                  {#if slot.modId !== "None"}
-                    <input
-                      class="range"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(slot.range * 100)}
-                      title={`Roll: ${Math.round(slot.range * 100)}%`}
-                      onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "prefixes", slot.index, slot.modId, Number((e.target as HTMLInputElement).value) / 100))}
-                    />
-                  {/if}
-                </div>
-              {/each}
-              <div class="label">{m.items_suffixes()}</div>
-              {#each detail.affixes.suffixes as slot (slot.index)}
-                <div class="affix">
-                  <select class="select" value={slot.modId} onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "suffixes", slot.index, (e.target as HTMLSelectElement).value, slot.range))}>
-                    <option value="None">{m.items_empty_suffix()}</option>
-                    {#each slot.options as o (o.modId)}
-                      <option value={o.modId}>{(o.affix ? o.affix + "  ·  " : "") + o.label}</option>
-                    {/each}
-                  </select>
-                  {#if slot.modId !== "None"}
-                    <input
-                      class="range"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(slot.range * 100)}
-                      title={`Roll: ${Math.round(slot.range * 100)}%`}
-                      onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "suffixes", slot.index, slot.modId, Number((e.target as HTMLInputElement).value) / 100))}
-                    />
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          {#if detail.runes}
-            <div class="craftsec">
-              <div class="label">{m.items_runes()}</div>
-              {#each detail.runes.runes as rune, i}
-                <div class="affix">
-                  <select class="select" value={rune} onchange={(e) => selectedItem != null && build.run(() => engine.setItemRune(selectedItem!, i + 1, (e.target as HTMLSelectElement).value))}>
-                    {#each detail.runes.options as o (o.name)}
-                      <option value={o.name} title={o.lines.join("\n")}>{o.name === "None" ? "— empty socket —" : `${o.name}  ·  ${o.label ?? o.lines[0] ?? ""}`}</option>
-                    {/each}
-                  </select>
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          {#if variants}
-            <div class="craftsec">
-              <div class="label">{variants.picks.length > 1 ? "Variants" : "Variant"}</div>
-              {#each variants.picks as pick, i (i)}
-                <div class="affix">
-                  <select class="select" value={pick} title={variants.picks.length > 1 ? `Pick ${i + 1}` : "Variant"} onchange={(e) => setVariant(i, Number((e.target as HTMLSelectElement).value))}>
-                    {#each variants.names as name, n (n)}
-                      <option value={n + 1}>{name}</option>
-                    {/each}
-                  </select>
-                </div>
-              {/each}
-            </div>
-          {/if}
+          <ItemCustomizationControls
+            data={detail.customization}
+            target={{ itemId: selectedItem, generation }}
+            busy={build.busy > 0}
+            onchange={(edit) => build.run(() => engine.customizeItem({ itemId: selectedItem!, generation }, edit))}
+          />
 
           <div class="craftsec">
             <div class="label">{m.items_modify()}</div>
@@ -914,32 +856,7 @@
                 {/if}
               </div>
             {/if}
-            {#if catInfo?.usable}
-              <div class="affix">
-                <select
-                  class="select"
-                  value={catInfo.catalyst}
-                  title={m.items_catalyst()}
-                  onchange={(e) => selectedItem != null && build.run(() => engine.setItemProps(selectedItem!, { catalyst: Number((e.target as HTMLSelectElement).value) }))}
-                >
-                  <option value={0}>{m.items_catalyst_none()}</option>
-                  {#each catInfo.names as n, i}
-                    <option value={i + 1}>{m.items_catalyst_named({ name: n })}</option>
-                  {/each}
-                </select>
-                {#if catInfo.catalyst > 0}
-                  <input
-                    class="input catq num"
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={catInfo.quality}
-                    title={m.items_catalyst_quality_title()}
-                    onchange={(e) => selectedItem != null && build.run(() => engine.setItemProps(selectedItem!, { catalystQuality: Number((e.target as HTMLInputElement).value) }))}
-                  />
-                {/if}
-              </div>
-            {/if}
+
           </div>
         </div>
       {:else}
@@ -1195,10 +1112,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-  }
-  .catq {
-    width: 64px;
-    text-align: right;
   }
   .grow2 {
     flex: 1;
@@ -1521,16 +1434,6 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-  .affix {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .affix .select {
-    height: 24px;
-    font-size: var(--fs-xs);
-    width: 100%;
   }
   .range {
     width: 100%;

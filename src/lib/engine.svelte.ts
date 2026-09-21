@@ -1019,7 +1019,7 @@ export interface AffixOption {
 export interface AffixSlot {
   index: number;
   modId: string;
-  range: number;
+  range?: number | null;
   label: string | null;
   affix: string | null;
   options: AffixOption[];
@@ -1045,6 +1045,34 @@ export interface ItemRunes {
   socketCount: number;
   runes: string[];
   options: RuneOption[];
+}
+
+export type ItemTarget = { itemId: number; raw?: never; generation?: number } | { raw: string; itemId?: never; generation: number };
+export type ItemCustomizationEdit =
+  | { operation: "props"; quality?: number; itemLevel?: number; corrupted?: boolean; catalyst?: number; catalystQuality?: number }
+  | { operation: "affix"; table: "prefixes" | "suffixes"; index: number; modId: string; range?: number }
+  | { operation: "rune"; index: number; name: string }
+  | { operation: "variant"; picks: number[] }
+  | { operation: "normalize" }
+  | { operation: "copy_anoints" | "copy_augments"; sourceSlot?: string }
+  | { operation: "rune_sockets"; count: number }
+  | { operation: "add_modifier"; text?: string; modId?: string }
+  | { operation: "modifier"; section: string; index: number; text?: string; disabled?: boolean; remove?: boolean; range?: number };
+
+export interface ItemCustomization {
+  raw: string;
+  quality: number;
+  canQuality: boolean;
+  itemLevel: number;
+  corrupted: boolean;
+  runeSocketLimit: number;
+  canCopyAnoints: boolean;
+  canCopyAugments: boolean;
+  affixes: ItemAffixes;
+  runes: ItemRunes;
+  variants: ItemVariants;
+  catalyst: { usable: boolean; names: string[]; catalyst: number; quality: number };
+  modifiers: { section: string; index: number; text: string; disabled: boolean; range?: number | null; parsed: boolean }[];
 }
 
 export interface ConfigOption {
@@ -1538,6 +1566,10 @@ export const engine = {
     call<Tooltip & { rarity: string | null }>("item_tooltip", opts),
   itemPreview: (raw: string, generation: number) =>
     call<{ tooltip: Tooltip; slots: { slot: string; label: string }[]; generation: number; rev: number }>("item_preview", { raw, generation }),
+  itemCustomization: (target: ItemTarget) => call<ItemCustomization>("item_customization", target),
+  customizeItem: (target: ItemTarget, edit: ItemCustomizationEdit) => call<ItemCustomization>("item_customize", { ...target, ...edit }),
+  itemModifierOptions: (target: ItemTarget, source: "Prefix" | "Suffix", query: string) =>
+    call<{ options: { id: string; label: string; level: number }[]; total: number }>("item_modifier_options", { ...target, source, query }),
   /** `variants`: one entry per pick, a variant's name, a substring of it, or its index. */
   itemDbEquip: (db: "unique" | "rare", name: string, slotName?: string, variants?: (string | number)[]) =>
     call<{ ok: boolean; itemId: number; slot: string; itemName: string; variants: string[]; mods: string[] }>("item_db_equip", { db, name, slotName, variants }),
