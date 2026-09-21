@@ -4697,7 +4697,7 @@ M.item_shape = function(p)
 		canBeInfluenced = item.canBeInfluenced == true,
 		influences = influences,
 		sockets = sockets,
-		socketLimit = (item.base and item.base.socketLimit) or 0,
+		socketLimit = not IS_POE2 and (item.base and item.base.socketLimit) or 0,
 		colours = strArray(SOCKET_COLOURS),
 		abyssalSocketCount = item.abyssalSocketCount or 0,
 		cluster = cluster,
@@ -4804,7 +4804,19 @@ end
 M.set_item_enchant = function(p)
 	ensureBuild()
 	local item = requireItem(p)
-	local slot = math.max(tonumber(p.slot) or 1, 1)
+	local info = M.item_enchants(p)
+	if not info.available then error("this item has no enchantments", 0) end
+	local slot = tonumber(p.slot) or 1
+	if slot % 1 ~= 0 or slot < 1 or slot > (p.remove and #item.enchantModLines or info.slots) then
+		error("invalid enchantment slot", 0)
+	end
+	if not p.remove then
+		local allowed = false
+		for _, line in ipairs(info.lines) do if line == p.line then allowed = true; break end end
+		if not allowed then error("invalid enchantment", 0) end
+		-- Empty later slots append, just as the legacy enchant editor does.
+		slot = math.min(slot, #item.enchantModLines + 1)
+	end
 	item.enchantModLines = item.enchantModLines or {}
 	if p.remove then
 		table.remove(item.enchantModLines, slot)
@@ -4815,7 +4827,7 @@ M.set_item_enchant = function(p)
 		if first then
 			item.enchantModLines = { { crafted = true, line = first }, { crafted = true, line = second } }
 		else
-			if not item.canHaveTwoEnchants and #item.enchantModLines > 1 then
+			if info.slots == 1 and #item.enchantModLines > 1 then
 				item.enchantModLines = { item.enchantModLines[1] }
 			end
 			if #item.enchantModLines >= slot then table.remove(item.enchantModLines, slot) end
@@ -4912,6 +4924,17 @@ M.set_item_crucible = function(p)
 	local pool = build.data.crucible
 	if not pool then error("this game has no crucible mods", 0) end
 	if type(p.selected) ~= "table" then error("params.selected is required", 0) end
+	if not item.base.weapon or #p.selected > CRUCIBLE_NODES then error("invalid crucible tree", 0) end
+	for i, id in ipairs(p.selected) do
+		if id ~= "" then
+			local mod = pool[id]
+			local allowed = false
+			if mod and item:CanHaveMod(mod) then
+				for _, location in ipairs(mod.nodeLocation or {}) do if location == i then allowed = true end end
+			end
+			if not allowed then error("invalid crucible node", 0) end
+		end
+	end
 	item.crucibleModLines = {}
 	for i = 1, CRUCIBLE_NODES do
 		local order = p.selected[i]
@@ -4974,6 +4997,9 @@ do
 			runeSocketLimit = IS_POE2 and (item.base.socketLimit or 0) or 0,
 			affixes = M.item_affixes(p), runes = M.item_runes(p), variants = M.item_variants(p),
 			catalyst = M.catalyst_info(p), modifiers = lines,
+			shape = M.item_shape(p), crucible = M.item_crucible(p),
+			anoints = M.item_anoints(p), corruptions = M.item_corruptions(p),
+			enchantable = M.item_enchants(p).available,
 			canCopyAnoints = item.canBeAnointed == true or item.base.type == "Amulet",
 			canCopyAugments = IS_POE2 and (item.base.socketLimit or 0) > 0 }
 	end
@@ -5001,7 +5027,9 @@ do
 
 	M.item_customize = function(p)
 		local item = requireItem(p)
-		local setters = { props = M.set_item_props, affix = M.set_item_affix, rune = M.set_item_rune, variant = M.set_item_variant }
+		local setters = { props = M.set_item_props, affix = M.set_item_affix, rune = M.set_item_rune, variant = M.set_item_variant,
+			shape = M.set_item_shape, crucible = M.set_item_crucible, enchant = M.set_item_enchant,
+			anoint = M.set_item_anoint, corruption = M.corrupt_item }
 		if setters[p.operation] then
 			setters[p.operation](p)
 		else
@@ -5090,24 +5118,20 @@ end
 
 M.set_item_anoint = function(p)
 	ensureBuild()
-	if p and p.raw ~= nil then error("anoint selection requires a saved item", 0) end
 	local item = requireItem(p)
+	local info = M.item_anoints(p)
+	if not info.anointable then error("this item cannot be anointed", 0) end
 	local node
 	if p.nodeId ~= nil and p.nodeId ~= null then
 		node = build.spec.tree.nodes[tonumber(p.nodeId)]
-		if not node then error("unknown node id " .. tostring(p.nodeId), 0) end
+		if not node or not node.recipe then error("unknown anoint node " .. tostring(p.nodeId), 0) end
 	end
-	local slot = tonumber(p and p.slot) or 1
-	local newItem = new("Item"):Item(item:BuildRaw())
-	newItem.id = item.id
-	if #newItem.enchantModLines >= slot then table.remove(newItem.enchantModLines, slot) end
-	if node then table.insert(newItem.enchantModLines, slot, { enchant = true, line = "Allocates " .. node.dn }) end
-	newItem:BuildAndParseRaw()
-	build.itemsTab:AddItem(newItem, true)
-	build.itemsTab:PopulateSlots()
-	build.itemsTab:AddUndoState()
-	refresh()
-	return M.item_anoints({ itemId = item.id })
+	local slot = tonumber(p.slot) or 1
+	if slot % 1 ~= 0 or slot < 1 or slot > info.slots then error("invalid anoint slot", 0) end
+	if #item.enchantModLines >= slot then table.remove(item.enchantModLines, slot) end
+	if node then table.insert(item.enchantModLines, slot, { enchant = true, line = "Allocates " .. node.dn }) end
+	commitItemEdit(item)
+	return M.item_anoints(p)
 end
 
 -- ---------------------------------------------------------------------------
@@ -5137,7 +5161,7 @@ M.item_corruptions = function(p)
 	local ranges = array({})
 	if item.rarity == "UNIQUE" or item.rarity == "RELIC" then
 		for i, mod in ipairs(item.explicitModLines) do
-			local scaled = itemLib.applyRange(mod.line, mod.range or main.defaultItemAffixQuality, mod.valueScalar or 1, 2)
+			local scaled = itemLib.applyRange(mod.line, mod.range or main.defaultItemAffixQuality or 1, mod.valueScalar or 1, 2)
 			if scaled ~= mod.line and item:CheckModLineVariant(mod) then
 				ranges[#ranges + 1] = { index = i, line = mod.line, current = mod.corruptedRange or 1 }
 			end
@@ -5155,10 +5179,27 @@ end
 
 M.corrupt_item = function(p)
 	ensureBuild()
-	if p and p.raw ~= nil then error("corruption crafting requires a saved item", 0) end
-	local item0 = requireItem(p)
-	local item = new("Item"):Item(item0:BuildRaw())
-	item.id = item0.id
+	local item = requireItem(p)
+	local info = M.item_corruptions(p)
+	if not info.corruptible and not info.corrupted then error("this item cannot be corrupted", 0) end
+	local allowed, groups = {}, {}
+	for _, list in ipairs({ info.mods, info.specialMods }) do
+		for _, mod in ipairs(list) do allowed[mod.id] = true end
+	end
+	if p.modIds and #p.modIds > info.enchantNum then error("too many corruption implicits", 0) end
+	for _, id in ipairs(p.modIds or {}) do
+		local mod = corruptionMods()[id]
+		if not allowed[id] then error("invalid corruption modifier", 0) end
+		if mod.group and groups[mod.group] then error("duplicate corruption group", 0) end
+		if mod.group then groups[mod.group] = true end
+	end
+	local ranges = {}
+	for _, r in ipairs(info.ranges) do ranges[r.index] = true end
+	for _, r in ipairs(p.ranges or {}) do
+		if not ranges[r.index] or type(r.value) ~= "number" or r.value < 0.78 or r.value > 1.22 then
+			error("invalid corruption roll", 0)
+		end
+	end
 	item.corrupted = true
 	if p and p.modIds and #p.modIds > 0 then
 		local newEnchant = {}
@@ -5194,11 +5235,7 @@ M.corrupt_item = function(p)
 			end
 		end
 	end
-	item:BuildAndParseRaw()
-	build.itemsTab:AddItem(item, true)
-	build.itemsTab:PopulateSlots()
-	build.itemsTab:AddUndoState()
-	refresh()
+	commitItemEdit(item)
 	return { ok = true }
 end
 

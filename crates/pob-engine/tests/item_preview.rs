@@ -517,3 +517,225 @@ fn customization_edits_drafts_and_commits_saved_items() {
     drop(engine);
     std::fs::remove_dir_all(user_dir).unwrap();
 }
+
+#[test]
+fn advanced_customization_has_saved_and_draft_parity() {
+    let root = std::env::var_os("POB_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../src-tauri/resources/pob")
+        });
+    if !root.join("Launch.lua").is_file() {
+        return;
+    }
+    let user_dir = std::env::temp_dir().join(format!("pob-item-parity-{}", std::process::id()));
+    let engine = Engine::boot(EngineConfig {
+        pob_root: root,
+        user_dir: user_dir.clone(),
+    })
+    .unwrap();
+    engine
+        .call("new_build", &json!({"name":"Advanced customization"}))
+        .unwrap();
+    let generation = engine.call("get_build", &Value::Null).unwrap()["generation"].clone();
+    let amulet = "Rarity: Rare\nParity Amulet\nJade Amulet\nImplicits: 0\n+40 to maximum Life";
+    let anoints = engine
+        .call("item_anoints", &json!({"raw":amulet,"withNodes":true}))
+        .unwrap();
+    let node = &anoints["nodes"][0];
+    let mut cases = vec![
+        (
+            amulet.to_owned(),
+            json!({"operation":"anoint","nodeId":node["id"],"slot":1}),
+        ),
+        (
+            format!(
+                "{amulet}\n{{enchant}}Allocates {}",
+                node["name"].as_str().unwrap()
+            ),
+            json!({"operation":"anoint","nodeId":null,"slot":1}),
+        ),
+    ];
+    let corruption = engine
+        .call("item_corruptions", &json!({"raw":amulet}))
+        .unwrap();
+    assert!(!corruption["mods"].as_array().unwrap().is_empty());
+    cases.push((
+        amulet.to_owned(),
+        json!({"operation":"corruption","modIds":[corruption["mods"][0]["id"]]}),
+    ));
+    let unique = "Rarity: Unique\nParity Unique\nIron Ring\nImplicits: 0\n{range:0.5}+(10-20) to maximum Life";
+    cases.push((
+        unique.to_owned(),
+        json!({"operation":"corruption","ranges":[{"index":1,"value":1.22}]}),
+    ));
+    let weapon =
+        "Rarity: Rare\nParity Bow\nCrude Bow\nItem Level: 85\nImplicits: 0\n+20 to Dexterity";
+    let detail = engine
+        .call("item_customization", &json!({"raw":weapon}))
+        .unwrap();
+    let poe1 = detail["shape"]["socketLimit"].as_u64().unwrap() > 0;
+    if poe1 {
+        cases.push((weapon.to_owned(), json!({"operation":"shape","influences":["shaper","elder"],"sockets":[{"colour":"R","group":0},{"colour":"G","group":0},{"colour":"B","group":1}]})));
+        let crucible = &detail["crucible"];
+        assert_eq!(crucible["available"], true);
+        let mut selected = vec![json!(""); 5];
+        let (i, options) = crucible["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .find(|(_, o)| !o.as_array().unwrap().is_empty())
+            .unwrap();
+        selected[i] = options[0]["id"].clone();
+        cases.push((
+            weapon.to_owned(),
+            json!({"operation":"crucible","selected":selected}),
+        ));
+        let cluster =
+            "Rarity: Rare\nParity Cluster\nLarge Cluster Jewel\nItem Level: 85\nImplicits: 0";
+        let shape = engine.call("item_shape", &json!({"raw":cluster})).unwrap();
+        cases.push((cluster.to_owned(), json!({"operation":"shape","clusterSkill":shape["cluster"]["skills"][0]["id"],"clusterNodeCount":shape["cluster"]["minNodes"]})));
+        let boots = "Rarity: Rare\nParity Boots\nRawhide Boots\nImplicits: 0\n+20 to maximum Life";
+        let enchants = engine.call("item_enchants", &json!({"raw":boots})).unwrap();
+        assert_eq!(enchants["available"], true);
+        cases.push((boots.to_owned(), json!({"operation":"enchant","line":enchants["lines"][0],"slot":1,"source":enchants["source"]})));
+        let enchanted = engine.call("item_customize", &json!({"raw":boots,"operation":"enchant","line":enchants["lines"][0],"slot":1,"source":enchants["source"]})).unwrap();
+        cases.push((
+            enchanted["raw"].as_str().unwrap().to_owned(),
+            json!({"operation":"enchant","remove":true,"slot":1}),
+        ));
+    } else {
+        // PoE2 exposes rune sockets, never PoE1 gem socket/link controls.
+        assert_eq!(detail["shape"]["socketLimit"], 0);
+        assert_eq!(detail["crucible"]["available"], false);
+    }
+    for (raw, edit) in cases {
+        let added = engine.call("item_edit", &json!({"text":raw})).unwrap();
+        let before = snapshot(&engine);
+        let mut draft_params = edit.clone();
+        draft_params["raw"] = json!(raw);
+        draft_params["generation"] = generation.clone();
+        let draft = engine
+            .call("item_customize", &draft_params)
+            .unwrap_or_else(|e| panic!("{edit}: {e}"));
+        assert_eq!(
+            snapshot(&engine),
+            before,
+            "draft operation {edit} changed build state"
+        );
+        let original = engine
+            .call("item_customization", &json!({"raw":raw}))
+            .unwrap();
+        assert_ne!(
+            draft["raw"], original["raw"],
+            "{edit} did not edit the candidate"
+        );
+        match edit["operation"].as_str().unwrap() {
+            "anoint" if edit["nodeId"].is_null() => {
+                assert!(draft["anoints"]["current"].as_array().unwrap().is_empty())
+            }
+            "anoint" => assert_eq!(draft["anoints"]["current"][0], node["name"]),
+            "corruption" => {
+                assert_eq!(draft["corrupted"], true);
+                if !edit["ranges"].is_null() {
+                    assert_eq!(draft["corruptions"]["ranges"][0]["current"], 1.22);
+                }
+            }
+            "shape" if !edit["sockets"].is_null() => {
+                assert_eq!(draft["shape"]["sockets"], edit["sockets"]);
+                assert_eq!(
+                    draft["shape"]["influences"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|i| i["on"] == true)
+                        .count(),
+                    2
+                );
+            }
+            "shape" => {
+                assert_eq!(draft["shape"]["cluster"]["skill"], edit["clusterSkill"]);
+                assert_eq!(
+                    draft["shape"]["cluster"]["nodeCount"],
+                    edit["clusterNodeCount"]
+                );
+            }
+            "crucible" => assert_eq!(draft["crucible"]["selected"], edit["selected"]),
+            "enchant" => {
+                let info = engine
+                    .call("item_enchants", &json!({"raw":draft["raw"]}))
+                    .unwrap();
+                assert_eq!(
+                    info["current"].as_array().unwrap().is_empty(),
+                    edit["remove"] == true
+                );
+            }
+            _ => unreachable!(),
+        }
+        engine
+            .call(
+                "item_preview",
+                &json!({"raw":draft["raw"],"generation":generation}),
+            )
+            .unwrap();
+        assert_eq!(snapshot(&engine), before);
+        let roundtrip = engine
+            .call("item_customization", &json!({"raw":draft["raw"]}))
+            .unwrap();
+        assert_eq!(draft, roundtrip, "{edit} did not survive raw serialization");
+        let mut saved_params = edit.clone();
+        saved_params["itemId"] = added["itemId"].clone();
+        saved_params["generation"] = generation.clone();
+        let saved = engine.call("item_customize", &saved_params).unwrap();
+        assert_eq!(
+            saved["raw"], draft["raw"],
+            "saved/draft mismatch for {edit}"
+        );
+        let after = snapshot(&engine);
+        assert_eq!(
+            after["items"]["items"].as_array().unwrap().len(),
+            before["items"]["items"].as_array().unwrap().len()
+        );
+        assert_eq!(
+            after["undo"]["undo"].as_u64().unwrap(),
+            before["undo"]["undo"].as_u64().unwrap() + 1
+        );
+        let committed = engine
+            .call(
+                "item_edit",
+                &json!({"text":draft["raw"],"generation":generation}),
+            )
+            .unwrap();
+        let committed = engine
+            .call("item_customization", &json!({"itemId":committed["itemId"]}))
+            .unwrap();
+        assert_eq!(committed["raw"], draft["raw"]);
+    }
+    let added = engine.call("item_edit", &json!({"text":amulet})).unwrap();
+    for edit in [
+        json!({"operation":"anoint","nodeId":-1,"slot":1}),
+        json!({"operation":"anoint","nodeId":node["id"],"slot":99}),
+        json!({"operation":"corruption","modIds":["not-a-mod"]}),
+        json!({"operation":"corruption","ranges":[{"index":1,"value":99}]}),
+        json!({"operation":"enchant","line":"not-an-enchant","slot":1}),
+        json!({"operation":"crucible","selected":["not-a-node"]}),
+    ] {
+        for target in [json!({"raw":amulet}), json!({"itemId":added["itemId"]})] {
+            let before = snapshot(&engine);
+            let mut params = edit.clone();
+            params
+                .as_object_mut()
+                .unwrap()
+                .extend(target.as_object().unwrap().clone());
+            assert!(engine.call("item_customize", &params).is_err(), "{params}");
+            assert_eq!(
+                snapshot(&engine),
+                before,
+                "invalid edit {params} changed build state"
+            );
+        }
+    }
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}

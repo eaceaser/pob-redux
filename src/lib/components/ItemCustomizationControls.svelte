@@ -1,5 +1,6 @@
 <script lang="ts">
   import { engine, type ItemCustomization, type ItemCustomizationEdit, type ItemTarget } from "$lib/engine.svelte";
+  import ItemAdvancedControls from "./ItemAdvancedControls.svelte";
   import { m } from "$lib/paraglide/messages";
 
   let { data, target, busy = false, sourceSlot, onchange }: {
@@ -164,6 +165,10 @@
     </div>
   </details>
 </fieldset>
+
+{#key target.itemId ?? "draft"}
+  <ItemAdvancedControls {data} {target} {busy} {onchange} />
+{/key}
 
 <style>
   .controls { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: var(--fs-xs); }
