@@ -206,8 +206,12 @@
         .then(([tt, customization]) => {
           if (active) detail = { itemId: id, tt, customization };
         })
-        .catch((e) => {
-          if (active) build.error = String(e);
+        .catch(() => {
+          if (active) {
+            // Deletion and undo can remove the selected item during refresh.
+            detail = null;
+            selectedItem = null;
+          }
         })
         .finally(() => { if (active) detailLoading = false; });
     });

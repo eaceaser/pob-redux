@@ -128,6 +128,7 @@
   <details>
     <summary class="label">{m.items_modifiers()}</summary>
     <div class="modifiers">
+      {#if data.affixes.crafted}<p class="dim">{m.items_crafted_modifiers_hint()}</p>{/if}
       {#each data.modifiers as mod (`${mod.section}:${mod.index}`)}
         <div class="modifier">
           <div class="row">

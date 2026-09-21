@@ -739,3 +739,151 @@ fn advanced_customization_has_saved_and_draft_parity() {
     drop(engine);
     std::fs::remove_dir_all(user_dir).unwrap();
 }
+
+#[test]
+fn crafted_customization_preserves_custom_edits_across_affix_changes() {
+    let root = std::env::var_os("POB_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../src-tauri/resources/pob")
+        });
+    if !root.join("Launch.lua").is_file() {
+        return;
+    }
+    let user_dir =
+        std::env::temp_dir().join(format!("pob-crafted-modifiers-{}", std::process::id()));
+    let engine = Engine::boot(EngineConfig {
+        pob_root: root,
+        user_dir: user_dir.clone(),
+    })
+    .unwrap();
+    engine.call("new_build", &json!({})).unwrap();
+    let raw =
+        "Rarity: Rare\nCrafted candidate\nIron Ring\nCrafted: true\nItem Level: 80\nImplicits: 0";
+    let initial = engine
+        .call("item_customization", &json!({"raw":raw}))
+        .unwrap();
+    let prefix = &initial["affixes"]["prefixes"][0]["options"][0]["modId"];
+    let initial = engine
+        .call(
+            "item_customize",
+            &json!({"raw":raw,"operation":"affix","table":"prefixes","index":1,"modId":prefix}),
+        )
+        .unwrap();
+    // Generated affixes remain visible in the item tooltip and affix controls,
+    // but are not offered by the generic modifier editor.
+    assert!(
+        initial["modifiers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["section"] != "explicit")
+    );
+    let suffix = initial["affixes"]["suffixes"][0]["options"][0]["modId"].clone();
+    for saved in [false, true] {
+        let item_id = if saved {
+            engine
+                .call("item_edit", &json!({"text":initial["raw"]}))
+                .unwrap()["itemId"]
+                .clone()
+        } else {
+            Value::Null
+        };
+        let before = snapshot(&engine);
+        for change in [
+            json!({"remove":true}),
+            json!({"disabled":true}),
+            json!({"text":"+1 to maximum Life"}),
+            json!({"range":0.1}),
+        ] {
+            let mut p = json!({"operation":"modifier","section":"explicit","index":1});
+            if saved {
+                p["itemId"] = item_id.clone();
+            } else {
+                p["raw"] = initial["raw"].clone();
+            }
+            p.as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            assert!(
+                engine
+                    .call("item_customize", &p)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("affix controls")
+            );
+            assert_eq!(snapshot(&engine), before);
+        }
+        let mut data = initial.clone();
+        let edit = |data: &Value, mut p: Value| {
+            if saved {
+                p["itemId"] = item_id.clone();
+            } else {
+                p["raw"] = data["raw"].clone();
+            }
+            let result = engine.call("item_customize", &p).unwrap();
+            if !saved {
+                assert_eq!(snapshot(&engine), before);
+            }
+            result
+        };
+        data = edit(
+            &data,
+            json!({"operation":"add_modifier","text":"+10 to Strength"}),
+        );
+        let index = data["modifiers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "+10 to Strength")
+            .unwrap()["index"]
+            .clone();
+        data = edit(
+            &data,
+            json!({"operation":"modifier","section":"explicit","index":index,"text":"+27 to Dexterity","disabled":true}),
+        );
+        data = edit(
+            &data,
+            json!({"operation":"affix","table":"suffixes","index":1,"modId":suffix}),
+        );
+        let custom = data["modifiers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["text"] == "+27 to Dexterity")
+            .unwrap();
+        assert_eq!(custom["disabled"], true);
+        assert_eq!(
+            data["modifiers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|m| m["section"] == "explicit")
+                .count(),
+            1
+        );
+        let index = custom["index"].clone();
+        data = edit(
+            &data,
+            json!({"operation":"modifier","section":"explicit","index":index,"remove":true}),
+        );
+        data = edit(
+            &data,
+            json!({"operation":"affix","table":"suffixes","index":1,"modId":"None"}),
+        );
+        assert!(
+            data["modifiers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["section"] != "explicit")
+        );
+        assert!(!data["raw"].as_str().unwrap().contains("+27 to Dexterity"));
+        let roundtrip = engine
+            .call("item_customization", &json!({"raw":data["raw"]}))
+            .unwrap();
+        assert_eq!(data["raw"], roundtrip["raw"]);
+    }
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}

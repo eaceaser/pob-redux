@@ -4969,6 +4969,11 @@ end
 -- item resolver and commit helper above keep draft edits out of build/undo state.
 do
 	local lineTables = { explicit = "explicitModLines", implicit = "implicitModLines", enchant = "enchantModLines" }
+	local function editableModifier(item, section, line)
+		-- Craft() regenerates all non-custom explicit lines from the affix
+		-- definitions. Those must be edited through the affix controls.
+		return not line.rune and not (item.crafted and section == "explicit" and not line.custom)
+	end
 	local function ranged(line)
 		return not line.extra and type(line.range) ~= "table" and line.line:match("%(%-?[%d%.]+%-%-?[%d%.]+%)") ~= nil
 	end
@@ -4984,7 +4989,7 @@ do
 		local lines = array({})
 		for _, section in ipairs({ "implicit", "enchant", "explicit" }) do
 			for index, line in ipairs(item[lineTables[section]] or {}) do
-				if not line.rune then
+				if editableModifier(item, section, line) then
 					lines[#lines + 1] = { section = section, index = index, text = line.line,
 						disabled = line.disabled == true, range = ranged(line) and (line.range or main.defaultItemAffixQuality or 1) or null,
 						parsed = not line.extra and line.modList and #line.modList > 0 or false }
@@ -5069,6 +5074,7 @@ do
 				local index = tonumber(p.index)
 				local line = list and index and list[index]
 				if not line or line.rune then error("unknown modifier", 0) end
+				if not editableModifier(item, p.section, line) then error("edit generated modifiers through the affix controls", 0) end
 				if p.text ~= nil then singleLine(p.text) end
 				if p.range ~= nil and (not ranged(line) or type(p.range) ~= "number" or p.range < 0 or p.range > 1) then error("invalid modifier roll", 0) end
 				if p.remove then table.remove(list, index)
