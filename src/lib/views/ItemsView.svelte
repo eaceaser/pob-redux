@@ -492,7 +492,6 @@
   </div>
 
   {#if previewError}<div class="err small pad" role="alert">{previewError}</div>{/if}
-  {#if previewLoading}<div class="dim small pad" role="status">{m.items_preview_loading()}</div>{/if}
 
   <div class="cols">
     <section class="col slots">
