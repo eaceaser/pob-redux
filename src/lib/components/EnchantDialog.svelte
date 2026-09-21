@@ -1,19 +1,8 @@
 <script lang="ts">
-  import {
-    engine,
-    type ItemEnchants,
-    type ItemTarget,
-    type ItemCustomizationEdit,
-  } from "$lib/engine.svelte";
+  import { engine, type ItemEnchants, type ItemTarget, type ItemCustomizationEdit } from "$lib/engine.svelte";
   import { m } from "$lib/paraglide/messages";
 
-  let {
-    target,
-    revision,
-    busy,
-    onchange,
-    onclose,
-  }: {
+  let { target, revision, busy, onchange, onclose }: {
     target: ItemTarget;
     revision: string;
     busy: boolean;
@@ -45,9 +34,7 @@
       .catch((e) => {
         if (active) error = String(e);
       });
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   });
 
   const lines = $derived.by(() => {
@@ -56,24 +43,10 @@
   });
 
   async function apply(line: string) {
-    if (!busy)
-      await onchange({
-        operation: "enchant",
-        line,
-        slot,
-        skill: skill ?? undefined,
-        source: source ?? undefined,
-      });
+    if (!busy) await onchange({ operation: "enchant", line, slot, skill: skill ?? undefined, source: source ?? undefined });
   }
   async function removeAt(i: number) {
-    if (!busy)
-      await onchange({
-        operation: "enchant",
-        remove: true,
-        slot: i + 1,
-        skill: skill ?? undefined,
-        source: source ?? undefined,
-      });
+    if (!busy) await onchange({ operation: "enchant", remove: true, slot: i + 1, skill: skill ?? undefined, source: source ?? undefined });
   }
 </script>
 
@@ -89,12 +62,7 @@
           {#if info?.bySkill}
             <label class="fld-inline">
               <span class="label">{m.enchant_skill()}</span>
-              <select
-                class="select sm"
-                value={skill ?? ""}
-                onchange={(e) =>
-                  (skill = (e.target as HTMLSelectElement).value)}
-              >
+              <select class="select sm" value={skill ?? ""} onchange={(e) => (skill = (e.target as HTMLSelectElement).value)}>
                 {#each info?.skills ?? [] as s}
                   <option value={s}>{s}</option>
                 {/each}
@@ -103,11 +71,7 @@
           {/if}
           <label class="fld-inline">
             <span class="label">{m.enchant_source()}</span>
-            <select
-              class="select sm"
-              value={source ?? ""}
-              onchange={(e) => (source = (e.target as HTMLSelectElement).value)}
-            >
+            <select class="select sm" value={source ?? ""} onchange={(e) => (source = (e.target as HTMLSelectElement).value)}>
               {#each info?.sources ?? [] as s}
                 <option value={s}>{s}</option>
               {/each}
@@ -123,11 +87,7 @@
               </select>
             </label>
           {/if}
-          <input
-            class="input grow"
-            placeholder={m.enchant_search()}
-            bind:value={search}
-          />
+          <input class="input grow" placeholder={m.enchant_search()} bind:value={search} />
         </div>
 
         {#if info?.current.length}
@@ -136,11 +96,7 @@
             {#each info.current as c, i (c + i)}
               <span class="pill">
                 {c}
-                <button
-                  class="mini x"
-                  title={m.common_remove()}
-                  onclick={() => removeAt(i)}>✕</button
-                >
+                <button class="mini x" title={m.common_remove()} onclick={() => removeAt(i)}>✕</button>
               </span>
             {/each}
           </div>
@@ -179,8 +135,12 @@
   .mini.x:hover {
     color: var(--bad);
   }
-  .small { font-size: var(--fs-xs); }
-  .err { color: var(--bad); }
+  .small {
+    font-size: var(--fs-xs);
+  }
+  .err {
+    color: var(--bad);
+  }
 
   fieldset {
     border: 0;

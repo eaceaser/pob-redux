@@ -1,26 +1,16 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import {
-    engine,
-    type ItemCustomization,
-    type ItemCustomizationEdit,
-    type ItemTarget,
-    type ItemSocket,
-    type AnointInfo,
-  } from "$lib/engine.svelte";
+  import { engine, type ItemCustomization, type ItemCustomizationEdit, type ItemTarget, type ItemSocket, type AnointInfo } from "$lib/engine.svelte";
   import { m } from "$lib/paraglide/messages";
   import EnchantDialog from "./EnchantDialog.svelte";
-  let {
-    data,
-    target,
-    busy,
-    onchange,
-  }: {
+
+  let { data, target, busy, onchange }: {
     data: ItemCustomization;
     target: ItemTarget;
     busy: boolean;
     onchange: (edit: ItemCustomizationEdit) => unknown;
   } = $props();
+
   const shape = $derived(data.shape);
   const crucible = $derived(data.crucible.available ? data.crucible : null);
   const anointFlags = $derived(data.anoints);
@@ -29,53 +19,30 @@
   let enchantOpen = $state(false);
   let error = $state<string | null>(null);
   let alive = true;
-  onDestroy(() => {
-    alive = false;
-  });
+  onDestroy(() => { alive = false; });
   function setCrucible(node: number, id: string) {
     if (busy || !crucible) return;
-    onchange({
-      operation: "crucible",
-      selected: crucible.selected.map((s, i) => (i === node ? id : s)),
-    });
+    onchange({ operation: "crucible", selected: crucible.selected.map((s, i) => (i === node ? id : s)) });
   }
-  const SOCKET_NAMES = $derived<Record<string, string>>({
-    R: m.items_socket_red(),
-    G: m.items_socket_green(),
-    B: m.items_socket_blue(),
-    W: m.items_socket_white(),
-    A: m.items_socket_abyssal(),
-  });
+  const SOCKET_NAMES = $derived<Record<string, string>>({ R: m.items_socket_red(), G: m.items_socket_green(), B: m.items_socket_blue(), W: m.items_socket_white(), A: m.items_socket_abyssal() });
 
   // PoB allows at most two influences.
   function toggleInfluence(key: string) {
     if (busy || !shape) return;
     const on = shape.influences.filter((i) => i.on).map((i) => i.key);
-    const next = on.includes(key)
-      ? on.filter((k) => k !== key)
-      : [...on, key].slice(-2);
+    const next = on.includes(key) ? on.filter((k) => k !== key) : [...on, key].slice(-2);
     onchange({ operation: "shape", influences: next });
   }
 
   function setSocket(index: number, patch: Partial<ItemSocket>) {
     if (busy || !shape) return;
-    const next = shape.sockets.map((s, i) =>
-      i === index ? { ...s, ...patch } : s,
-    );
+    const next = shape.sockets.map((s, i) => (i === index ? { ...s, ...patch } : s));
     onchange({ operation: "shape", sockets: next });
   }
 
   function addSocket() {
     if (busy || !shape) return;
-    const next = [
-      ...shape.sockets,
-      {
-        colour: "W",
-        group: shape.sockets.length
-          ? shape.sockets[shape.sockets.length - 1].group
-          : 0,
-      },
-    ];
+    const next = [...shape.sockets, { colour: "W", group: shape.sockets.length ? shape.sockets[shape.sockets.length - 1].group : 0 }];
     onchange({ operation: "shape", sockets: next });
   }
 
@@ -90,9 +57,7 @@
     const prev = shape.sockets[index - 1];
     const cur = shape.sockets[index];
     const linked = prev.group === cur.group;
-    const next = shape.sockets.map((s, i) =>
-      i >= index ? { ...s, group: linked ? s.group + 1 : prev.group } : s,
-    );
+    const next = shape.sockets.map((s, i) => (i >= index ? { ...s, group: linked ? s.group + 1 : prev.group } : s));
     if (!busy) onchange({ operation: "shape", sockets: next });
   }
 
@@ -118,8 +83,7 @@
     const words = anointQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const list = words.length
       ? anointInfo.nodes.filter((n) => {
-          const hay =
-            `${n.name} ${n.stats.join(" ")} ${n.recipe.join(" ")}`.toLowerCase();
+          const hay = `${n.name} ${n.stats.join(" ")} ${n.recipe.join(" ")}`.toLowerCase();
           return words.every((w) => hay.includes(w));
         })
       : anointInfo.nodes;
@@ -142,29 +106,17 @@
     corruptRanges = r;
     corruptOpen = true;
   }
-  const corruptModList = $derived(
-    corruptInfo ? [...corruptInfo.mods, ...corruptInfo.specialMods] : [],
-  );
+  const corruptModList = $derived(corruptInfo ? [...corruptInfo.mods, ...corruptInfo.specialMods] : []);
   function corruptOptions(i: number) {
-    const takenGroups = corruptSel
-      .filter((id, j) => j !== i && id)
-      .map((id) => corruptModList.find((o) => o.id === id)?.group);
-    return corruptModList.filter(
-      (o) => !o.group || !takenGroups.includes(o.group),
-    );
+    const takenGroups = corruptSel.filter((id, j) => j !== i && id).map((id) => corruptModList.find((o) => o.id === id)?.group);
+    return corruptModList.filter((o) => !o.group || !takenGroups.includes(o.group));
   }
   async function applyCorrupt(mode: "implicits" | "ranges") {
     if (busy) return;
     corruptOpen = false;
-    const p: Extract<ItemCustomizationEdit, { operation: "corruption" }> = {
-      operation: "corruption",
-    };
+    const p: Extract<ItemCustomizationEdit, { operation: "corruption" }> = { operation: "corruption" };
     if (mode === "implicits") p.modIds = corruptSel.filter(Boolean);
-    else
-      p.ranges = Object.entries(corruptRanges).map(([index, value]) => ({
-        index: Number(index),
-        value,
-      }));
+    else p.ranges = Object.entries(corruptRanges).map(([index, value]) => ({ index: Number(index), value }));
     await onchange(p);
   }
 </script>
@@ -173,22 +125,14 @@
   <div class="modrow">
     {#if anointFlags?.anointable}
       <button class="btn sm" onclick={openAnoint}>
-        {anointFlags.current.length
-          ? `Anoint: ${anointFlags.current.join(", ")}`
-          : "Anoint…"}
+        {anointFlags.current.length ? `Anoint: ${anointFlags.current.join(", ")}` : "Anoint…"}
       </button>
     {/if}
     {#if enchantable}
-      <button class="btn sm" onclick={() => (enchantOpen = true)}
-        >{m.items_enchant()}</button
-      >
+      <button class="btn sm" onclick={() => (enchantOpen = true)}>{m.items_enchant()}</button>
     {/if}
     {#if corruptInfo?.corruptible || corruptInfo?.corrupted}
-      <button class="btn sm" onclick={openCorrupt}
-        >{corruptInfo.corrupted
-          ? m.items_corrupted_modify()
-          : m.items_corrupt()}</button
-      >
+      <button class="btn sm" onclick={openCorrupt}>{corruptInfo.corrupted ? m.items_corrupted_modify() : m.items_corrupt()}</button>
     {/if}
   </div>
   {#if shape && (shape.canBeInfluenced || shape.socketLimit > 0 || shape.cluster || crucible)}
@@ -198,12 +142,7 @@
           <span class="label">{m.items_influence()}</span>
           <span class="chips">
             {#each shape.influences as inf (inf.key)}
-              <button
-                class="chip"
-                class:on={inf.on}
-                title={m.items_influence_title()}
-                onclick={() => toggleInfluence(inf.key)}>{inf.name}</button
-              >
+              <button class="chip" class:on={inf.on} title={m.items_influence_title()} onclick={() => toggleInfluence(inf.key)}>{inf.name}</button>
             {/each}
           </span>
         </div>
@@ -217,36 +156,21 @@
                 <button
                   class="link"
                   class:on={shape.sockets[i - 1].group === sock.group}
-                  title={shape.sockets[i - 1].group === sock.group
-                    ? m.items_linked_title()
-                    : m.items_not_linked_title()}
+                  title={shape.sockets[i - 1].group === sock.group ? m.items_linked_title() : m.items_not_linked_title()}
                   onclick={() => toggleLink(i)}>—</button
                 >
               {/if}
               <span class="sock">
-                <select
-                  class="select xs sockc"
-                  value={sock.colour}
-                  onchange={(e) =>
-                    setSocket(i, {
-                      colour: (e.target as HTMLSelectElement).value,
-                    })}
-                >
+                <select class="select xs sockc" value={sock.colour} onchange={(e) => setSocket(i, { colour: (e.target as HTMLSelectElement).value })}>
                   {#each shape.colours as c}
                     <option value={c}>{SOCKET_NAMES[c] ?? c}</option>
                   {/each}
                 </select>
-                <button
-                  class="mini x"
-                  title={m.items_remove_socket()}
-                  onclick={() => removeSocket(i)}>✕</button
-                >
+                <button class="mini x" title={m.items_remove_socket()} onclick={() => removeSocket(i)}>✕</button>
               </span>
             {/each}
             {#if shape.sockets.length < shape.socketLimit}
-              <button class="btn sm ghost" onclick={addSocket}
-                >{m.items_add_socket()}</button
-              >
+              <button class="btn sm ghost" onclick={addSocket}>{m.items_add_socket()}</button>
             {/if}
           </span>
         </div>
@@ -256,16 +180,8 @@
           <span class="label">{m.items_crucible()}</span>
           <div class="crucnodes">
             {#each crucible.nodes as options, i (i)}
-              <select
-                class="select xs crucsel"
-                title={m.items_crucible_node({ index: i + 1 })}
-                value={crucible.selected[i] ?? ""}
-                onchange={(e) =>
-                  setCrucible(i, (e.target as HTMLSelectElement).value)}
-              >
-                <option value=""
-                  >{m.items_crucible_node_empty({ index: i + 1 })}</option
-                >
+              <select class="select xs crucsel" title={m.items_crucible_node({ index: i + 1 })} value={crucible.selected[i] ?? ""} onchange={(e) => setCrucible(i, (e.target as HTMLSelectElement).value)}>
+                <option value="">{m.items_crucible_node_empty({ index: i + 1 })}</option>
                 {#each options as o (o.id)}
                   <option value={o.id}>T{o.tier} · {o.label}</option>
                 {/each}
@@ -280,11 +196,7 @@
           <select
             class="select xs"
             value={shape.cluster.skill ?? ""}
-            onchange={(e) =>
-              onchange({
-                operation: "shape",
-                clusterSkill: (e.target as HTMLSelectElement).value,
-              })}
+            onchange={(e) => onchange({ operation: "shape", clusterSkill: (e.target as HTMLSelectElement).value })}
           >
             <option value="">{m.items_cluster_default()}</option>
             {#each shape.cluster.skills as sk (sk.id)}
@@ -299,13 +211,7 @@
               min={shape.cluster.minNodes}
               max={shape.cluster.maxNodes}
               value={shape.cluster.nodeCount}
-              onchange={(e) =>
-                onchange({
-                  operation: "shape",
-                  clusterNodeCount: Number(
-                    (e.target as HTMLInputElement).value,
-                  ),
-                })}
+              onchange={(e) => onchange({ operation: "shape", clusterNodeCount: Number((e.target as HTMLInputElement).value) })}
             />
           </label>
         </div>
@@ -317,33 +223,18 @@
       <div class="panel dialog anointdlg">
         <div class="label">{m.items_anoint_title()}</div>
         <div class="crow">
-          <input
-            class="input grow2"
-            placeholder={m.items_anoint_search()}
-            bind:value={anointQuery}
-          />
+          <input class="input grow2" placeholder={m.items_anoint_search()} bind:value={anointQuery} />
           {#if anointInfo.slots > 1}
-            <select
-              class="select"
-              bind:value={anointSlot}
-              title={m.items_anoint_slot()}
-            >
+            <select class="select" bind:value={anointSlot} title={m.items_anoint_slot()}>
               {#each Array(anointInfo.slots) as _, i}
-                <option value={i + 1}
-                  >{m.items_anoint_slot_n({ index: i + 1 })}</option
-                >
+                <option value={i + 1}>{m.items_anoint_slot_n({ index: i + 1 })}</option>
               {/each}
             </select>
           {/if}
         </div>
         <div class="anointlist">
           {#each anointList as n (n.id)}
-            <button
-              class="arow"
-              class:alloc={n.allocated}
-              title={n.stats.join("\n")}
-              onclick={() => applyAnoint(n.id)}
-            >
+            <button class="arow" class:alloc={n.allocated} title={n.stats.join("\n")} onclick={() => applyAnoint(n.id)}>
               <span class="aname">{n.name}</span>
               <span class="dim small">{n.recipe.join(" + ")}</span>
             </button>
@@ -354,17 +245,9 @@
         </div>
         <div class="actions">
           {#if anointInfo.current.length}
-            <button class="btn" onclick={() => applyAnoint(null)}
-              >{m.items_anoint_remove({
-                name:
-                  anointInfo.current[anointSlot - 1] ??
-                  m.items_anoint_fallback(),
-              })}</button
-            >
+            <button class="btn" onclick={() => applyAnoint(null)}>{m.items_anoint_remove({ name: anointInfo.current[anointSlot - 1] ?? m.items_anoint_fallback() })}</button>
           {/if}
-          <button class="btn ghost" onclick={() => (anointOpen = false)}
-            >{m.common_cancel()}</button
-          >
+          <button class="btn ghost" onclick={() => (anointOpen = false)}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>
@@ -377,12 +260,7 @@
         {#each corruptSel as sel, i}
           <div class="crow">
             <span class="clabel">{m.items_implicit_n({ index: i + 1 })}</span>
-            <select
-              class="select grow2"
-              value={sel}
-              onchange={(e) =>
-                (corruptSel[i] = (e.target as HTMLSelectElement).value)}
-            >
+            <select class="select grow2" value={sel} onchange={(e) => (corruptSel[i] = (e.target as HTMLSelectElement).value)}>
               <option value="">{m.items_implicit_none()}</option>
               {#each corruptOptions(i) as opt (opt.id)}
                 <option value={opt.id}>{opt.label}</option>
@@ -401,34 +279,19 @@
                 max="1.22"
                 step="0.01"
                 value={corruptRanges[r.index] ?? 1}
-                onchange={(e) =>
-                  (corruptRanges[r.index] = Number(
-                    (e.target as HTMLInputElement).value,
-                  ))}
+                onchange={(e) => (corruptRanges[r.index] = Number((e.target as HTMLInputElement).value))}
               />
-              <span class="num small"
-                >{(corruptRanges[r.index] ?? 1).toFixed(2)}</span
-              >
+              <span class="num small">{(corruptRanges[r.index] ?? 1).toFixed(2)}</span>
               <span class="dim small rline">{r.line}</span>
             </div>
           {/each}
         {/if}
         <div class="actions">
-          <button
-            class="btn primary"
-            onclick={() => applyCorrupt("implicits")}
-            disabled={busy}>{m.items_corrupt_implicits()}</button
-          >
+          <button class="btn primary" onclick={() => applyCorrupt("implicits")} disabled={busy}>{m.items_corrupt_implicits()}</button>
           {#if corruptInfo.ranges.length}
-            <button
-              class="btn"
-              onclick={() => applyCorrupt("ranges")}
-              disabled={busy}>{m.items_corrupt_ranges()}</button
-            >
+            <button class="btn" onclick={() => applyCorrupt("ranges")} disabled={busy}>{m.items_corrupt_ranges()}</button>
           {/if}
-          <button class="btn ghost" onclick={() => (corruptOpen = false)}
-            >{m.common_cancel()}</button
-          >
+          <button class="btn ghost" onclick={() => (corruptOpen = false)}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>
@@ -436,13 +299,7 @@
 </fieldset>
 {#if error}<p class="err" role="alert">{error}</p>{/if}
 {#if enchantOpen}
-  <EnchantDialog
-    {target}
-    revision={data.raw}
-    {busy}
-    {onchange}
-    onclose={() => (enchantOpen = false)}
-  />
+  <EnchantDialog {target} revision={data.raw} {busy} {onchange} onclose={() => (enchantOpen = false)} />
 {/if}
 
 <style>
@@ -463,8 +320,12 @@
   .mini.x:hover {
     color: var(--bad);
   }
-  .small { font-size: var(--fs-xs); }
-  .err { color: var(--bad); }
+  .small {
+    font-size: var(--fs-xs);
+  }
+  .err {
+    color: var(--bad);
+  }
 
   .shape {
     display: flex;
