@@ -12,7 +12,6 @@ local dkjson = require("dkjson")
 
 local main = launch.main
 local build = main.modes["BUILD"]
--- Runtime-only identity, independent of the build's name and calc revision.
 main.__reduxBuildGeneration = 0
 
 -- PoB's sidebar rows carry only text. Feeding AddDisplayStatList one entry at
@@ -3979,8 +3978,6 @@ M.item_tooltip = function(p)
 	return r
 end
 
--- A candidate stays outside the build. Return PoB's comparisons and eligible
--- active slots together so the UI never guesses equipment compatibility.
 M.item_preview = function(p)
 	ensureBuild(p)
 	if not p or type(p.raw) ~= "string" or not p.raw:match("%S") then
@@ -4065,8 +4062,6 @@ end
 
 local requireItem, commitItemEdit
 do
-	-- Cache by request, not by text: nested readers/setters share the same
-	-- standalone object, while separate requests can never share a draft.
 	local requests = setmetatable({}, { __mode = "k" })
 	local drafts = setmetatable({}, { __mode = "k" })
 	requireItem = function(p)
@@ -4814,7 +4809,6 @@ M.set_item_enchant = function(p)
 		local allowed = false
 		for _, line in ipairs(info.lines) do if line == p.line then allowed = true; break end end
 		if not allowed then error("invalid enchantment", 0) end
-		-- Empty later slots append, just as the legacy enchant editor does.
 		slot = math.min(slot, #item.enchantModLines + 1)
 	end
 	item.enchantModLines = item.enchantModLines or {}
@@ -4965,13 +4959,10 @@ M.catalyst_info = function(p)
 	}
 end
 
--- Shared controls for saved items and standalone candidates. The request-scoped
--- item resolver and commit helper above keep draft edits out of build/undo state.
 do
 	local lineTables = { explicit = "explicitModLines", implicit = "implicitModLines", enchant = "enchantModLines" }
 	local function editableModifier(item, section, line)
-		-- Craft() regenerates all non-custom explicit lines from the affix
-		-- definitions. Those must be edited through the affix controls.
+		-- Craft() overwrites non-custom explicit lines from affix definitions.
 		return not line.rune and not (item.crafted and section == "explicit" and not line.custom)
 	end
 	local function ranged(line)

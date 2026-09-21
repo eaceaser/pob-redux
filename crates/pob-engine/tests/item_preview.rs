@@ -6,8 +6,7 @@ use serde_json::{Value, json};
 const RING: &str = "Rarity: Rare\nPreview Ring\nIron Ring\nItem Level: 80\nImplicits: 0\n+70 to maximum Life\n20% increased Cast Speed";
 
 fn snapshot(engine: &Engine) -> Value {
-    // Saving canonicalizes raw text on existing items; do that before reading
-    // them so snapshot itself does not cause a false preview-mutation failure.
+    // Save first: canonicalization must not count as a preview mutation.
     let xml = engine.call("save_build_xml", &Value::Null).unwrap();
     json!({
         "items": engine.call("get_items", &Value::Null).unwrap(),
@@ -80,8 +79,6 @@ fn preview_is_temporary_and_commit_matches_candidate() {
         "preview must leave build and undo unchanged"
     );
 
-    // Compare directly to the legacy display-item tooltip, without the bridge's
-    // item-tooltip wrapper. No quality/augment migration is requested.
     let legacy = engine.eval(&format!(r#"
         local tt = new("Tooltip"):Tooltip()
         launch.main.modes.BUILD.itemsTab:AddItemTooltip(tt, new("Item"):Item([=[{RING}]=]))
@@ -186,7 +183,6 @@ fn preview_is_temporary_and_commit_matches_candidate() {
             .any(|s| s["slot"] == "Ring 2" && s["itemId"] == equipped["itemId"])
     );
 
-    // A same-name replacement still invalidates an outstanding draft.
     engine
         .call("new_build", &json!({ "name": "Preview test" }))
         .unwrap();
@@ -196,7 +192,6 @@ fn preview_is_temporary_and_commit_matches_candidate() {
     }
     assert_eq!(snapshot(&engine), replaced);
 
-    // Special comparison paths and active weapon-set slot eligibility.
     for raw in [
         "Rarity: Normal\nLesser Life Flask",
         "Rarity: Normal\nThawing Charm",
@@ -369,7 +364,6 @@ fn customization_edits_drafts_and_commits_saved_items() {
         assert!(engine.call("item_customize", &p).is_err());
         assert_eq!(snapshot(&engine), before);
     }
-    // Crafted affixes use the same operations without needing an item ID.
     let crafted =
         "Rarity: Rare\nCrafted candidate\nIron Ring\nCrafted: true\nItem Level: 80\nImplicits: 0";
     let crafted_data = engine
@@ -392,7 +386,6 @@ fn customization_edits_drafts_and_commits_saved_items() {
     assert_eq!(variants["variants"]["picks"][0], 2);
     assert_eq!(snapshot(&engine), before);
 
-    // Property edits preserve explicitly pasted quality until normalization is requested.
     let weapon = "Rarity: Normal\nCrude Bow\nQuality: 0";
     let weapon = engine
         .call(
@@ -432,7 +425,6 @@ fn customization_edits_drafts_and_commits_saved_items() {
     }
     assert_eq!(snapshot(&engine), before);
 
-    // The same shared controls deliberately mutate a saved item and create one undo entry.
     let added = engine
         .call("item_edit", &json!({"text":data["raw"]}))
         .unwrap();
@@ -446,7 +438,6 @@ fn customization_edits_drafts_and_commits_saved_items() {
         saved_before["undo"]["undo"].as_u64().unwrap() + 1
     );
     assert_ne!(saved_before["xml"], saved_after["xml"]);
-    // Explicit migration copies into the candidate, never into the equipped source.
     let amulet = "Rarity: Rare\nCandidate amulet\nJade Amulet\nImplicits: 0";
     let anoints = engine
         .call("item_anoints", &json!({"raw":amulet,"withNodes":true}))
@@ -606,7 +597,6 @@ fn advanced_customization_has_saved_and_draft_parity() {
             json!({"operation":"enchant","remove":true,"slot":1}),
         ));
     } else {
-        // PoE2 exposes rune sockets, never PoE1 gem socket/link controls.
         assert_eq!(detail["shape"]["socketLimit"], 0);
         assert_eq!(detail["crucible"]["available"], false);
     }
@@ -770,8 +760,6 @@ fn crafted_customization_preserves_custom_edits_across_affix_changes() {
             &json!({"raw":raw,"operation":"affix","table":"prefixes","index":1,"modId":prefix}),
         )
         .unwrap();
-    // Generated affixes remain visible in the item tooltip and affix controls,
-    // but are not offered by the generic modifier editor.
     assert!(
         initial["modifiers"]
             .as_array()

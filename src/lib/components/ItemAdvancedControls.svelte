@@ -47,7 +47,7 @@
     A: m.items_socket_abyssal(),
   });
 
-  /** PoB allows two influences, so picking a third drops the oldest. */
+  // PoB allows at most two influences.
   function toggleInfluence(key: string) {
     if (busy || !shape) return;
     const on = shape.influences.filter((i) => i.on).map((i) => i.key);
@@ -85,7 +85,6 @@
     onchange({ operation: "shape", sockets: next });
   }
 
-  /** A link joins a socket to the one before it, which PoB stores as a shared group. */
   function toggleLink(index: number) {
     if (!shape || index === 0) return;
     const prev = shape.sockets[index - 1];

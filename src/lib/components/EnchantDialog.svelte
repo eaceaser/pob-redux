@@ -39,8 +39,6 @@
       .then((r) => {
         if (!active) return;
         info = r;
-        // Follow what the engine settled on, so the pickers never show a
-        // skill or source that has no lines behind it.
         skill = r.skill;
         source = r.source;
       })

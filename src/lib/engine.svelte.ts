@@ -363,7 +363,6 @@ export interface Points {
 }
 
 export interface BuildInfo {
-  /** Changes whenever another build is loaded, even with the same name/path. */
   generation: number;
   name: string;
   file: string | null;

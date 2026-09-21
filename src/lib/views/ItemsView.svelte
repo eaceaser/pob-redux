@@ -79,8 +79,6 @@
       if (!text.trim()) throw new Error(m.items_paste_empty());
       let result: Awaited<ReturnType<typeof engine.itemPreview>>;
       let customization: ItemCustomization;
-      // A build change while awaiting a candidate must recalculate that same
-      // candidate, not replace it with the previously displayed draft.
       for (;;) {
         const showDifferences = statDiff;
         const revision = build.rev;
@@ -90,8 +88,6 @@
         ]);
         if (!alive || stamp !== previewStamp) return false;
         if (revision !== build.rev || showDifferences !== statDiff) continue;
-        // An external mutation may have reached Lua before build.sync(). Wait
-        // for the next UI revision instead of repeatedly querying the engine.
         break;
       }
       preview = { ...result, text, customization };
@@ -151,8 +147,7 @@
     if (equip && !candidate.slots.some((s) => s.slot === slot)) return;
     previewCommitting = true;
     previewError = null;
-    // Synchronize only after committing. A failed sync must not leave an Add
-    // button for an item that was already inserted successfully.
+    // Clear the committed draft before sync, which can fail independently.
     const result = await build.run(async () => {
       try {
         return equip
@@ -171,7 +166,6 @@
     previewCommitting = false;
   }
 
-  // The draft belongs to this Items view; leaving the view discards it.
   $effect(() => {
     build.rev;
     statDiff;
@@ -188,7 +182,6 @@
   let craftTitle = $state("New Item");
   let craftEquip = $state(true);
 
-  // Saved-item detail is refreshed atomically after edits.
   let detailLoading = $state(false);
   let detail = $state<{ itemId: number; tt: Tooltip; customization: ItemCustomization } | null>(null);
   $effect(() => {
@@ -208,7 +201,6 @@
         })
         .catch(() => {
           if (active) {
-            // Deletion and undo can remove the selected item during refresh.
             detail = null;
             selectedItem = null;
           }
