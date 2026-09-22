@@ -75,13 +75,17 @@
     previewLoading = false;
   }
 
-  async function requestPreview(text: string, stamp = ++previewStamp, normalise?: boolean) {
+  async function requestPreview(text: string, stamp = ++previewStamp, normalise?: boolean, reportUnrecognized = false) {
     previewLoading = true;
     previewError = null;
     try {
       if (normalise !== undefined) {
         const prepared = await engine.prepareItemPreview(text, generation, normalise);
-        if (!alive || stamp !== previewStamp || prepared.raw == null) return false;
+        if (!alive || stamp !== previewStamp) return false;
+        if (prepared.raw == null) {
+          if (reportUnrecognized) previewError = m.items_text_unrecognized();
+          return false;
+        }
         text = prepared.raw;
       }
       if (!text.trim()) throw new Error(m.items_paste_empty());
@@ -423,8 +427,11 @@
     editError = null;
     try {
       if (editItemId == null) {
-        if (await requestPreview(editText, undefined, !editingPreview)) editOpen = false;
-        else editError = previewError;
+        if (await requestPreview(editText, undefined, !editingPreview, true)) editOpen = false;
+        else {
+          editError = previewError;
+          previewError = null;
+        }
         return;
       }
       await engine.itemEdit(editText, asNew ? undefined : (editItemId ?? undefined));

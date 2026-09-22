@@ -835,6 +835,7 @@
   "items_paste_hint": "Paste an item to compare (Ctrl+V / Cmd+V)",
   "items_paste_empty": "The clipboard is empty. Copy an item first, or use New item from text.",
   "items_paste_failed": "Could not read the clipboard. Use New item from text to paste manually. {error}",
+  "items_text_unrecognized": "Path of Building cannot read this as an item. Check the rarity and base type lines.",
   "items_preview_title": "Item preview",
   "items_preview_loading": "Calculating item preview…",
   "items_preview_note": "This item has not been added to your build. Leaving Items discards the preview.",

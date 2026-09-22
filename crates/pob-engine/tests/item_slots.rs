@@ -21,7 +21,7 @@ fn items_report_only_the_slots_they_fit() {
     let engine = Engine::boot(EngineConfig { pob_root: root, user_dir: user_dir.clone() }).expect("boot");
 
     engine
-        .call("equip_item_raw", &json!({ "text": "Rarity: NORMAL\nRusted Greathelm" }))
+        .call("equip_item_raw", &json!({ "text": "Rarity: NORMAL\nHunter Hood" }))
         .expect("add helmet");
     engine
         .call("equip_item_raw", &json!({ "text": "Rarity: NORMAL\nGlass Shank" }))
@@ -29,7 +29,7 @@ fn items_report_only_the_slots_they_fit() {
 
     let result: Value = engine.call("get_items", &Value::Null).expect("get_items");
     let items = result["items"].as_array().expect("items array");
-    let helmet = items.iter().find(|item| item["baseName"] == "Rusted Greathelm").expect("helmet");
+    let helmet = items.iter().find(|item| item["baseName"] == "Hunter Hood").expect("helmet");
     let dagger = items.iter().find(|item| item["baseName"] == "Glass Shank").expect("dagger");
     let helmet_slots = helmet["compatibleSlots"].as_array().expect("helmet slots");
     let dagger_slots = dagger["compatibleSlots"].as_array().expect("dagger slots");
