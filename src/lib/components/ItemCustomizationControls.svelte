@@ -19,6 +19,11 @@
   let option = $state("");
   let loading = $state(false);
   let error = $state<string | null>(null);
+  const modifierLabels: Record<string, string> = $derived({
+    implicit: m.items_modifier_implicit(),
+    explicit: m.items_modifier_explicit(),
+    enchant: m.items_modifier_enchant(),
+  });
 
   $effect(() => {
     if (data.affixes.crafted) source = "Custom";
@@ -100,7 +105,7 @@
     {#each ["prefixes", "suffixes"] as table}
       <div class="label">{table === "prefixes" ? m.items_prefixes() : m.items_suffixes()}</div>
       {#each (table === "prefixes" ? data.affixes.prefixes : data.affixes.suffixes) as slot (slot.index)}
-        <select class="select" aria-label={m.items_affix_number({ kind: table, index: slot.index })} value={slot.modId} onchange={(e) => onchange({ operation: "affix", table: table as "prefixes" | "suffixes", index: slot.index, modId: e.currentTarget.value, range: slot.range ?? undefined })}>
+        <select class="select" aria-label={table === "prefixes" ? m.items_prefix_number({ index: slot.index }) : m.items_suffix_number({ index: slot.index })} value={slot.modId} onchange={(e) => onchange({ operation: "affix", table: table as "prefixes" | "suffixes", index: slot.index, modId: e.currentTarget.value, range: slot.range ?? undefined })}>
           <option value="None">{table === "prefixes" ? m.items_empty_prefix() : m.items_empty_suffix()}</option>
           {#each slot.options as opt (opt.modId)}<option value={opt.modId}>{opt.affix ? `${opt.affix} · ` : ""}{opt.label}</option>{/each}
         </select>
@@ -132,7 +137,7 @@
       {#each data.modifiers as mod (`${mod.section}:${mod.index}`)}
         <div class="modifier">
           <div class="row">
-            <label><input type="checkbox" checked={!mod.disabled} aria-label={m.items_enable_modifier({ text: mod.text })} onchange={(e) => onchange({ operation: "modifier", section: mod.section, index: mod.index, disabled: !e.currentTarget.checked })} /> {mod.section}</label>
+            <label><input type="checkbox" checked={!mod.disabled} aria-label={m.items_enable_modifier({ text: mod.text })} onchange={(e) => onchange({ operation: "modifier", section: mod.section, index: mod.index, disabled: !e.currentTarget.checked })} /> {modifierLabels[mod.section]}</label>
             {#if !mod.parsed}<span class="dim">{m.items_mod_unrecognized()}</span>{/if}
             <button class="btn sm ghost" onclick={() => onchange({ operation: "modifier", section: mod.section, index: mod.index, remove: true })}>{m.common_delete()}</button>
           </div>
