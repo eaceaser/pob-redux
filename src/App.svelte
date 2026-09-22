@@ -85,7 +85,9 @@
       {:else if build.view === "skills"}
         <SkillsView />
       {:else if build.view === "items"}
-        <ItemsView />
+        {#key build.info?.generation}
+          <ItemsView />
+        {/key}
       {:else if build.view === "calcs"}
         <CalcsView />
       {:else if build.view === "config"}

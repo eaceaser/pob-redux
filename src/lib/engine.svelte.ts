@@ -363,6 +363,7 @@ export interface Points {
 }
 
 export interface BuildInfo {
+  generation: number;
   name: string;
   file: string | null;
   level: number;
@@ -1018,7 +1019,7 @@ export interface AffixOption {
 export interface AffixSlot {
   index: number;
   modId: string;
-  range: number;
+  range?: number | null;
   label: string | null;
   affix: string | null;
   options: AffixOption[];
@@ -1044,6 +1045,44 @@ export interface ItemRunes {
   socketCount: number;
   runes: string[];
   options: RuneOption[];
+}
+
+export type ItemTarget = { itemId: number; raw?: never; generation?: number } | { raw: string; itemId?: never; generation: number };
+export type ItemCustomizationEdit =
+  | { operation: "props"; quality?: number; itemLevel?: number; corrupted?: boolean; catalyst?: number; catalystQuality?: number }
+  | { operation: "affix"; table: "prefixes" | "suffixes"; index: number; modId: string; range?: number }
+  | { operation: "rune"; index: number; name: string }
+  | { operation: "variant"; picks: number[] }
+  | { operation: "shape"; influences?: string[]; sockets?: ItemSocket[]; clusterSkill?: string; clusterNodeCount?: number }
+  | { operation: "crucible"; selected: string[] }
+  | { operation: "enchant"; line?: string; remove?: boolean; slot: number; skill?: string; source?: string }
+  | { operation: "anoint"; nodeId: number | null; slot: number }
+  | { operation: "corruption"; modIds?: string[]; ranges?: { index: number; value: number }[] }
+  | { operation: "normalize" }
+  | { operation: "copy_anoints" | "copy_augments"; sourceSlot?: string }
+  | { operation: "rune_sockets"; count: number }
+  | { operation: "add_modifier"; text?: string; modId?: string }
+  | { operation: "modifier"; section: string; index: number; text?: string; disabled?: boolean; remove?: boolean; range?: number };
+
+export interface ItemCustomization {
+  shape: ItemShape;
+  crucible: ItemCrucible;
+  anoints: AnointInfo;
+  corruptions: CorruptionInfo;
+  enchantable: boolean;
+  raw: string;
+  quality: number;
+  canQuality: boolean;
+  itemLevel: number;
+  corrupted: boolean;
+  runeSocketLimit: number;
+  canCopyAnoints: boolean;
+  canCopyAugments: boolean;
+  affixes: ItemAffixes;
+  runes: ItemRunes;
+  variants: ItemVariants;
+  catalyst: { usable: boolean; names: string[]; catalyst: number; quality: number };
+  modifiers: { section: string; index: number; text: string; disabled: boolean; range?: number | null; parsed: boolean }[];
 }
 
 export interface ConfigOption {
@@ -1527,7 +1566,7 @@ export const engine = {
     call<Skills>("set_gem", { groupIndex, gemIndex, ...patch }),
   listSlots: () => call<SlotsResponse>("list_slots"),
   getItems: () => call<{ items: ItemInfo[] }>("get_items"),
-  equipItemRaw: (text: string, slot?: string) => call<{ ok: boolean; itemId: number; slot: string; itemName: string }>("equip_item_raw", { text, slot }),
+  equipItemRaw: (text: string, slot?: string, generation?: number) => call<{ ok: boolean; itemId: number; slot: string; itemName: string }>("equip_item_raw", { text, slot, generation }),
   equipItem: (slot: string, itemId: number) => call<SlotsResponse>("equip_item", { slot, itemId }),
   deleteItem: (itemId: number) => call<{ items: ItemInfo[] }>("delete_item", { itemId }),
   itemDbList: (opts: { db: "unique" | "rare"; query?: string; type?: string; limit?: number; offset?: number }) =>
@@ -1535,11 +1574,19 @@ export const engine = {
   statDifferences: (show?: boolean) => call<{ show: boolean }>("stat_differences", show === undefined ? undefined : { show }),
   itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; raw?: string; slotName?: string | false }) =>
     call<Tooltip & { rarity: string | null }>("item_tooltip", opts),
+  prepareItemPreview: (raw: string, generation: number, normalise: boolean) =>
+    call<{ raw?: string }>("item_prepare_preview", { raw, generation, normalise }),
+  itemPreview: (raw: string, generation: number) =>
+    call<{ tooltip: Tooltip; slots: { slot: string; label: string }[]; generation: number; rev: number }>("item_preview", { raw, generation }),
+  itemCustomization: (target: ItemTarget) => call<ItemCustomization>("item_customization", target),
+  customizeItem: (target: ItemTarget, edit: ItemCustomizationEdit) => call<ItemCustomization>("item_customize", { ...target, ...edit }),
+  itemModifierOptions: (target: ItemTarget, source: "Prefix" | "Suffix", query: string) =>
+    call<{ options: { id: string; label: string; level: number }[]; total: number }>("item_modifier_options", { ...target, source, query }),
   /** `variants`: one entry per pick, a variant's name, a substring of it, or its index. */
   itemDbEquip: (db: "unique" | "rare", name: string, slotName?: string, variants?: (string | number)[]) =>
     call<{ ok: boolean; itemId: number; slot: string; itemName: string; variants: string[]; mods: string[] }>("item_db_equip", { db, name, slotName, variants }),
   itemRaw: (itemId: number) => call<{ raw: string }>("item_raw", { itemId }),
-  itemEdit: (text: string, itemId?: number) => call<{ ok: boolean; itemId: number; name: string }>("item_edit", { text, itemId }),
+  itemEdit: (text: string, itemId?: number, generation?: number) => call<{ ok: boolean; itemId: number; name: string }>("item_edit", { text, itemId, generation }),
   setWeaponSet: (set: 1 | 2) => call<SlotsResponse>("set_weapon_set", { set }),
   craftBases: () => call<{ types: string[]; bases: Record<string, CraftBase[]> }>("craft_bases"),
   craftItem: (opts: { type: string; baseName: string; rarity?: string; title?: string; equip?: boolean }) =>
@@ -1574,7 +1621,7 @@ export const engine = {
   renameLoadout: (name: string, newName: string) => call<LoadoutState>("rename_loadout", { name, newName }),
   deleteLoadout: (name: string) => call<LoadoutState>("delete_loadout", { name }),
   catalystInfo: (itemId: number) => call<{ usable: boolean; names: string[]; catalyst: number; quality: number }>("catalyst_info", { itemId }),
-  itemAnoints: (itemId: number, withNodes = false) => call<AnointInfo>("item_anoints", { itemId, withNodes }),
+  itemAnoints: (target: number | ItemTarget, withNodes = false) => call<AnointInfo>("item_anoints", { ...(typeof target === "number" ? { itemId: target } : target), withNodes }),
   setItemAnoint: (itemId: number, nodeId: number | null, slot?: number) => call<AnointInfo>("set_item_anoint", { itemId, nodeId, slot }),
   itemCorruptions: (itemId: number) => call<CorruptionInfo>("item_corruptions", { itemId }),
   corruptItem: (p: { itemId: number; modIds?: string[]; ranges?: { index: number; value: number }[] }) => call<{ ok: boolean }>("corrupt_item", p),
@@ -1606,7 +1653,7 @@ export const engine = {
   getParty: () => call<PartyState>("get_party"),
   setPartyText: (kind: PartyKind, text: string) => call<PartyState>("set_party_text", { kind, text }),
   partyImport: (p: { code?: string; xml?: string; append?: boolean; only?: string }) => call<PartyState>("party_import", p),
-  itemEnchants: (itemId: number, skill?: string, source?: string) => call<ItemEnchants>("item_enchants", { itemId, skill, source }),
+  itemEnchants: (target: number | ItemTarget, skill?: string, source?: string) => call<ItemEnchants>("item_enchants", { ...(typeof target === "number" ? { itemId: target } : target), skill, source }),
   setItemEnchant: (itemId: number, p: { line?: string; remove?: boolean; slot?: number; skill?: string; source?: string }) =>
     call<ItemEnchants>("set_item_enchant", { itemId, ...p }),
   compareList: () => call<{ entries: CompareBuild[]; active: number }>("compare_list"),

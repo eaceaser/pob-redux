@@ -1,19 +1,14 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
+  import { readText } from "@tauri-apps/plugin-clipboard-manager";
   import {
     engine,
-    type AnointInfo,
-    type CorruptionInfo,
     type CraftBase,
-    type ItemAffixes,
+    type ItemCustomization,
+    type ItemCustomizationEdit,
     type ItemDbRow,
     type ItemInfo,
-    type ItemRunes,
     type ItemSetInfo,
-    type ItemCrucible,
-    type ItemShape,
-    type ItemSocket,
-    type ItemVariants,
     type SharedItem,
     type SlotsResponse,
     type Tooltip,
@@ -22,12 +17,13 @@
   import { build } from "$lib/state/build.svelte";
   import PobText from "$lib/components/PobText.svelte";
   import { stripPobText } from "$lib/pobtext";
-  import EnchantDialog from "$lib/components/EnchantDialog.svelte";
+  import ItemCustomizationControls from "$lib/components/ItemCustomizationControls.svelte";
   import ItemFrame from "$lib/components/ItemFrame.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
   import TraderWindow from "$lib/components/TraderWindow.svelte";
   import BuySimilarDialog from "$lib/components/BuySimilarDialog.svelte";
   import { m } from "$lib/paraglide/messages";
+  import { confirm } from "$lib/state/confirm.svelte";
 
   let slotsResp = $state<SlotsResponse | null>(null);
   let items = $state<ItemInfo[]>([]);
@@ -49,7 +45,153 @@
   let editOpen = $state(false);
   let editText = $state("");
   let editItemId = $state<number | null>(null);
+  let editingPreview = $state(false);
   let editError = $state<string | null>(null);
+  let editBusy = $state(false);
+
+  type Preview = Awaited<ReturnType<typeof engine.itemPreview>> & { text: string; customization: ItemCustomization };
+  let preview = $state<Preview | null>(null);
+  let previewError = $state<string | null>(null);
+  let previewLoading = $state(false);
+  let previewCommitting = $state(false);
+  let previewSlot = $state("");
+  let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
+  let previewStamp = 0;
+  let alive = true;
+  const generation = untrack(() => build.info!.generation);
+  const previewStale = $derived(preview?.rev !== build.rev);
+
+  onDestroy(() => {
+    alive = false;
+    previewStamp++;
+    clearTimeout(tipTimer);
+  });
+
+  function discardPreview() {
+    previewStamp++;
+    pendingPaste = null;
+    preview = null;
+    previewError = null;
+    previewLoading = false;
+  }
+
+  async function requestPreview(text: string, stamp = ++previewStamp, normalise?: boolean) {
+    previewLoading = true;
+    previewError = null;
+    try {
+      if (normalise !== undefined) {
+        const prepared = await engine.prepareItemPreview(text, generation, normalise);
+        if (!alive || stamp !== previewStamp || prepared.raw == null) return false;
+        text = prepared.raw;
+      }
+      if (!text.trim()) throw new Error(m.items_paste_empty());
+      let result: Awaited<ReturnType<typeof engine.itemPreview>>;
+      let customization: ItemCustomization;
+      for (;;) {
+        const showDifferences = statDiff;
+        const revision = build.rev;
+        [result, customization] = await Promise.all([
+          engine.itemPreview(text, generation),
+          engine.itemCustomization({ raw: text, generation }),
+        ]);
+        if (!alive || stamp !== previewStamp) return false;
+        if (revision !== build.rev || showDifferences !== statDiff) continue;
+        break;
+      }
+      preview = { ...result, text, customization };
+      if (!result.slots.some((s) => s.slot === previewSlot)) previewSlot = result.slots[0]?.slot ?? "";
+      hideTip();
+      return true;
+    } catch (e) {
+      if (alive && stamp === previewStamp) previewError = String(e);
+      return false;
+    } finally {
+      if (alive && stamp === previewStamp) previewLoading = false;
+    }
+  }
+
+  async function customizePreview(edit: ItemCustomizationEdit) {
+    if (!preview || previewLoading || previewCommitting) return;
+    const stamp = ++previewStamp;
+    previewLoading = true;
+    previewError = null;
+    try {
+      const updated = await engine.customizeItem({ raw: preview.text, generation }, edit);
+      if (alive && stamp === previewStamp) await requestPreview(updated.raw, stamp);
+    } catch (e) {
+      if (alive && stamp === previewStamp) previewError = String(e);
+    } finally {
+      if (alive && stamp === previewStamp) previewLoading = false;
+    }
+  }
+
+  async function pasteItem() {
+    if (previewCommitting) return;
+    const stamp = ++previewStamp;
+    pendingPaste = null;
+    previewLoading = true;
+    previewError = null;
+    try {
+      const text = (await readText()) ?? "";
+      if (alive && stamp === previewStamp) pendingPaste = { text, stamp };
+    } catch (e) {
+      if (alive && stamp === previewStamp) {
+        previewError = m.items_paste_failed({ error: String(e) });
+        previewLoading = false;
+      }
+    }
+  }
+
+  $effect(() => {
+    const pending = pendingPaste;
+    if (!pending || build.busy > 0) return;
+    untrack(() => {
+      pendingPaste = null;
+      if (alive && pending.stamp === previewStamp) void requestPreview(pending.text, pending.stamp, true);
+    });
+  });
+
+  function editPreview() {
+    editItemId = null;
+    editingPreview = true;
+    editText = preview?.text ?? "";
+    editError = null;
+    editOpen = true;
+  }
+
+  async function addPreview(equip: boolean) {
+    if (!preview || previewLoading || previewCommitting || previewStale || build.busy > 0) return;
+    const candidate = preview;
+    const slot = previewSlot;
+    if (equip && !candidate.slots.some((s) => s.slot === slot)) return;
+    previewCommitting = true;
+    previewError = null;
+    // Clear the committed draft before sync, which can fail independently.
+    const result = await build.run(async () => {
+      try {
+        return equip
+          ? await engine.equipItemRaw(candidate.text, slot, generation)
+          : await engine.itemEdit(candidate.text, undefined, generation);
+      } catch (e) {
+        if (alive) previewError = String(e);
+        throw e;
+      }
+    }, { sync: false });
+    if (result && alive) {
+      discardPreview();
+      selectedItem = result.itemId;
+    }
+    if (result) await build.run(() => build.sync(), { sync: false, user: false });
+    previewCommitting = false;
+  }
+
+  $effect(() => {
+    build.rev;
+    statDiff;
+    untrack(() => {
+      if (preview && !previewCommitting && !previewLoading) void requestPreview(preview.text);
+    });
+  });
 
   let craftOpen = $state(false);
   let craftData = $state<{ types: string[]; bases: Record<string, CraftBase[]> } | null>(null);
@@ -59,110 +201,32 @@
   let craftTitle = $state("New Item");
   let craftEquip = $state(true);
 
-  // selected item detail (tooltip, affixes, runes, modify flags)
-  let detail = $state<{ tt: Tooltip; affixes: ItemAffixes | null; runes: ItemRunes | null } | null>(null);
-  let anointFlags = $state<AnointInfo | null>(null);
-  let corruptInfo = $state<CorruptionInfo | null>(null);
-  let catInfo = $state<{ usable: boolean; names: string[]; catalyst: number; quality: number } | null>(null);
-  let shape = $state<ItemShape | null>(null);
-  let variants = $state<ItemVariants | null>(null);
-  let enchantOpen = $state(false);
-
-  function setVariant(pick: number, index: number) {
-    if (selectedItem == null || !variants) return;
-    const next = variants.picks.map((p, i) => (i === pick ? index : p));
-    build.run(() => engine.setItemVariant(selectedItem!, next).then((r) => (variants = r)));
-  }
-  let crucible = $state<ItemCrucible | null>(null);
-
-  function setCrucible(node: number, id: string) {
-    if (selectedItem == null || !crucible) return;
-    const next = crucible.selected.map((s, i) => (i === node ? id : s));
-    build.run(() => engine.setItemCrucible(selectedItem!, next).then((r) => (crucible = r)));
-  }
-  let enchantable = $state(false);
-
-  const SOCKET_NAMES = $derived<Record<string, string>>({ R: m.items_socket_red(), G: m.items_socket_green(), B: m.items_socket_blue(), W: m.items_socket_white(), A: m.items_socket_abyssal() });
-
-  /** PoB allows two influences, so picking a third drops the oldest. */
-  function toggleInfluence(key: string) {
-    if (selectedItem == null || !shape) return;
-    const on = shape.influences.filter((i) => i.on).map((i) => i.key);
-    const next = on.includes(key) ? on.filter((k) => k !== key) : [...on, key].slice(-2);
-    build.run(() => engine.setItemShape(selectedItem!, { influences: next }).then((r) => (shape = r)));
-  }
-
-  function setSocket(index: number, patch: Partial<ItemSocket>) {
-    if (selectedItem == null || !shape) return;
-    const next = shape.sockets.map((s, i) => (i === index ? { ...s, ...patch } : s));
-    build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
-  }
-
-  function addSocket() {
-    if (selectedItem == null || !shape) return;
-    const next = [...shape.sockets, { colour: "W", group: shape.sockets.length ? shape.sockets[shape.sockets.length - 1].group : 0 }];
-    build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
-  }
-
-  function removeSocket(index: number) {
-    if (selectedItem == null || !shape) return;
-    const next = shape.sockets.filter((_, i) => i !== index);
-    build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
-  }
-
-  /** A link joins a socket to the one before it, which PoB stores as a shared group. */
-  function toggleLink(index: number) {
-    if (!shape || index === 0) return;
-    const prev = shape.sockets[index - 1];
-    const cur = shape.sockets[index];
-    const linked = prev.group === cur.group;
-    const next = shape.sockets.map((s, i) => (i >= index ? { ...s, group: linked ? s.group + 1 : prev.group } : s));
-    if (selectedItem != null) build.run(() => engine.setItemShape(selectedItem!, { sockets: next }).then((r) => (shape = r)));
-  }
-
+  let detailLoading = $state(false);
+  let detail = $state<{ itemId: number; tt: Tooltip; customization: ItemCustomization } | null>(null);
   $effect(() => {
     const id = selectedItem;
     build.rev;
+    let active = true;
     untrack(() => {
       if (id == null) {
         detail = null;
-        anointFlags = corruptInfo = catInfo = null;
+        detailLoading = false;
         return;
       }
-      Promise.all([engine.itemTooltip({ itemId: id }), engine.itemAffixes(id), engine.itemRunes(id)])
-        .then(([t, a, r]) => {
-          if (selectedItem === id) detail = { tt: t, affixes: a.crafted ? a : null, runes: r.socketCount > 0 ? r : null };
+      detailLoading = true;
+      Promise.all([engine.itemTooltip({ itemId: id }), engine.itemCustomization({ itemId: id, generation })])
+        .then(([tt, customization]) => {
+          if (active) detail = { itemId: id, tt, customization };
         })
         .catch(() => {
-          detail = null;
-          selectedItem = null;
-        });
-      engine
-        .itemShape(id)
-        .then((r) => (shape = r))
-        .catch(() => (shape = null));
-      engine
-        .itemVariants(id)
-        .then((r) => (variants = r.names.length > 1 ? r : null))
-        .catch(() => (variants = null));
-      engine
-        .itemEnchants(id)
-        .then((r) => (enchantable = r.available))
-        .catch(() => (enchantable = false));
-      engine
-        .itemCrucible(id)
-        .then((r) => (crucible = r.available ? r : null))
-        .catch(() => (crucible = null));
-      Promise.all([engine.itemAnoints(id), engine.itemCorruptions(id), engine.catalystInfo(id)])
-        .then(([an, co, ca]) => {
-          if (selectedItem === id) {
-            anointFlags = an;
-            corruptInfo = co;
-            catInfo = ca;
+          if (active) {
+            detail = null;
+            selectedItem = null;
           }
         })
-        .catch(() => (anointFlags = corruptInfo = catInfo = null));
+        .finally(() => { if (active) detailLoading = false; });
     });
+    return () => { active = false; };
   });
 
   // shared items (main.sharedItemList; app-added ones persisted locally)
@@ -196,59 +260,6 @@
       shared = r.items;
       persistShared(it.raw, false);
     }
-  }
-
-  let anointOpen = $state(false);
-  let anointInfo = $state<AnointInfo | null>(null);
-  let anointQuery = $state("");
-  let anointSlot = $state(1);
-  async function openAnoint() {
-    if (selectedItem == null) return;
-    anointInfo = await engine.itemAnoints(selectedItem, true).catch(() => null);
-    anointQuery = "";
-    anointSlot = 1;
-    anointOpen = anointInfo != null;
-  }
-  const anointList = $derived.by(() => {
-    if (!anointInfo) return [];
-    const words = anointQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const list = words.length
-      ? anointInfo.nodes.filter((n) => {
-          const hay = `${n.name} ${n.stats.join(" ")} ${n.recipe.join(" ")}`.toLowerCase();
-          return words.every((w) => hay.includes(w));
-        })
-      : anointInfo.nodes;
-    return list.slice(0, 120);
-  });
-  async function applyAnoint(nodeId: number | null) {
-    if (selectedItem == null) return;
-    anointOpen = false;
-    await build.run(() => engine.setItemAnoint(selectedItem!, nodeId, anointSlot));
-  }
-
-  let corruptOpen = $state(false);
-  let corruptSel = $state<string[]>([]);
-  let corruptRanges = $state<Record<number, number>>({});
-  function openCorrupt() {
-    if (!corruptInfo) return;
-    corruptSel = Array(corruptInfo.enchantNum).fill("");
-    const r: Record<number, number> = {};
-    for (const rng of corruptInfo.ranges) r[rng.index] = rng.current;
-    corruptRanges = r;
-    corruptOpen = true;
-  }
-  const corruptModList = $derived(corruptInfo ? [...corruptInfo.mods, ...corruptInfo.specialMods] : []);
-  function corruptOptions(i: number) {
-    const takenGroups = corruptSel.filter((id, j) => j !== i && id).map((id) => corruptModList.find((o) => o.id === id)?.group);
-    return corruptModList.filter((o) => !o.group || !takenGroups.includes(o.group));
-  }
-  async function applyCorrupt(mode: "implicits" | "ranges") {
-    if (selectedItem == null) return;
-    corruptOpen = false;
-    const p: { itemId: number; modIds?: string[]; ranges?: { index: number; value: number }[] } = { itemId: selectedItem };
-    if (mode === "implicits") p.modIds = corruptSel.filter(Boolean);
-    else p.ranges = Object.entries(corruptRanges).map(([index, value]) => ({ index: Number(index), value }));
-    await build.run(() => engine.corruptItem(p));
   }
 
   // The Trader window: a weighted trade search per slot, opened in the browser.
@@ -347,6 +358,16 @@
     } catch {}
   }
   function onKey(e: KeyboardEvent) {
+    if (e.defaultPrevented) return;
+    const target = e.target;
+    if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="dialog"]')) return;
+    if (document.querySelector('[aria-modal="true"]')) return;
+    if (editOpen || craftOpen || traderOpen || buySimilarFor != null || confirm.current) return;
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "v") {
+      e.preventDefault();
+      if (!e.repeat) void pasteItem();
+      return;
+    }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d" && statDiff !== null) {
       e.preventDefault();
       void setStatDiff(!statDiff);
@@ -387,6 +408,7 @@
   async function openEdit(itemId: number | null) {
     editError = null;
     editItemId = itemId;
+    editingPreview = false;
     if (itemId != null) {
       const r = await engine.itemRaw(itemId).catch(() => null);
       editText = r?.raw ?? "";
@@ -396,13 +418,22 @@
     editOpen = true;
   }
   async function saveEdit(asNew: boolean) {
+    if (editBusy) return;
+    editBusy = true;
     editError = null;
     try {
+      if (editItemId == null) {
+        if (await requestPreview(editText, undefined, !editingPreview)) editOpen = false;
+        else editError = previewError;
+        return;
+      }
       await engine.itemEdit(editText, asNew ? undefined : (editItemId ?? undefined));
       await build.sync();
       editOpen = false;
     } catch (e) {
       editError = String(e);
+    } finally {
+      editBusy = false;
     }
   }
 
@@ -460,7 +491,8 @@
     </div>
     <span class="vr"></span>
     <button class="btn sm" onclick={openCraft}>{m.items_craft()}</button>
-    <button class="btn sm" onclick={() => openEdit(null)}>{m.items_new_from_text()}</button>
+    <button class="btn sm" onclick={() => openEdit(null)} disabled={previewCommitting}>{m.items_new_from_text()}</button>
+    <button class="btn sm" onclick={pasteItem} disabled={previewCommitting} title={m.items_paste_hint()}>{m.items_paste()}</button>
     <button class="btn sm ghost" title={m.items_trader_title()} onclick={() => openTrader(null)}>{m.items_trader()}</button>
     {#if statDiff !== null}
       <span class="vr"></span>
@@ -470,6 +502,8 @@
       </label>
     {/if}
   </div>
+
+  {#if previewError}<div class="err small pad" role="alert">{previewError}</div>{/if}
 
   <div class="cols">
     <section class="col slots">
@@ -540,7 +574,46 @@
     </section>
 
     <section class="col db">
-      {#if selectedItem != null && detail}
+      {#if preview}
+        <div class="panel-head">
+          <span class="label">{m.items_preview_title()}</span>
+          <button class="btn sm ghost" onclick={discardPreview} disabled={previewCommitting}>{m.items_preview_discard()}</button>
+        </div>
+        <div class="scroll detailpane">
+          <p class="dim small">{m.items_preview_note()}</p>
+          {#if preview.tooltip.header}
+            <ItemFrame lines={preview.tooltip.lines} header={preview.tooltip.header} runic={preview.tooltip.runic} uniqueGem={preview.tooltip.uniqueGem} />
+          {:else}
+            <div class="ttbox plain">
+              {#each preview.tooltip.lines as l}
+                {#if l.sep}<div class="tsep"></div>
+                {:else}<div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>{/if}
+              {/each}
+            </div>
+          {/if}
+          <div class="modrow">
+            <button class="btn sm" onclick={editPreview} disabled={previewLoading || previewCommitting}>{m.items_preview_edit()}</button>
+            <button class="btn sm primary" onclick={() => addPreview(false)} disabled={previewLoading || previewCommitting || previewStale || build.busy > 0}>{m.items_preview_add()}</button>
+          </div>
+          {#if preview.slots.length}
+            <div class="modrow">
+              <select class="select" bind:value={previewSlot} aria-label={m.items_preview_slot()} disabled={previewLoading || previewCommitting}>
+                {#each preview.slots as s}<option value={s.slot}>{s.label}</option>{/each}
+              </select>
+              <button class="btn sm" onclick={() => addPreview(true)} disabled={previewLoading || previewCommitting || previewStale || build.busy > 0}>{m.items_preview_equip()}</button>
+            </div>
+          {:else}
+            <p class="dim small">{m.items_preview_no_slot()}</p>
+          {/if}
+          <ItemCustomizationControls
+            data={preview.customization}
+            target={{ raw: preview.text, generation }}
+            busy={previewLoading || previewCommitting || build.busy > 0}
+            sourceSlot={previewSlot || undefined}
+            onchange={customizePreview}
+          />
+        </div>
+      {:else if selectedItem != null && detail?.itemId === selectedItem}
         <div class="panel-head">
           <span class="label">{m.items_item()}</span>
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
@@ -563,213 +636,21 @@
             </div>
           {/if}
 
-          {#if detail.affixes}
-            <div class="craftsec">
-              <div class="label">{m.items_prefixes()}</div>
-              {#each detail.affixes.prefixes as slot (slot.index)}
-                <div class="affix">
-                  <select class="select" value={slot.modId} onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "prefixes", slot.index, (e.target as HTMLSelectElement).value, slot.range))}>
-                    <option value="None">{m.items_empty_prefix()}</option>
-                    {#each slot.options as o (o.modId)}
-                      <option value={o.modId}>{(o.affix ? o.affix + "  ·  " : "") + o.label}</option>
-                    {/each}
-                  </select>
-                  {#if slot.modId !== "None"}
-                    <input
-                      class="range"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(slot.range * 100)}
-                      title={`Roll: ${Math.round(slot.range * 100)}%`}
-                      onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "prefixes", slot.index, slot.modId, Number((e.target as HTMLInputElement).value) / 100))}
-                    />
-                  {/if}
-                </div>
-              {/each}
-              <div class="label">{m.items_suffixes()}</div>
-              {#each detail.affixes.suffixes as slot (slot.index)}
-                <div class="affix">
-                  <select class="select" value={slot.modId} onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "suffixes", slot.index, (e.target as HTMLSelectElement).value, slot.range))}>
-                    <option value="None">{m.items_empty_suffix()}</option>
-                    {#each slot.options as o (o.modId)}
-                      <option value={o.modId}>{(o.affix ? o.affix + "  ·  " : "") + o.label}</option>
-                    {/each}
-                  </select>
-                  {#if slot.modId !== "None"}
-                    <input
-                      class="range"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(slot.range * 100)}
-                      title={`Roll: ${Math.round(slot.range * 100)}%`}
-                      onchange={(e) => selectedItem != null && build.run(() => engine.setItemAffix(selectedItem!, "suffixes", slot.index, slot.modId, Number((e.target as HTMLInputElement).value) / 100))}
-                    />
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          {#if detail.runes}
-            <div class="craftsec">
-              <div class="label">{m.items_runes()}</div>
-              {#each detail.runes.runes as rune, i}
-                <div class="affix">
-                  <select class="select" value={rune} onchange={(e) => selectedItem != null && build.run(() => engine.setItemRune(selectedItem!, i + 1, (e.target as HTMLSelectElement).value))}>
-                    {#each detail.runes.options as o (o.name)}
-                      <option value={o.name} title={o.lines.join("\n")}>{o.name === "None" ? "— empty socket —" : `${o.name}  ·  ${o.label ?? o.lines[0] ?? ""}`}</option>
-                    {/each}
-                  </select>
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          {#if variants}
-            <div class="craftsec">
-              <div class="label">{variants.picks.length > 1 ? "Variants" : "Variant"}</div>
-              {#each variants.picks as pick, i (i)}
-                <div class="affix">
-                  <select class="select" value={pick} title={variants.picks.length > 1 ? `Pick ${i + 1}` : "Variant"} onchange={(e) => setVariant(i, Number((e.target as HTMLSelectElement).value))}>
-                    {#each variants.names as name, n (n)}
-                      <option value={n + 1}>{name}</option>
-                    {/each}
-                  </select>
-                </div>
-              {/each}
-            </div>
-          {/if}
+          <ItemCustomizationControls
+            data={detail.customization}
+            target={{ itemId: selectedItem, generation }}
+            busy={detailLoading || build.busy > 0}
+            onchange={(edit) => build.run(() => engine.customizeItem({ itemId: selectedItem!, generation }, edit))}
+          />
 
           <div class="craftsec">
             <div class="label">{m.items_modify()}</div>
             <div class="modrow">
-              {#if anointFlags?.anointable}
-                <button class="btn sm" onclick={openAnoint}>
-                  {anointFlags.current.length ? `Anoint: ${anointFlags.current.join(", ")}` : "Anoint…"}
-                </button>
-              {/if}
-              {#if enchantable}
-                <button class="btn sm" onclick={() => (enchantOpen = true)}>{m.items_enchant()}</button>
-              {/if}
-              {#if corruptInfo?.corruptible || corruptInfo?.corrupted}
-                <button class="btn sm" onclick={openCorrupt}>{corruptInfo.corrupted ? m.items_corrupted_modify() : m.items_corrupt()}</button>
-              {/if}
               <button class="btn sm ghost" onclick={() => selectedItem != null && addShared(selectedItem)}>{m.items_add_to_shared()}</button>
               {#if selectedEquippedSlot}
                 <button class="btn sm ghost" title={m.items_find_upgrades_title()} onclick={() => openTrader(selectedEquippedSlot!)}>{m.items_find_upgrades()}</button>
               {/if}
             </div>
-            {#if shape && (shape.canBeInfluenced || shape.socketLimit > 0 || shape.cluster)}
-              <div class="shape">
-                {#if shape.canBeInfluenced}
-                  <div class="srow">
-                    <span class="label">{m.items_influence()}</span>
-                    <span class="chips">
-                      {#each shape.influences as inf (inf.key)}
-                        <button class="chip" class:on={inf.on} title={m.items_influence_title()} onclick={() => toggleInfluence(inf.key)}>{inf.name}</button>
-                      {/each}
-                    </span>
-                  </div>
-                {/if}
-                {#if shape.socketLimit > 0}
-                  <div class="srow">
-                    <span class="label">{m.items_sockets()}</span>
-                    <span class="socks">
-                      {#each shape.sockets as sock, i (i)}
-                        {#if i > 0}
-                          <button
-                            class="link"
-                            class:on={shape.sockets[i - 1].group === sock.group}
-                            title={shape.sockets[i - 1].group === sock.group ? m.items_linked_title() : m.items_not_linked_title()}
-                            onclick={() => toggleLink(i)}>—</button
-                          >
-                        {/if}
-                        <span class="sock">
-                          <select class="select xs sockc" value={sock.colour} onchange={(e) => setSocket(i, { colour: (e.target as HTMLSelectElement).value })}>
-                            {#each shape.colours as c}
-                              <option value={c}>{SOCKET_NAMES[c] ?? c}</option>
-                            {/each}
-                          </select>
-                          <button class="mini x" title={m.items_remove_socket()} onclick={() => removeSocket(i)}>✕</button>
-                        </span>
-                      {/each}
-                      {#if shape.sockets.length < shape.socketLimit}
-                        <button class="btn sm ghost" onclick={addSocket}>{m.items_add_socket()}</button>
-                      {/if}
-                    </span>
-                  </div>
-                {/if}
-                {#if crucible}
-                  <div class="srow cruc">
-                    <span class="label">{m.items_crucible()}</span>
-                    <div class="crucnodes">
-                      {#each crucible.nodes as options, i (i)}
-                        <select class="select xs crucsel" title={m.items_crucible_node({ index: i + 1 })} value={crucible.selected[i] ?? ""} onchange={(e) => setCrucible(i, (e.target as HTMLSelectElement).value)}>
-                          <option value="">{m.items_crucible_node_empty({ index: i + 1 })}</option>
-                          {#each options as o (o.id)}
-                            <option value={o.id}>T{o.tier} · {o.label}</option>
-                          {/each}
-                        </select>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-                {#if shape.cluster}
-                  <div class="srow">
-                    <span class="label">{m.items_cluster()}</span>
-                    <select
-                      class="select xs"
-                      value={shape.cluster.skill ?? ""}
-                      onchange={(e) => selectedItem != null && build.run(() => engine.setItemShape(selectedItem!, { clusterSkill: (e.target as HTMLSelectElement).value }).then((r) => (shape = r)))}
-                    >
-                      <option value="">{m.items_cluster_default()}</option>
-                      {#each shape.cluster.skills as sk (sk.id)}
-                        <option value={sk.id}>{sk.name}</option>
-                      {/each}
-                    </select>
-                    <label class="fld-inline" title={m.items_cluster_passives_title()}>
-                      <span class="label">{m.items_cluster_passives()}</span>
-                      <input
-                        class="input xs num"
-                        type="number"
-                        min={shape.cluster.minNodes}
-                        max={shape.cluster.maxNodes}
-                        value={shape.cluster.nodeCount}
-                        onchange={(e) => selectedItem != null && build.run(() => engine.setItemShape(selectedItem!, { clusterNodeCount: Number((e.target as HTMLInputElement).value) }).then((r) => (shape = r)))}
-                      />
-                    </label>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-            {#if catInfo?.usable}
-              <div class="affix">
-                <select
-                  class="select"
-                  value={catInfo.catalyst}
-                  title={m.items_catalyst()}
-                  onchange={(e) => selectedItem != null && build.run(() => engine.setItemProps(selectedItem!, { catalyst: Number((e.target as HTMLSelectElement).value) }))}
-                >
-                  <option value={0}>{m.items_catalyst_none()}</option>
-                  {#each catInfo.names as n, i}
-                    <option value={i + 1}>{m.items_catalyst_named({ name: n })}</option>
-                  {/each}
-                </select>
-                {#if catInfo.catalyst > 0}
-                  <input
-                    class="input catq num"
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={catInfo.quality}
-                    title={m.items_catalyst_quality_title()}
-                    onchange={(e) => selectedItem != null && build.run(() => engine.setItemProps(selectedItem!, { catalystQuality: Number((e.target as HTMLInputElement).value) }))}
-                  />
-                {/if}
-              </div>
-            {/if}
           </div>
         </div>
       {:else}
@@ -814,10 +695,6 @@
       {/if}
     </section>
   </div>
-
-  {#if enchantOpen && selectedItem != null}
-    <EnchantDialog itemId={selectedItem} onclose={() => (enchantOpen = false)} />
-  {/if}
 
   {#if craftOpen}
     <div class="modal">
@@ -871,91 +748,12 @@
         {#if editError}<div class="err small">{editError}</div>{/if}
         <div class="actions">
           {#if editItemId != null}
-            <button class="btn" onclick={() => saveEdit(true)}>{m.items_save_as_copy()}</button>
+            <button class="btn" onclick={() => saveEdit(true)} disabled={editBusy}>{m.items_save_as_copy()}</button>
           {/if}
-          <button class="btn primary" onclick={() => saveEdit(editItemId == null)} disabled={!editText.trim()}>
-            {editItemId != null ? m.common_save() : m.common_create()}
+          <button class="btn primary" onclick={() => saveEdit(editItemId == null)} disabled={!editText.trim() || editBusy}>
+            {editItemId != null ? m.common_save() : m.items_preview_action()}
           </button>
-          <button class="btn ghost" onclick={() => (editOpen = false)}>{m.common_cancel()}</button>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if anointOpen && anointInfo}
-    <div class="modal">
-      <div class="panel dialog anointdlg">
-        <div class="label">{m.items_anoint_title()}</div>
-        <div class="crow">
-          <input class="input grow2" placeholder={m.items_anoint_search()} bind:value={anointQuery} />
-          {#if anointInfo.slots > 1}
-            <select class="select" bind:value={anointSlot} title={m.items_anoint_slot()}>
-              {#each Array(anointInfo.slots) as _, i}
-                <option value={i + 1}>{m.items_anoint_slot_n({ index: i + 1 })}</option>
-              {/each}
-            </select>
-          {/if}
-        </div>
-        <div class="anointlist">
-          {#each anointList as n (n.id)}
-            <button class="arow" class:alloc={n.allocated} title={n.stats.join("\n")} onclick={() => applyAnoint(n.id)}>
-              <span class="aname">{n.name}</span>
-              <span class="dim small">{n.recipe.join(" + ")}</span>
-            </button>
-          {/each}
-          {#if !anointList.length}
-            <div class="dim small pad">{m.items_anoint_none()}</div>
-          {/if}
-        </div>
-        <div class="actions">
-          {#if anointInfo.current.length}
-            <button class="btn" onclick={() => applyAnoint(null)}>{m.items_anoint_remove({ name: anointInfo.current[anointSlot - 1] ?? m.items_anoint_fallback() })}</button>
-          {/if}
-          <button class="btn ghost" onclick={() => (anointOpen = false)}>{m.common_cancel()}</button>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if corruptOpen && corruptInfo}
-    <div class="modal">
-      <div class="panel dialog">
-        <div class="label">{m.items_corrupt_title()}</div>
-        {#each corruptSel as sel, i}
-          <div class="crow">
-            <span class="clabel">{m.items_implicit_n({ index: i + 1 })}</span>
-            <select class="select grow2" value={sel} onchange={(e) => (corruptSel[i] = (e.target as HTMLSelectElement).value)}>
-              <option value="">{m.items_implicit_none()}</option>
-              {#each corruptOptions(i) as opt (opt.id)}
-                <option value={opt.id}>{opt.label}</option>
-              {/each}
-            </select>
-          </div>
-        {/each}
-        {#if corruptInfo.ranges.length}
-          <div class="label">{m.items_roll_ranges()}</div>
-          {#each corruptInfo.ranges as r (r.index)}
-            <div class="crow">
-              <input
-                class="range grow2"
-                type="range"
-                min="0.78"
-                max="1.22"
-                step="0.01"
-                value={corruptRanges[r.index] ?? 1}
-                onchange={(e) => (corruptRanges[r.index] = Number((e.target as HTMLInputElement).value))}
-              />
-              <span class="num small">{(corruptRanges[r.index] ?? 1).toFixed(2)}</span>
-              <span class="dim small rline">{r.line}</span>
-            </div>
-          {/each}
-        {/if}
-        <div class="actions">
-          <button class="btn primary" onclick={() => applyCorrupt("implicits")} disabled={build.busy > 0}>{m.items_corrupt_implicits()}</button>
-          {#if corruptInfo.ranges.length}
-            <button class="btn" onclick={() => applyCorrupt("ranges")} disabled={build.busy > 0}>{m.items_corrupt_ranges()}</button>
-          {/if}
-          <button class="btn ghost" onclick={() => (corruptOpen = false)}>{m.common_cancel()}</button>
+          <button class="btn ghost" onclick={() => (editOpen = false)} disabled={editBusy}>{m.common_cancel()}</button>
         </div>
       </div>
     </div>
@@ -1025,53 +823,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-  }
-  .catq {
-    width: 64px;
-    text-align: right;
-  }
-  .grow2 {
-    flex: 1;
-    min-width: 0;
-  }
-  .anointdlg {
-    width: 520px;
-  }
-  .anointlist {
-    max-height: 46vh;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    border: 1px solid var(--line-0);
-    border-radius: var(--r-1);
-  }
-  .arow {
-    appearance: none;
-    border: 0;
-    border-bottom: 1px solid var(--line-0);
-    background: none;
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 10px;
-    padding: 4px 8px;
-    color: var(--fg-1);
-    font-size: var(--fs-sm);
-    text-align: left;
-    cursor: pointer;
-  }
-  .arow:hover {
-    background: var(--bg-2);
-    color: var(--fg-0);
-  }
-  .arow.alloc .aname {
-    color: var(--ok);
-  }
-  .rline {
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .wset .btn {
     border-radius: 0;
@@ -1279,93 +1030,10 @@
     background: var(--line-1);
     margin: 6px 0;
   }
-  .shape {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 6px;
-  }
-  .srow {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .chip {
-    padding: 2px 8px;
-    font-size: var(--fs-xs);
-    color: var(--fg-2);
-    background: none;
-    border: 1px solid var(--line-1);
-    border-radius: var(--r-2);
-    cursor: pointer;
-  }
-  .chip.on {
-    color: var(--fg-0);
-    border-color: var(--fg-2);
-    background: var(--bg-active);
-  }
-  .cruc {
-    align-items: flex-start;
-  }
-  .crucnodes {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
-    min-width: 0;
-  }
-  .crucsel {
-    width: 100%;
-    max-width: 440px;
-  }
-  .socks {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    flex-wrap: wrap;
-  }
-  .sock {
-    display: inline-flex;
-    align-items: center;
-  }
-  .sockc {
-    width: 78px;
-  }
-  .link {
-    padding: 0 2px;
-    background: none;
-    border: 0;
-    color: var(--fg-4);
-    cursor: pointer;
-  }
-  .link.on {
-    color: var(--fg-0);
-  }
   .craftsec {
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-  .affix {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .affix .select {
-    height: 24px;
-    font-size: var(--fs-xs);
-    width: 100%;
-  }
-  .range {
-    width: 100%;
-    accent-color: var(--fg-1);
-    height: 14px;
   }
   .craftdlg {
     width: 460px;
