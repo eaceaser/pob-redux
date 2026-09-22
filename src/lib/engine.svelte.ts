@@ -1574,7 +1574,7 @@ export const engine = {
   itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; raw?: string; slotName?: string | false }) =>
     call<Tooltip & { rarity: string | null }>("item_tooltip", opts),
   prepareItemPreview: (raw: string, generation: number, normalise: boolean) =>
-    call<{ raw: string }>("item_prepare_preview", { raw, generation, normalise }),
+    call<{ raw?: string }>("item_prepare_preview", { raw, generation, normalise }),
   itemPreview: (raw: string, generation: number) =>
     call<{ tooltip: Tooltip; slots: { slot: string; label: string }[]; generation: number; rev: number }>("item_preview", { raw, generation }),
   itemCustomization: (target: ItemTarget) => call<ItemCustomization>("item_customization", target),

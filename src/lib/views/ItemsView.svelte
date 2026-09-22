@@ -79,11 +79,12 @@
     previewLoading = true;
     previewError = null;
     try {
-      if (!text.trim()) throw new Error(m.items_paste_empty());
       if (normalise !== undefined) {
-        text = (await engine.prepareItemPreview(text, generation, normalise)).raw;
-        if (!alive || stamp !== previewStamp) return false;
+        const prepared = await engine.prepareItemPreview(text, generation, normalise);
+        if (!alive || stamp !== previewStamp || prepared.raw == null) return false;
+        text = prepared.raw;
       }
+      if (!text.trim()) throw new Error(m.items_paste_empty());
       let result: Awaited<ReturnType<typeof engine.itemPreview>>;
       let customization: ItemCustomization;
       for (;;) {

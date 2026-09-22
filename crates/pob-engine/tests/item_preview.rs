@@ -1092,13 +1092,32 @@ fn paste_defaults_match_legacy() {
             .unwrap()["raw"],
         edited["raw"]
     );
-    for raw in ["", "not an item"] {
-        assert!(
+    let before_invalid = snapshot(&engine);
+    for raw in [
+        "",
+        "   ",
+        "not an item",
+        "Rarity: Rare\nInvalid\nUnknown Base",
+    ] {
+        assert_eq!(
             engine
                 .call("item_prepare_preview", &json!({"raw":raw}))
-                .is_err()
+                .unwrap(),
+            json!({})
         );
+        assert_eq!(snapshot(&engine), before_invalid);
     }
+    assert!(
+        engine
+            .call("item_prepare_preview", &json!({"raw":"Item Class: Rings"}))
+            .is_err()
+    );
+    assert!(
+        engine
+            .call("item_prepare_preview", &json!({"raw":42}))
+            .is_err()
+    );
+    assert_eq!(snapshot(&engine), before_invalid);
     let generation = engine.call("get_build", &Value::Null).unwrap()["generation"].clone();
     engine.call("new_build", &json!({})).unwrap();
     assert!(

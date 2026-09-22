@@ -3980,15 +3980,14 @@ end
 
 M.item_prepare_preview = function(p)
 	ensureBuild(p)
-	if not p or type(p.raw) ~= "string" or not p.raw:match("%S") then
+	if not p or type(p.raw) ~= "string" then
 		error("item text is required", 0)
 	end
 	local item
 	-- Capture PoB's candidate without updating the legacy display controls.
 	local tab = setmetatable({ SetDisplayItem = function(_, candidate) item = candidate end }, { __index = build.itemsTab })
 	tab:CreateDisplayItemFromRaw(p.raw, p.normalise ~= false)
-	if not item then error("unrecognised item text", 0) end
-	return { raw = item:BuildRaw() }
+	return { raw = item and item:BuildRaw() }
 end
 
 M.item_preview = function(p)
