@@ -42,6 +42,8 @@
   let changing = $state(false);
   let error = $state<string | null>(null);
   let localChoice = $state<Choice | null>(null);
+  // WebKit can skip change after snapping input.value, and can also fire it after pointerup.
+  let submitted: string | null = null;
 
   $effect(() => {
     const group = selectedGroup;
@@ -65,6 +67,7 @@
     slot.modId;
     slot.range;
     localChoice = null;
+    submitted = null;
   });
 
   function sliderPosition(tierIndex: number, stepPosition: number): number {
@@ -124,6 +127,7 @@
   function choose(rawPosition: number, input: HTMLInputElement): Choice | null {
     const choice = nearest(tiers, rawPosition);
     if (choice) {
+      if (localChoice?.position !== choice.position) submitted = null;
       localChoice = choice;
       input.value = String(choice.position);
     }
@@ -141,6 +145,7 @@
     const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1
       : Math.max(0, Math.min(choices.length - 1, index + direction));
     const choice = choices[nextIndex];
+    if (localChoice?.position !== choice.position) submitted = null;
     localChoice = choice;
     event.currentTarget.value = String(choice.position);
   }
@@ -151,9 +156,12 @@
   }
 
   function commit(rawPosition: number, input: HTMLInputElement) {
-    const choice = choose(rawPosition, input);
+    const choice = localChoice ?? choose(rawPosition, input);
     if (!choice) return;
+    const key = `${choice.modId}:${choice.step.range}`;
+    if (submitted === key) return;
     if (choice.modId !== slot.modId || Math.abs(choice.step.range - (slot.range ?? 0.5)) > 0.00001) {
+      submitted = key;
       onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
     }
   }
@@ -180,6 +188,7 @@
           aria-label={m.items_affix_roll()}
           aria-valuetext={`${valueText}, ${shownChoice.affix ?? ""}, ${m.items_affix_tier({ tier: shownChoice.tier })}`}
           oninput={(e) => choose(Number(e.currentTarget.value), e.currentTarget)}
+          onpointerup={(e) => commit(Number(e.currentTarget.value), e.currentTarget)}
           onkeydown={keydown}
           onkeyup={keyup}
           onchange={(e) => commit(Number(e.currentTarget.value), e.currentTarget)} />
