@@ -1,6 +1,7 @@
 <script lang="ts">
   import { engine, type ItemCustomization, type ItemCustomizationEdit, type ItemTarget } from "$lib/engine.svelte";
   import ItemAdvancedControls from "./ItemAdvancedControls.svelte";
+  import ItemAffixSelector from "./ItemAffixSelector.svelte";
   import { m } from "$lib/paraglide/messages";
 
   let { data, target, busy = false, sourceSlot, onchange }: {
@@ -105,15 +106,7 @@
     {#each ["prefixes", "suffixes"] as table}
       <div class="label">{table === "prefixes" ? m.items_prefixes() : m.items_suffixes()}</div>
       {#each (table === "prefixes" ? data.affixes.prefixes : data.affixes.suffixes) as slot (slot.index)}
-        <select class="select" aria-label={table === "prefixes" ? m.items_prefix_number({ index: slot.index }) : m.items_suffix_number({ index: slot.index })} value={slot.modId} onchange={(e) => onchange({ operation: "affix", table: table as "prefixes" | "suffixes", index: slot.index, modId: e.currentTarget.value, range: slot.range ?? undefined })}>
-          <option value="None">{table === "prefixes" ? m.items_empty_prefix() : m.items_empty_suffix()}</option>
-          {#each slot.options as opt (opt.modId)}<option value={opt.modId}>{opt.affix ? `${opt.affix} · ` : ""}{opt.label}</option>{/each}
-        </select>
-        {#if slot.modId !== "None" && slot.range != null}
-          <label class="roll">{m.items_roll_percent({ value: Math.round(slot.range * 100) })}
-            <input type="range" min="0" max="100" value={Math.round(slot.range * 100)} onchange={(e) => onchange({ operation: "affix", table: table as "prefixes" | "suffixes", index: slot.index, modId: slot.modId, range: Number(e.currentTarget.value) / 100 })} />
-          </label>
-        {/if}
+        <ItemAffixSelector {slot} table={table as "prefixes" | "suffixes"} {target} {onchange} />
       {/each}
     {/each}
   {/if}

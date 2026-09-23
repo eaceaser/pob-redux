@@ -4502,6 +4502,7 @@ local function affixSlotOptions(item, affixType, tableName, outputIndex)
 		local modString = table.concat(mod, "/")
 		opts[#opts + 1] = {
 			modId = modId,
+			group = mod.group or modId,
 			affix = opt(mod.affix),
 			label = modString,
 			level = opt(mod.level),
@@ -4518,6 +4519,11 @@ M.item_affixes = function(p)
 		return { crafted = false, prefixes = array({}), suffixes = array({}) }
 	end
 	local function slots(tableName, affixType)
+		local function renderAffix(mod, range)
+			local lines = {}
+			for _, line in ipairs(mod) do lines[#lines + 1] = itemLib.applyRange(line, range) end
+			return table.concat(lines, "/")
+		end
 		local limit = item[tableName].limit or (item.affixLimit / 2)
 		local out = array({})
 		for i = 1, limit do
@@ -4528,6 +4534,7 @@ M.item_affixes = function(p)
 				modId = cur.modId,
 				range = type(cur.range) == "table" and null or (cur.range or (main.defaultItemAffixQuality or 0.5)),
 				label = curMod and table.concat(curMod, "/") or null,
+				value = curMod and renderAffix(curMod, type(cur.range) == "number" and cur.range or (main.defaultItemAffixQuality or 0.5)) or null,
 				affix = curMod and opt(curMod.affix) or null,
 				options = affixSlotOptions(item, affixType, tableName, i),
 			}
@@ -4540,6 +4547,74 @@ M.item_affixes = function(p)
 		prefixes = slots("prefixes", "Prefix"),
 		suffixes = slots("suffixes", "Suffix"),
 	}
+end
+
+-- Generate rolls on demand to avoid expanding every dropdown tier.
+M.item_affix_rolls = function(p)
+	ensureBuild()
+	local item = requireItem(p)
+	if not item.crafted or not item.affixes then error("only crafted magic/rare items expose affixes", 0) end
+	local tableName = p.table == "suffixes" and "suffixes" or "prefixes"
+	local index = tonumber(p.index) or 1
+	local limit = item[tableName].limit or (item.affixLimit / 2)
+	if index % 1 ~= 0 or index < 1 or index > limit then error("affix index out of range", 0) end
+	local group = p.group
+	if type(group) ~= "string" or group == "" then error("affix group required", 0) end
+	local options = affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)
+	local tiers = {}
+	for _, option in ipairs(options) do
+		if option.group == group then tiers[#tiers + 1] = option end
+	end
+	if #tiers == 0 then error("affix family is not compatible with this item", 0) end
+	-- PoB's affix slider runs from the weakest tier to the strongest.
+	table.sort(tiers, function(a, b)
+		if a.level ~= b.level then return a.level < b.level end
+		return a.modId < b.modId
+	end)
+	local out = array({})
+	local function renderAffix(mod, range)
+		local lines = {}
+		for _, line in ipairs(mod) do lines[#lines + 1] = itemLib.applyRange(line, range) end
+		return table.concat(lines, "/")
+	end
+	local function flipRange(modA, modB)
+		local function bounds(mod)
+			for _, line in ipairs(mod) do
+				local min, max = line:match("%((%d[%d%.]*)%-(%d[%d%.]*)%)")
+				if min then return tonumber(min), tonumber(max) end
+			end
+		end
+		local minA, maxA = bounds(modA)
+		local minB, maxB = bounds(modB)
+		if not minA or not minB then return false end
+		if minA % 1 ~= 0 or maxA % 1 ~= 0 or minB % 1 ~= 0 or maxB % 1 ~= 0 then return false end
+		return minA < minB and minA + 1 == maxB or minA >= minB and minA - 1 == maxB
+	end
+	for tierIndex, option in ipairs(tiers) do
+		local mod = item.affixes[option.modId]
+		local steps = array({})
+		local hasRange = option.haveRange
+		local lastValue
+		local prior, nextTier = tiers[tierIndex - 1], tiers[tierIndex + 1]
+		local flip = prior and flipRange(item.affixes[prior.modId], mod)
+			or not prior and nextTier and flipRange(mod, item.affixes[nextTier.modId]) or false
+		for percent = 0, hasRange and 100 or 0 do
+			local range = hasRange and (flip and 1 - percent / 100 or percent / 100) or 0.5
+			local value = renderAffix(mod, range)
+			if value ~= lastValue then
+				steps[#steps + 1] = { position = hasRange and percent or 50, range = range, value = value }
+				lastValue = value
+			end
+		end
+		if hasRange then
+			for stepIndex, step in ipairs(steps) do
+				local nextStart = steps[stepIndex + 1] and steps[stepIndex + 1].position or 101
+				step.position = math.floor((step.position + nextStart - 1) / 2)
+			end
+		end
+		out[#out + 1] = { modId = option.modId, affix = option.affix, tier = #tiers - tierIndex + 1, steps = steps }
+	end
+	return { tiers = out }
 end
 
 M.set_item_affix = function(p)

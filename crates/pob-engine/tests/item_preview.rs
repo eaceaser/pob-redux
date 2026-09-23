@@ -387,10 +387,42 @@ fn customization_edits_drafts_and_commits_saved_items() {
         .call("item_customization", &json!({"raw":crafted}))
         .unwrap();
     assert_eq!(crafted_data["affixes"]["crafted"], true);
+    let accuracy = crafted_data["affixes"]["prefixes"][0]["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|option| option["group"] == "IncreasedAccuracy")
+        .unwrap();
+    let rolls = engine.call("item_affix_rolls", &json!({
+        "raw": crafted, "table": "prefixes", "index": 1, "group": accuracy["group"]
+    })).unwrap();
+    let accuracy_tiers = rolls["tiers"].as_array().unwrap();
+    assert!(accuracy_tiers.len() > 1);
+    let low_level = crafted.replace("Item Level: 80", "Item Level: 1");
+    let low_level_rolls = engine.call("item_affix_rolls", &json!({
+        "raw": low_level, "table": "prefixes", "index": 1, "group": accuracy["group"]
+    })).unwrap();
+    assert_eq!(low_level_rolls["tiers"].as_array().unwrap().len(), accuracy_tiers.len());
+    assert_eq!(accuracy_tiers[0]["tier"], accuracy_tiers.len());
+    assert_eq!(accuracy_tiers.last().unwrap()["tier"], 1);
+    assert!(accuracy_tiers.iter().all(|tier| tier["steps"].as_array().unwrap().len() > 1));
+    assert!(accuracy_tiers[0]["steps"][0]["value"].as_str().unwrap().contains("Accuracy Rating"));
+    let amulet = "Rarity: Rare\nAffix candidate\nJade Amulet\nCrafted: true\nItem Level: 80\nImplicits: 0";
+    let amulet_data = engine.call("item_customization", &json!({"raw": amulet})).unwrap();
+    let spell_levels = amulet_data["affixes"]["suffixes"][0]["options"]
+        .as_array().unwrap().iter()
+        .find(|option| option["group"] == "GlobalIncreaseSpellSkillGemLevel")
+        .unwrap();
+    let discrete = engine.call("item_affix_rolls", &json!({
+        "raw": amulet, "table": "suffixes", "index": 1, "group": spell_levels["group"]
+    })).unwrap();
+    assert!(discrete["tiers"].as_array().unwrap().len() > 1);
+    assert!(discrete["tiers"].as_array().unwrap().iter().all(|tier| tier["steps"].as_array().unwrap().len() == 1));
     let affix = &crafted_data["affixes"]["prefixes"][0]["options"][0]["modId"];
     assert!(affix.is_string());
     let crafted_data=engine.call("item_customize",&json!({"raw":crafted,"operation":"affix","table":"prefixes","index":1,"modId":affix,"range":1.0})).unwrap();
     assert_eq!(crafted_data["affixes"]["prefixes"][0]["modId"], *affix);
+    assert!(crafted_data["affixes"]["prefixes"][0]["value"].is_string());
     assert_eq!(snapshot(&engine), before);
 
     let variant = "Rarity: Rare\nVariant candidate\nIron Ring\nVariant: Small\nVariant: Large\nSelected Variant: 1\nImplicits: 0\n{variant:1}+10 to maximum Life\n{variant:2}+90 to maximum Life";
