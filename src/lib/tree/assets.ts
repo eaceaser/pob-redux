@@ -9,12 +9,21 @@ export interface AssetRect {
   h: number;
   ow: number;
   oh: number;
+  /** Already masked to its inscribed circle by pob-sync. */
+  round?: boolean;
+}
+
+export interface Lod {
+  file: string;
+  scale: number;
 }
 
 export interface AssetManifest {
   version: string;
   assets: Record<string, AssetRect>;
   disabled: Record<string, AssetRect>;
+  /** Smaller copies of a sheet, keyed by its file; a rect maps into one divided by `scale`. */
+  lods?: Record<string, Lod[]>;
 }
 
 interface Slot {
@@ -30,17 +39,15 @@ interface Slot {
 export class AssetStore {
   private slots = new Map<string, Slot>();
   private tinted = new Map<string, HTMLCanvasElement>();
+  onReady: () => void = () => {};
 
-  constructor(
-    readonly manifest: AssetManifest,
-    private onReady: () => void,
-  ) {}
+  constructor(readonly manifest: AssetManifest) {}
 
-  static async load(version: string, onReady: () => void): Promise<AssetStore | null> {
+  static async load(version: string): Promise<AssetStore | null> {
     try {
       const res = await fetch(convertFileSrc(`TreeData/${version}/web/manifest.json`, "pobasset"));
       if (!res.ok) return null;
-      return new AssetStore((await res.json()) as AssetManifest, onReady);
+      return new AssetStore((await res.json()) as AssetManifest);
     } catch {
       return null;
     }
@@ -83,10 +90,37 @@ export class AssetStore {
   draw(ctx: CanvasRenderingContext2D, name: string, cx: number, cy: number, halfW: number, halfH: number, disabled = false): boolean {
     const r = this.rect(name, disabled);
     if (!r) return false;
-    const img = this.image(r.file);
-    if (!img) return false;
-    ctx.drawImage(img, r.x, r.y, r.w, r.h, cx - halfW, cy - halfH, halfW * 2, halfH * 2);
+    const src = this.source(r, 2 * Math.max(halfW, halfH) * devicePixelRatio);
+    if (!src) return false;
+    const [img, f] = src;
+    ctx.drawImage(img, r.x / f, r.y / f, r.w / f, r.h / f, cx - halfW, cy - halfH, halfW * 2, halfH * 2);
     return true;
+  }
+
+  /** The smallest copy with twice `px` (just enough resamples soft); until it loads, the nearest loaded one. */
+  private source(r: AssetRect, px: number): [HTMLImageElement, number] | null {
+    const lods = this.manifest.lods?.[r.file];
+    if (!lods) {
+      const img = this.image(r.file);
+      return img ? [img, 1] : null;
+    }
+    const size = Math.max(r.w, r.h);
+    let file = r.file;
+    let scale = 1;
+    for (const l of lods) {
+      if (l.scale > scale && size / l.scale >= 2 * px) {
+        file = l.file;
+        scale = l.scale;
+      }
+    }
+    const img = this.image(file);
+    if (img) return [img, scale];
+    const all = [{ file: r.file, scale: 1 }, ...lods];
+    for (const l of [...all.filter((l) => l.scale < scale).reverse(), ...all.filter((l) => l.scale > scale)]) {
+      const s = this.slots.get(l.file);
+      if (s?.ready) return [s.img, l.scale];
+    }
+    return null;
   }
 
   /** `draw` with the art multiplied by `color`, as PoB's SetDrawColor tints an image. */
@@ -122,11 +156,12 @@ export class AssetStore {
   tile(ctx: CanvasRenderingContext2D, name: string, w: number, h: number, size: number): boolean {
     const r = this.rect(name);
     if (!r) return false;
-    const img = this.image(r.file);
-    if (!img) return false;
+    const src = this.source(r, size * devicePixelRatio);
+    if (!src) return false;
+    const [img, f] = src;
     for (let y = 0; y < h; y += size) {
       for (let x = 0; x < w; x += size) {
-        ctx.drawImage(img, r.x, r.y, r.w, r.h, x, y, size, size);
+        ctx.drawImage(img, r.x / f, r.y / f, r.w / f, r.h / f, x, y, size, size);
       }
     }
     return true;

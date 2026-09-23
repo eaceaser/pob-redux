@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { engine, poolStatus, powerScanParallel, readTreeJson, type JewelRadius, type MasteryEffect, type NodeCompare, type NodeTattoos, type PowerStat, type SocketedJewel, type Tooltip, type TreePower, type WeaponSetMode } from "$lib/engine.svelte";
+  import { engine, poolStatus, powerScanParallel, type JewelRadius, type MasteryEffect, type NodeCompare, type NodeTattoos, type PowerStat, type SocketedJewel, type Tooltip, type TreePower, type WeaponSetMode } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { game } from "$lib/state/game.svelte";
-  import { parseTree, withDynamicNodes, NodeIndex, type TEdge, type TreeModel, type TNode } from "$lib/tree/model";
-  import { AssetStore } from "$lib/tree/assets";
+  import { withDynamicNodes, NodeIndex, type TEdge, type TreeModel, type TNode } from "$lib/tree/model";
+  import type { AssetStore } from "$lib/tree/assets";
+  import { loadTree } from "$lib/tree/load";
   import PobText from "$lib/components/PobText.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
   import { stripPobText } from "$lib/pobtext";
@@ -484,7 +485,8 @@
     return { ...S, hover: null, path: NO_IDS, dep: NO_IDS };
   }
   function viewMath(V: View) {
-    const margin = 4000 * scale;
+    // Room for strokes, dot rings and the highlight rings drawn outside a node's art.
+    const margin = 10;
     const minX = V.cx - (V.w / 2 + margin) / scale;
     const maxX = V.cx + (V.w / 2 + margin) / scale;
     const minY = V.cy - (V.h / 2 + margin) / scale;
@@ -495,9 +497,14 @@
       tx: (x: number) => x * scale + ox,
       ty: (y: number) => y * scale + oy,
       toScreen: (x: number, y: number): [number, number] => [x * scale + ox, y * scale + oy],
-      inView: (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY,
-      near: (x: number, y: number, r: number) => x >= minX - r && x <= maxX + r && y >= minY - r && y <= maxY + r,
+      /** Whether anything within `r` tree units of (x, y) is on screen. */
+      inView: (x: number, y: number, r = 0) => x >= minX - r && x <= maxX + r && y >= minY - r && y <= maxY + r,
+      boxInView: (b: TEdge["box"]) => b[2] >= minX && b[0] <= maxX && b[3] >= minY && b[1] <= maxY,
     };
+  }
+  /** How far a node's art, dot and outline rings reach, in tree units. */
+  function nodeReach(n: TNode): number {
+    return Math.max(n.size.base, n.size.overlay, n.r, 30);
   }
 
   // The tree without hover decoration is drawn into its own canvas and each
@@ -608,6 +615,8 @@
   // Below this many pixels the frame art is a smudge, so the nodes are drawn
   // as rings in one batched stroke per state instead of an image apiece.
   const DOT_PX = 3;
+  // Below this radius an icon is too small to make out.
+  const ICON_PX = 2;
   // The average colour of PoB's frame art at a couple of pixels across, by
   // state and by node size, so a dot reads the same as the art it replaces.
   const DOT_FILL = ["#caa371", "#806650", "#454139", "#bc9b64", "#a0754d", "#716248", "#af000f", "#28a335"];
@@ -679,7 +688,7 @@
   function drawBelow(ctx: CanvasRenderingContext2D, S: Scene, V: View) {
     const M = model;
     if (!M) return;
-    const { tx, ty, toScreen, inView, near } = viewMath(V);
+    const { tx, ty, toScreen, inView, boxInView } = viewMath(V);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "medium";
     ctx.fillStyle = palette.bg;
@@ -696,7 +705,7 @@
       // PoB's DrawAsset: half extents are the sheet size × 1.33 tree units.
       const drawArt = (name: string, x: number, y: number, mirrored = false) => {
         const r = store.rect(name);
-        if (!r) return;
+        if (!r || !inView(x, y, Math.max(r.w, r.h * (mirrored ? 2 : 1)) * 1.33)) return;
         const [sx, sy] = toScreen(x, y);
         const hw = r.w * 1.33 * scale;
         const hh = r.h * 1.33 * scale;
@@ -712,12 +721,10 @@
         ctx.restore();
       };
       const cls = M.classes.find((c) => c.name === S.cls);
-      if (cls?.area && near(cls.area.x, cls.area.y, 2000)) drawArt(cls.area.bg, cls.area.x, cls.area.y);
-      for (const g of M.groups) {
-        if (near(g.x, g.y, 400)) drawArt(g.bg, g.x, g.y, g.mirrored);
-      }
+      if (cls?.area) drawArt(cls.area.bg, cls.area.x, cls.area.y);
+      for (const g of M.groups) drawArt(g.bg, g.x, g.y, g.mirrored);
       for (const c of M.classes) {
-        if (c.name === S.cls || c.startNode == null || !near(c.bgX, c.bgY, 400)) continue;
+        if (c.name === S.cls || c.startNode == null) continue;
         drawArt("PSStartNodeBackgroundInactive", c.bgX, c.bgY);
       }
     }
@@ -744,7 +751,7 @@
       const curAscId = M.classes.flatMap((c) => c.ascendancies).find((a) => a.name === S.asc)?.id ?? S.asc;
       for (const c of M.classes) {
         for (const a of c.ascendancies) {
-          if (!inView(a.x, a.y)) continue;
+          if (!inView(a.x, a.y, a.half)) continue;
           if (a.replaceBy && (a.replaceBy === curAscId || a.replaceBy === S.asc)) continue;
           if (a.replace && a.name !== S.asc && a.id !== curAscId) continue;
           const [ax, ay] = toScreen(a.x, a.y);
@@ -758,16 +765,18 @@
     // --- node glows: mastery and tattoo effects sit under the connectors (PoB layer 15) ---
     if (A && scale > 0.045 && S.heat === null) {
       for (const n of M.nodes.values()) {
-        if (n.hidden || n.kind === "classStart" || n.kind === "onlyImage" || !inView(n.x, n.y)) continue;
-        const ov = S.ov[String(n.id)];
+        if (n.hidden || n.kind === "classStart" || n.kind === "onlyImage") continue;
+        const ov = S.ovAny ? S.ov[String(n.id)] : undefined;
         const effect = ov?.effect ?? n.effect;
         if (!effect) continue;
-        let half = n.size.effect * scale;
+        let reach = n.size.effect;
         if (ov?.effect) {
           const r = A.rect(ov.effect);
           if (!r) continue;
-          half = r.w * 1.33 * scale;
-        } else if (n.size.effect <= 0) continue;
+          reach = r.w * 1.33;
+        } else if (reach <= 0) continue;
+        if (!inView(n.x, n.y, reach)) continue;
+        const half = reach * scale;
         const lit = !!ov?.effect || S.alloc.has(n.id) || S.path.has(n.id);
         const dimAsc = n.asc !== null && n.asc !== S.asc;
         const sx = tx(n.x);
@@ -782,9 +791,9 @@
     ctx.lineCap = "round";
     for (const b of edgeBuckets) b.length = 0;
     for (const e of M.edges) {
+      if (!boxInView(e.box)) continue;
       const a = M.nodes.get(e.a)!;
       const b = M.nodes.get(e.b)!;
-      if (!inView(a.x, a.y) && !inView(b.x, b.y)) continue;
       const dim = e.asc !== null && e.asc !== S.asc;
       edgeBuckets[EDGE_INDEX[edgeState(a, b, S)] * 2 + (dim ? 1 : 0)].push(e);
     }
@@ -804,7 +813,6 @@
     const A = assets;
     const { tx, ty, inView } = viewMath(V);
     const drawEffects = scale > 0.045;
-    const drawIcons = scale > 0.03;
     const heat = S.heat !== null;
     const hoverJewel = S.hover?.kind === "socket" ? S.sockets.get(S.hover.id) : undefined;
     const hoverSocketSet = hoverJewel?.radiusIndex ? (socketRadius.get(S.hover!.id) ?? null) : null;
@@ -812,7 +820,7 @@
     for (const d of dots) d.length = 0;
     for (const n of M.nodes.values()) {
       if (n.hidden || n.kind === "classStart") continue;
-      if (!inView(n.x, n.y)) continue;
+      if (!inView(n.x, n.y, nodeReach(n))) continue;
       const sx = tx(n.x);
       const sy = ty(n.y);
       const isAlloc = S.alloc.has(n.id);
@@ -869,7 +877,7 @@
           }
         }
       } else {
-        if (drawIcons && n.size.base > 0) {
+        if (n.size.base * scale >= ICON_PX) {
           const icon = iconFor(n, S, isAlloc);
           if (!isAlloc && !heat) ctx.globalAlpha *= 0.7;
           drawCircularAsset(ctx, A, icon, sx, sy, n.size.base * scale, !isAlloc && !heat);
@@ -938,6 +946,10 @@
 
   /** Keep square sprite sheets inside the circular node frame. */
   function drawCircularAsset(ctx: CanvasRenderingContext2D, store: AssetStore, name: string, cx: number, cy: number, radius: number, disabled = false) {
+    if (store.rect(name, disabled)?.round) {
+      store.draw(ctx, name, cx, cy, radius, radius, disabled);
+      return;
+    }
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -963,7 +975,7 @@
     const socketSet = hoverJewel?.radiusIndex ? (socketRadius.get(S.hover!.id) ?? null) : null;
     if (!S.hover && S.path.size === 0 && S.dep.size === 0 && !socketSet) return null;
     const base = baseScene(S);
-    const { inView } = viewMath(V);
+    const { boxInView } = viewMath(V);
 
     const hot = new Set<number>(S.path);
     for (const id of S.dep) hot.add(id);
@@ -978,9 +990,10 @@
       for (const e of list) {
         if (seen.has(e)) continue;
         seen.add(e);
+        if (!boxInView(e.box)) continue;
         const a = M.nodes.get(e.a);
         const b = M.nodes.get(e.b);
-        if (!a || !b || (!inView(a.x, a.y) && !inView(b.x, b.y))) continue;
+        if (!a || !b) continue;
         const st = edgeState(a, b, S);
         if (st === edgeState(a, b, base)) continue;
         edges[EDGE_INDEX[st] * 2 + (e.asc !== null && e.asc !== S.asc ? 1 : 0)].push(e);
@@ -1013,7 +1026,7 @@
     for (const id of H.hot) {
       const n = M.nodes.get(id);
       if (!n || n.hidden || n.kind === "classStart" || n.kind === "onlyImage" || n.kind === "ascStart") continue;
-      if (!inView(n.x, n.y)) continue;
+      if (!inView(n.x, n.y, nodeReach(n))) continue;
       const sx = tx(n.x);
       const sy = ty(n.y);
       const isAlloc = S.alloc.has(n.id);
@@ -1052,7 +1065,7 @@
       ctx.lineWidth = 1.75;
       for (const id of H.socketSet) {
         const n = M.nodes.get(id);
-        if (!n || !inView(n.x, n.y)) continue;
+        if (!n || !inView(n.x, n.y, nodeReach(n))) continue;
         ctx.beginPath();
         ctx.arc(tx(n.x), ty(n.y), Math.max(n.r, 30) * scale + 5, 0, Math.PI * 2);
         ctx.stroke();
@@ -1124,7 +1137,7 @@
         const radius = onKeystone ? { ...rad, inner: KEYSTONE_INNER } : rad;
         const rings = timelessRings(j);
         for (const c of centers) {
-          if (!inView(c.x, c.y)) continue;
+          if (!inView(c.x, c.y, rad.outer)) continue;
           const sx = tx(c.x);
           const sy = ty(c.y);
           const outer = rad.outer * scale;
@@ -1660,16 +1673,21 @@
     loadedVersion = v;
     (async () => {
       try {
-        const [json, store, radii, pstats] = await Promise.all([
-          readTreeJson(v),
-          AssetStore.load(v, () => {
-            assetsGen++;
-            invalidate();
-          }),
+        const [tree, radii, pstats] = await Promise.all([
+          loadTree(v),
           engine.jewelRadii().catch(() => ({ radii: [] as JewelRadius[] })),
           engine.powerStats().catch(() => ({ stats: [] as PowerStat[] })),
         ]);
-        baseModel = parseTree(v, json);
+        if (v !== loadedVersion) return;
+        const store = tree.assets;
+        if (assets && assets !== store) assets.onReady = () => {};
+        if (store) {
+          store.onReady = () => {
+            assetsGen++;
+            invalidate();
+          };
+        }
+        baseModel = tree.model;
         dynKey = "";
         applyDynamic();
         assets = store;
@@ -1677,7 +1695,7 @@
         jewelRadii = radii.radii;
         powerStats = pstats.stats;
         if (store) {
-          for (const n of ["Background2", "BGTree", "BGTreeActive", "AscendancyMiddle"]) store.prefetch(n);
+          for (const n of ["BGTree", "BGTreeActive", "AscendancyMiddle"]) store.prefetch(n);
         }
         loadError = null;
         resize();
@@ -1717,6 +1735,7 @@
       if (raf) cancelAnimationFrame(raf);
       if (spinTimer) clearTimeout(spinTimer);
       if (zoomTimer) clearTimeout(zoomTimer);
+      if (assets) assets.onReady = () => {};
     };
   });
 </script>
@@ -2173,7 +2192,6 @@
     background: color-mix(in srgb, var(--bg-1) 92%, transparent);
     border: 1px solid var(--line-0);
     border-radius: var(--r-2);
-    backdrop-filter: blur(6px);
     overflow: hidden;
   }
   .report-head {
@@ -2242,7 +2260,6 @@
     border: 1px solid var(--line-1);
     border-left: 2px solid var(--warn);
     border-radius: var(--r-1);
-    backdrop-filter: blur(6px);
   }
   .banner span {
     flex: 1;
@@ -2380,7 +2397,6 @@
     border-radius: var(--r-2);
     box-shadow: var(--shadow-pop);
     pointer-events: none;
-    backdrop-filter: blur(8px);
     font-size: var(--fs-sm);
   }
   .tip-head {

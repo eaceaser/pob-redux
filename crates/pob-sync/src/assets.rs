@@ -6,7 +6,7 @@
 //! layers are packed into one atlas per sheet; large ones (backgrounds) get a
 //! file per layer, downscaled. `web/manifest.json` maps asset names to rects.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -25,6 +25,9 @@ pub struct AssetRect {
     /// Native layer size before any downscaling.
     pub ow: u32,
     pub oh: u32,
+    /// Masked to the ellipse inside the rect, so the renderer can skip its clip.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub round: bool,
 }
 
 #[derive(Serialize, Default)]
@@ -33,6 +36,15 @@ pub struct Manifest {
     pub assets: BTreeMap<String, AssetRect>,
     /// Greyscale icon variants from the `skills-disabled_*` sheets.
     pub disabled: BTreeMap<String, AssetRect>,
+    /// Smaller copies of a sheet, keyed by its file; a rect maps into one divided by `scale`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub lods: BTreeMap<String, Vec<Lod>>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Lod {
+    pub file: String,
+    pub scale: u32,
 }
 
 #[derive(Default)]
@@ -57,20 +69,31 @@ pub fn build(src_tree: &Path, dest_tree: &Path, version: &str) -> Result<AssetSt
     let mut stats = AssetStats::default();
 
     if let Some(coords) = tree.get("ddsCoords").and_then(|v| v.as_object()) {
-        for (file, names) in coords {
+        // PoE2's skills-disabled sheets are byte-identical to skills; a repeat reuses the first image.
+        let mut sheets: Vec<_> = coords.iter().collect();
+        sheets.sort_by_key(|(file, _)| (file.starts_with("skills-disabled"), file.as_str()));
+        let mut written: Vec<(Vec<u8>, String)> = Vec::new();
+        for (file, names) in sheets {
             let path = src_tree.join(file);
             if !path.is_file() {
                 stats.skipped.push(format!("{file}: missing"));
                 continue;
             }
-            match decode_sheet(&path, file, names, version, &web) {
-                Ok((rects, disabled, layers, files, bytes)) => {
+            let raw = fs::read(&path)?;
+            let same = written.iter().find(|(bytes, _)| *bytes == raw).map(|(_, base)| base.clone());
+            let decoded = decode_sheet(&raw, file, names, version, &web, same.as_deref());
+            if same.is_none() {
+                written.push((raw, file.strip_suffix(".dds.zst").unwrap_or(file).to_string()));
+            }
+            match decoded {
+                Ok(out) => {
                     stats.sheets += 1;
-                    stats.layers += layers;
-                    stats.files += files;
-                    stats.bytes += bytes;
-                    let target = if disabled { &mut manifest.disabled } else { &mut manifest.assets };
-                    target.extend(rects);
+                    stats.layers += out.layers;
+                    stats.files += out.files;
+                    stats.bytes += out.bytes;
+                    let target = if out.disabled { &mut manifest.disabled } else { &mut manifest.assets };
+                    target.extend(out.rects);
+                    manifest.lods.extend(out.lods);
                 }
                 Err(e) => stats.skipped.push(format!("{file}: {e:#}")),
             }
@@ -120,12 +143,81 @@ pub fn inspect(src_tree: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Icons stay lossless; large soft art (class plates, mastery effects) is lossy.
-fn save_webp(img: &RgbaImage, out: &Path, lossless: bool) -> Result<()> {
+/// Icons stay lossless (`None`); large soft art (class plates, mastery effects) is lossy.
+fn save_webp(img: &RgbaImage, out: &Path, quality: Option<f32>) -> Result<()> {
     let enc = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height());
-    let mem = if lossless { enc.encode_lossless() } else { enc.encode(82.0) };
+    let mem = match quality {
+        None => enc.encode_lossless(),
+        Some(q) => enc.encode(q),
+    };
     fs::write(out, &*mem).with_context(|| format!("write {}", out.display()))?;
     Ok(())
+}
+
+/// Clears outside the rect's inscribed ellipse, the circle the renderer clips icons to.
+fn mask_round(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
+    let (rx, ry) = (w as f32 / 2.0, h as f32 / 2.0);
+    for py in y..(y + h).min(img.height()) {
+        for px in x..(x + w).min(img.width()) {
+            let dx = ((px - x) as f32 + 0.5 - rx) / rx;
+            let dy = ((py - y) as f32 + 0.5 - ry) / ry;
+            let inside = (1.0 - (dx * dx + dy * dy).sqrt()) * rx.min(ry);
+            let cover = (inside + 0.5).clamp(0.0, 1.0);
+            let p = img.get_pixel_mut(px, py);
+            p[3] = (p[3] as f32 * cover).round() as u8;
+            if p[3] == 0 {
+                p.0 = [0, 0, 0, 0];
+            }
+        }
+    }
+}
+
+/// Node icon sheets: every rect in them is drawn inside a circle.
+fn is_icon_sheet(base: &str) -> bool {
+    base.starts_with("skills")
+}
+
+/// 1/`f` size by block average, alpha-weighted so masked-out pixels do not darken edges.
+fn shrink(img: &RgbaImage, f: u32) -> RgbaImage {
+    let (w, h) = (img.width().div_ceil(f), img.height().div_ceil(f));
+    let block = (f * f) as f32;
+    RgbaImage::from_fn(w, h, |ox, oy| {
+        let mut acc = [0f32; 4];
+        for y in oy * f..((oy + 1) * f).min(img.height()) {
+            for x in ox * f..((ox + 1) * f).min(img.width()) {
+                let p = img.get_pixel(x, y);
+                let a = p[3] as f32;
+                for c in 0..3 {
+                    acc[c] += p[c] as f32 * a;
+                }
+                acc[3] += a;
+            }
+        }
+        if acc[3] == 0.0 {
+            return image::Rgba([0, 0, 0, 0]);
+        }
+        let c = |i: usize| (acc[i] / acc[3]).round() as u8;
+        image::Rgba([c(0), c(1), c(2), (acc[3] / block).round() as u8])
+    })
+}
+
+/// Halved copies of `img` at `web/lod<scale>/<rel>` until its largest sprite would drop under `min` px.
+fn write_lods(img: &RgbaImage, largest: u32, min: u32, web: &Path, version: &str, rel: &str) -> Result<(Vec<Lod>, usize, u64)> {
+    let mut lods = Vec::new();
+    let (mut files, mut bytes) = (0usize, 0u64);
+    let mut scale = 2;
+    while largest / scale >= min {
+        let out = web.join(format!("lod{scale}")).join(rel);
+        if let Some(dir) = out.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        save_webp(&shrink(img, scale), &out, Some(90.0))?;
+        files += 1;
+        bytes += fs::metadata(&out)?.len();
+        lods.push(Lod { file: format!("TreeData/{version}/web/lod{scale}/{rel}"), scale });
+        scale *= 2;
+    }
+    Ok((lods, files, bytes))
 }
 
 /// Mip 0 of one array layer as an RGBA image.
@@ -135,18 +227,27 @@ fn decode_layer(dds: &image_dds::ddsfile::Dds, layer: u32) -> Result<RgbaImage> 
     Ok(rgba.into_image()?)
 }
 
-type SheetOut = (BTreeMap<String, AssetRect>, bool, usize, usize, u64);
+struct SheetOut {
+    rects: BTreeMap<String, AssetRect>,
+    disabled: bool,
+    layers: usize,
+    files: usize,
+    bytes: u64,
+    lods: Vec<(String, Vec<Lod>)>,
+}
 
+/// `same`: an already written sheet with identical data for the rects to point at.
 fn decode_sheet(
-    path: &Path,
+    zst: &[u8],
     file: &str,
     names: &serde_json::Value,
     version: &str,
     web: &Path,
+    same: Option<&str>,
 ) -> Result<SheetOut> {
     let base = file.strip_suffix(".dds.zst").unwrap_or(file);
     let disabled = base.starts_with("skills-disabled");
-    let raw = zstd::decode_all(&fs::read(path)?[..]).context("zstd")?;
+    let raw = zstd::decode_all(zst).context("zstd")?;
     let dds = image_dds::ddsfile::Dds::read(&raw[..]).context("dds header")?;
     let layers = dds.get_num_array_layers();
     let (w, h) = (dds.get_width(), dds.get_height());
@@ -164,25 +265,40 @@ fn decode_sheet(
     let mut decoded = 0usize;
     let mut files = 0usize;
     let mut bytes = 0u64;
+    let mut lods = Vec::new();
 
     if w.max(h) <= 256 {
+        let round = is_icon_sheet(base);
+        let file = format!("TreeData/{version}/web/{}.webp", same.unwrap_or(base));
         let cols = (layers as f64).sqrt().ceil().max(1.0) as u32;
         let rows = layers.div_ceil(cols);
-        let mut atlas = RgbaImage::new(cols * w, rows * h);
+        let mut atlas = same.is_none().then(|| RgbaImage::new(cols * w, rows * h));
         for (layer, layer_names) in &wanted {
-            let img = decode_layer(&dds, *layer).with_context(|| format!("layer {layer}"))?;
             let (cx, cy) = ((layer % cols) * w, (layer / cols) * h);
-            image::imageops::replace(&mut atlas, &img, cx as i64, cy as i64);
-            decoded += 1;
-            let file = format!("TreeData/{version}/web/{base}.webp");
+            if let Some(atlas) = atlas.as_mut() {
+                let mut img = decode_layer(&dds, *layer).with_context(|| format!("layer {layer}"))?;
+                if round {
+                    mask_round(&mut img, 0, 0, w, h);
+                }
+                image::imageops::replace(atlas, &img, cx as i64, cy as i64);
+                decoded += 1;
+            }
             for name in layer_names {
-                rects.insert(name.clone(), AssetRect { file: file.clone(), x: cx, y: cy, w, h, ow: w, oh: h });
+                rects.insert(name.clone(), AssetRect { file: file.clone(), x: cx, y: cy, w, h, ow: w, oh: h, round });
             }
         }
-        let out = web.join(format!("{base}.webp"));
-        save_webp(&atlas, &out, true)?;
-        files += 1;
-        bytes += fs::metadata(&out)?.len();
+        if let Some(atlas) = atlas {
+            let out = web.join(format!("{base}.webp"));
+            save_webp(&atlas, &out, None)?;
+            files += 1;
+            bytes += fs::metadata(&out)?.len();
+            if round {
+                let (list, n, b) = write_lods(&atlas, w.max(h), 16, web, version, &format!("{base}.webp"))?;
+                files += n;
+                bytes += b;
+                lods.push((file, list));
+            }
+        }
     } else {
         let dir = web.join(base);
         fs::create_dir_all(&dir)?;
@@ -198,21 +314,27 @@ fn decode_sheet(
                 img = image::imageops::resize(&img, nw, nh, FilterType::Triangle);
             }
             let out = dir.join(format!("{layer}.webp"));
-            save_webp(&img, &out, false)?;
+            save_webp(&img, &out, Some(82.0))?;
             decoded += 1;
             files += 1;
             bytes += fs::metadata(&out)?.len();
             let file = format!("TreeData/{version}/web/{base}/{layer}.webp");
+            let (list, n, b) = write_lods(&img, img.width().max(img.height()), 64, web, version, &format!("{base}/{layer}.webp"))?;
+            files += n;
+            bytes += b;
+            if !list.is_empty() {
+                lods.push((file.clone(), list));
+            }
             for name in layer_names {
                 rects.insert(
                     name.clone(),
-                    AssetRect { file: file.clone(), x: 0, y: 0, w: img.width(), h: img.height(), ow, oh },
+                    AssetRect { file: file.clone(), x: 0, y: 0, w: img.width(), h: img.height(), ow, oh, round: false },
                 );
             }
         }
     }
 
-    Ok((rects, disabled, decoded, files, bytes))
+    Ok(SheetOut { rects, disabled, layers: decoded, files, bytes, lods })
 }
 
 /// PoE1's sheets are plain PNG/JPG/WebP atlases whose rects are listed in
@@ -233,6 +355,19 @@ pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result
         anyhow::bail!("sprites.lua has no sprites table");
     };
     let mut copied: BTreeMap<String, u64> = BTreeMap::new();
+    let num = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0).round() as u32;
+    // An icon sheet is masked before it is written, so all of its rects are needed first.
+    let mut icon_rects: BTreeMap<&str, BTreeSet<Rect>> = BTreeMap::new();
+    for sheet in sections.values() {
+        let Some(basename) = sheet.get("filename").and_then(|v| v.as_str()).map(sheet_basename) else { continue };
+        if !is_icon_sheet(basename) {
+            continue;
+        }
+        let set = icon_rects.entry(basename).or_default();
+        for rect in sheet.get("coords").and_then(|v| v.as_object()).into_iter().flatten().map(|(_, r)| r) {
+            set.insert((num(rect, "x"), num(rect, "y"), num(rect, "w"), num(rect, "h")));
+        }
+    }
     // A bloodline sheet repeats the ascendancy frame names with its own art.
     // PoB registers them as "<Ascendancy><Asset>" (PassiveTree.lua
     // bloodlineSpriteTypes); one sheet can serve several ascendancies.
@@ -255,31 +390,77 @@ pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result
             _ => Vec::new(),
         }
     };
+    // A sheet this large is split into a file per sprite, so only the sprites in view decode.
+    const SPLIT_PIXELS: u64 = 4_000_000;
+    let mut split_images: BTreeMap<String, RgbaImage> = BTreeMap::new();
+    let mut crops: BTreeMap<(String, Rect), String> = BTreeMap::new();
     for (section, sheet) in sections {
         let Some(filename) = sheet.get("filename").and_then(|v| v.as_str()) else { continue };
-        // "https://web.poecdn.com/image/passive-skill/skills-3.jpg?1540b3b6" -> "skills-3.jpg"
-        let basename = filename.rsplit('/').next().unwrap_or(filename).split('?').next().unwrap_or(filename);
+        let basename = sheet_basename(filename);
         let src = src_tree.join(basename);
         if !src.is_file() {
             stats.skipped.push(format!("{section}: {basename} missing"));
             continue;
         }
-        if !copied.contains_key(basename) {
-            let out = web.join(basename);
-            fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
+        let icons = icon_rects.get(basename);
+        let stem = basename.rsplit_once('.').map_or(basename, |(stem, _)| stem);
+        let split = icons.is_none() && image::image_dimensions(&src).is_ok_and(|(w, h)| w as u64 * h as u64 >= SPLIT_PIXELS);
+        // JPG has no alpha, so a masked sheet is written as WebP.
+        let out_name = if icons.is_some() { format!("{stem}.webp") } else { basename.to_string() };
+        if split {
+            if !split_images.contains_key(basename) {
+                let img = image::open(&src).with_context(|| format!("read {}", src.display()))?.to_rgba8();
+                split_images.insert(basename.to_string(), img);
+            }
+        } else if !copied.contains_key(&out_name) {
+            let out = web.join(&out_name);
+            if let Some(rects) = icons {
+                let mut img = image::open(&src).with_context(|| format!("read {}", src.display()))?.to_rgba8();
+                for &(x, y, w, h) in rects {
+                    mask_round(&mut img, x, y, w, h);
+                }
+                save_webp(&img, &out, Some(82.0))?;
+            } else {
+                fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
+            }
             let len = fs::metadata(&out)?.len();
-            copied.insert(basename.to_string(), len);
+            copied.insert(out_name.clone(), len);
             stats.files += 1;
             stats.bytes += len;
         }
         stats.sheets += 1;
-        let file = format!("TreeData/{version}/web/{basename}");
+        let file = format!("TreeData/{version}/web/{out_name}");
         let target = if section.ends_with("Inactive") { &mut manifest.disabled } else { &mut manifest.assets };
-        let num = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0).round() as u32;
         let prefixes = bloodline_prefixes(section);
         for (name, rect) in sheet.get("coords").and_then(|v| v.as_object()).into_iter().flatten() {
-            let (w, h) = (num(rect, "w"), num(rect, "h"));
-            let r = AssetRect { file: file.clone(), x: num(rect, "x"), y: num(rect, "y"), w, h, ow: w, oh: h };
+            let (x, y, w, h) = (num(rect, "x"), num(rect, "y"), num(rect, "w"), num(rect, "h"));
+            let r = if split {
+                let key = (basename.to_string(), (x, y, w, h));
+                let crop_file = match crops.get(&key) {
+                    Some(f) => f.clone(),
+                    None => {
+                        let crop = image::imageops::crop_imm(&split_images[basename], x, y, w, h).to_image();
+                        let rel = format!("{stem}/{}.webp", crops.len());
+                        let out = web.join(&rel);
+                        fs::create_dir_all(web.join(stem))?;
+                        save_webp(&crop, &out, Some(90.0))?;
+                        stats.files += 1;
+                        stats.bytes += fs::metadata(&out)?.len();
+                        let f = format!("TreeData/{version}/web/{rel}");
+                        let (list, n, b) = write_lods(&crop, w.max(h), 64, &web, version, &rel)?;
+                        stats.files += n;
+                        stats.bytes += b;
+                        if !list.is_empty() {
+                            manifest.lods.insert(f.clone(), list);
+                        }
+                        crops.insert(key, f.clone());
+                        f
+                    }
+                };
+                AssetRect { file: crop_file, x: 0, y: 0, w, h, ow: w, oh: h, round: false }
+            } else {
+                AssetRect { file: file.clone(), x, y, w, h, ow: w, oh: h, round: icons.is_some() }
+            };
             // Plates ("ClassesAul") keep their own names; frames are prefixed
             // so they do not replace the regular ones from frame-3.png.
             if prefixes.is_empty() || name.starts_with("Classes") {
@@ -342,10 +523,9 @@ pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result
             stats.sheets += 1;
             let file = format!("TreeData/{version}/web/{basename}");
             let target = if kind.ends_with("Inactive") { &mut manifest.disabled } else { &mut manifest.assets };
-            let num = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0).round() as u32;
             for (name, rect) in sheet.get("coords").and_then(|v| v.as_object()).into_iter().flatten() {
                 let (w, h) = (num(rect, "w"), num(rect, "h"));
-                target.insert(name.clone(), AssetRect { file: file.clone(), x: num(rect, "x"), y: num(rect, "y"), w, h, ow: w, oh: h });
+                target.insert(name.clone(), AssetRect { file: file.clone(), x: num(rect, "x"), y: num(rect, "y"), w, h, ow: w, oh: h, round: false });
                 stats.layers += 1;
             }
         }
@@ -353,6 +533,14 @@ pub fn build_sprites(src_tree: &Path, dest_tree: &Path, version: &str) -> Result
     copy_standalone(src_root, &web, version, &standalone, &mut manifest, &mut stats)?;
     fs::write(web.join("manifest.json"), serde_json::to_vec_pretty(&manifest)?)?;
     Ok(stats)
+}
+
+/// x, y, w, h in sheet pixels.
+type Rect = (u32, u32, u32, u32);
+
+/// "https://web.poecdn.com/image/passive-skill/skills-3.jpg?1540b3b6" -> "skills-3.jpg"
+fn sheet_basename(filename: &str) -> &str {
+    filename.rsplit('/').next().unwrap_or(filename).split('?').next().unwrap_or(filename)
 }
 
 /// The jewel radius rings PassiveTreeView.lua opens from Assets/ in both games.
@@ -377,13 +565,20 @@ fn copy_standalone(src_root: &Path, web: &Path, version: &str, entries: &[(Strin
         let (w, h) = image::image_dimensions(&src).with_context(|| format!("read {}", src.display()))?;
         let basename = format!("{name}.png");
         let out = web.join(&basename);
+        let file = format!("TreeData/{version}/web/{basename}");
         if !out.is_file() {
             fs::copy(&src, &out).with_context(|| format!("copy {}", src.display()))?;
             stats.files += 1;
             stats.bytes += fs::metadata(&out)?.len();
+            let img = image::open(&src).with_context(|| format!("read {}", src.display()))?.to_rgba8();
+            let (list, n, b) = write_lods(&img, w.max(h), 64, web, version, &format!("{name}.webp"))?;
+            stats.files += n;
+            stats.bytes += b;
+            if !list.is_empty() {
+                manifest.lods.insert(file.clone(), list);
+            }
         }
-        let file = format!("TreeData/{version}/web/{basename}");
-        manifest.assets.insert(name.clone(), AssetRect { file, x: 0, y: 0, w, h, ow: w, oh: h });
+        manifest.assets.insert(name.clone(), AssetRect { file, x: 0, y: 0, w, h, ow: w, oh: h, round: false });
     }
     Ok(())
 }

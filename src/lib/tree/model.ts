@@ -67,6 +67,8 @@ export interface TEdge {
   b: number;
   asc: string | null;
   arc: Arc | null;
+  /** minX, minY, maxX, maxY, including an arc's bulge. */
+  box: [number, number, number, number];
 }
 
 export interface TAscendancy {
@@ -373,6 +375,12 @@ function minorArc(cx: number, cy: number, r: number, ax: number, ay: number, bx:
   return { cx, cy, r, a1, a2, ccw: d < 0 };
 }
 
+/** A minor arc strays from its chord by at most the sagitta. */
+function edgeBox(a: TNode, b: TNode, arc: Arc | null): TEdge["box"] {
+  const s = arc ? arc.r - Math.sqrt(Math.max(arc.r * arc.r - ((a.x - b.x) ** 2 + (a.y - b.y) ** 2) / 4, 0)) : 0;
+  return [Math.min(a.x, b.x) - s, Math.min(a.y, b.y) - s, Math.max(a.x, b.x) + s, Math.max(a.y, b.y) + s];
+}
+
 export function parseTree(version: string, json: string): TreeModel {
   const raw = JSON.parse(json) as RawTree;
   if (!raw.constants.orbitAnglesByOrbit) normalisePoe1(raw);
@@ -491,7 +499,7 @@ export function parseTree(version: string, json: string): TreeModel {
         const g = groupsArr[a.group]!;
         arc = minorArc(g.x, g.y, orbitRadii[a.orbit], a.x, a.y, b.x, b.y);
       }
-      edges.push({ a: a.id, b: b.id, asc: a.asc, arc });
+      edges.push({ a: a.id, b: b.id, asc: a.asc, arc, box: edgeBox(a, b, arc) });
     }
   }
 
@@ -622,7 +630,7 @@ export function withDynamicNodes(base: TreeModel, dyn: DynamicNode[], dynGroups:
         }
         b.links.push(a.id);
       }
-      edges.push({ a: a.id, b: b.id, asc: null, arc: null });
+      edges.push({ a: a.id, b: b.id, asc: null, arc: null, box: edgeBox(a, b, null) });
     }
   }
   return { ...base, nodes, edges, groups };

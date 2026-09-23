@@ -91,6 +91,21 @@ impl EnginePool {
         if respawned {
             *held = None;
         }
+        Self::apply(&mut held, &ws, xml)
+    }
+
+    /// `sync` for idle moments: only a fully booted pool is brought up to
+    /// date, and it does not count as use, so the pool is still released.
+    pub fn presync(&self, xml: &str) -> Result<()> {
+        let mut held = self.synced_xml.lock().unwrap();
+        let ws = self.workers.lock().unwrap().clone();
+        if ws.len() < self.size || ws.iter().any(|w| w.status().state != EngineState::Ready) {
+            return Ok(());
+        }
+        Self::apply(&mut held, &ws, xml)
+    }
+
+    fn apply(held: &mut Option<String>, ws: &[EngineHandle], xml: &str) -> Result<()> {
         let (method, params, what) = match plan(held.as_deref(), xml) {
             SyncPlan::Nothing => return Ok(()),
             SyncPlan::Tree(tree) => ("sync_tree", serde_json::json!({ "xml": tree }), "tree"),
@@ -246,12 +261,20 @@ fn chunk_ranges(len: usize, chunk: usize) -> Vec<(usize, usize)> {
 
 /// Load the main engine's current build into the pool.
 pub fn sync_from(engine: &EngineHandle, pool: &EnginePool) -> Result<()> {
+    pool.sync(&main_xml(engine)?)
+}
+
+/// `sync_from` through `EnginePool::presync`.
+pub fn presync_from(engine: &EngineHandle, pool: &EnginePool) -> Result<()> {
+    pool.presync(&main_xml(engine)?)
+}
+
+fn main_xml(engine: &EngineHandle) -> Result<String> {
     let xml = engine.call("save_build_xml", Value::Null)?.result;
-    let xml = xml
-        .get("xml")
+    xml.get("xml")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Other("save_build_xml returned no xml".into()))?;
-    pool.sync(xml)
+        .map(str::to_string)
+        .ok_or_else(|| Error::Other("save_build_xml returned no xml".into()))
 }
 
 /// Node power for the main engine's build, scored across the pool with the

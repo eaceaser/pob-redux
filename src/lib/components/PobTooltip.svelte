@@ -77,7 +77,6 @@
     background: color-mix(in srgb, var(--bg-1) 96%, transparent);
     border: 1px solid var(--line-1);
     border-radius: var(--r-2);
-    backdrop-filter: blur(8px);
     line-height: 1.45;
   }
   .line {

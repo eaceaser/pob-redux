@@ -203,7 +203,7 @@ async fn pool_presync(state: State<'_, AppState>) -> Result<(), String> {
     if pool.status().ready < pool.size() {
         return Ok(());
     }
-    tauri::async_runtime::spawn_blocking(move || pob_engine::pool::sync_from(&engine, &pool).map_err(|e| e.to_string()))
+    tauri::async_runtime::spawn_blocking(move || pob_engine::pool::presync_from(&engine, &pool).map_err(|e| e.to_string()))
         .await
         .map_err(|e| e.to_string())?
 }
