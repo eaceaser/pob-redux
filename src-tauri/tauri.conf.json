@@ -15,7 +15,10 @@
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY1QUM2QjRGNTJDMTFCMjgKUldRb0c4RlNUMnVzWll6M1kycVN6UHhpQ3VmSVo2Z0htc0xYVCtXcUhLM3dtNUtqWGN3OWR0b2sK",
-      "endpoints": ["https://github.com/juddisjudd/pob-redux/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://pobredux.com/update/latest.json",
+        "https://github.com/pobredux/pob-redux/releases/latest/download/latest.json"
+      ],
       "windows": { "installMode": "passive" }
     }
   },

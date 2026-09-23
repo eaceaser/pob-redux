@@ -4,7 +4,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
 const KEY = "pob-redux:update";
-const RELEASES_URL = "https://github.com/juddisjudd/pob-redux/releases/latest";
+const DOWNLOAD_URL = "https://pobredux.com/#download";
 
 export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
 /** `self`: the app installs the update. `aur`: pacman does. `package`: a .deb or .rpm the user downloads. */
@@ -58,7 +58,7 @@ class UpdateStore {
   }
 
   openReleases() {
-    return openUrl(RELEASES_URL);
+    return openUrl(DOWNLOAD_URL);
   }
 
   /** `manual` surfaces "you are up to date" and any error; the boot check is silent. */
