@@ -271,9 +271,14 @@ fn corpus_cmd(cfg: EngineConfig, o: CorpusOpts) -> Result<Value, pob_engine::Err
             if let Some(name) = stage["loadout"].as_str() {
                 engine.call("select_loadout", json!({ "name": name }))?;
             }
-            // The ingest picked this group when the saved main skill showed no DPS.
-            if let Some(group) = stage["mainSocketGroup"].as_u64() {
-                engine.call("set_main_skill", json!({ "index": group }))?;
+            // Ingest replaced a 0-DPS main skill; group numbers shift between PoB versions, names do not.
+            if stage["mainSkillFixed"].as_bool() == Some(true) {
+                let by_name = stage["mainSkill"].as_str().map(|s| engine.call("set_main_skill", json!({ "skill": s })));
+                if !matches!(by_name, Some(Ok(_))) {
+                    if let Some(group) = stage["mainSocketGroup"].as_u64() {
+                        engine.call("set_main_skill", json!({ "index": group }))?;
+                    }
+                }
             }
             line["before"] = engine.call("get_stats", json!({ "fields": CORPUS_STATS }))?.result["stats"].clone();
             let sanity = engine.call("sanity_check", Value::Null)?.result;
