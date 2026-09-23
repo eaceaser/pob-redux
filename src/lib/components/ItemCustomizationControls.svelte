@@ -9,8 +9,20 @@
     target: ItemTarget;
     busy?: boolean;
     sourceSlot?: string;
-    onchange: (edit: ItemCustomizationEdit) => unknown;
+    onchange: (edit: ItemCustomizationEdit) => Promise<unknown>;
   } = $props();
+
+  let changingAffix = $state(false);
+
+  function beginAffixChange(): boolean {
+    if (busy || changingAffix) return false;
+    changingAffix = true;
+    return true;
+  }
+
+  function endAffixChange() {
+    changingAffix = false;
+  }
 
   let source = $state<"Custom" | "Prefix" | "Suffix">("Custom");
   let query = $state("");
@@ -62,7 +74,7 @@
   }
 </script>
 
-<fieldset disabled={busy} class="controls">
+<fieldset disabled={busy || changingAffix} class="controls">
   <legend class="label">{m.items_customize()}</legend>
   <div class="row">
     {#if data.canQuality}
@@ -106,7 +118,8 @@
     {#each ["prefixes", "suffixes"] as table}
       <div class="label">{table === "prefixes" ? m.items_prefixes() : m.items_suffixes()}</div>
       {#each (table === "prefixes" ? data.affixes.prefixes : data.affixes.suffixes) as slot (slot.index)}
-        <ItemAffixSelector {slot} table={table as "prefixes" | "suffixes"} {target} {onchange} />
+        <ItemAffixSelector {slot} table={table as "prefixes" | "suffixes"} {target} {onchange}
+          onbegin={beginAffixChange} onend={endAffixChange} />
       {/each}
     {/each}
   {/if}

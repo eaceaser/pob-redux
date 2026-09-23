@@ -117,15 +117,17 @@
   }
 
   async function customizePreview(edit: ItemCustomizationEdit) {
-    if (!preview || previewLoading || previewCommitting) return;
+    if (!preview || previewLoading || previewCommitting) return false;
     const stamp = ++previewStamp;
     previewLoading = true;
     previewError = null;
     try {
       const updated = await engine.customizeItem({ raw: preview.text, generation }, edit);
-      if (alive && stamp === previewStamp) await requestPreview(updated.raw, stamp);
+      if (alive && stamp === previewStamp) return await requestPreview(updated.raw, stamp);
+      return false;
     } catch (e) {
       if (alive && stamp === previewStamp) previewError = String(e);
+      return false;
     } finally {
       if (alive && stamp === previewStamp) previewLoading = false;
     }

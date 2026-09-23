@@ -10,11 +10,13 @@
   } from "$lib/engine.svelte";
   import { m } from "$lib/paraglide/messages";
 
-  let { slot, table, target, onchange }: {
+  let { slot, table, target, onchange, onbegin, onend }: {
     slot: AffixSlot;
     table: "prefixes" | "suffixes";
     target: ItemTarget;
-    onchange: (edit: ItemCustomizationEdit) => unknown;
+    onchange: (edit: ItemCustomizationEdit) => Promise<unknown>;
+    onbegin: () => boolean;
+    onend: () => void;
   } = $props();
 
   type Family = { group: string; label: string; tiers: AffixOption[] };
@@ -103,24 +105,25 @@
   }))));
 
   async function changeFamily(group: string) {
-    if (group === selectedGroup) return;
-    if (!group) {
-      onchange({ operation: "affix", table, index: slot.index, modId: "None" });
-      return;
-    }
-    const family = families.find((candidate) => candidate.group === group);
-    if (!family) return;
+    if (changing || group === selectedGroup || !onbegin()) return;
     const fraction = shownChoice && tiers.length ? shownChoice.position / (tiers.length * segment - 1) : 0.5;
     changing = true;
     error = null;
     try {
+      if (!group) {
+        await onchange({ operation: "affix", table, index: slot.index, modId: "None" });
+        return;
+      }
+      const family = families.find((candidate) => candidate.group === group);
+      if (!family) return;
       const result = await engine.itemAffixRolls(target, table, slot.index, group);
       const choice = nearest(result.tiers, fraction * (result.tiers.length * segment - 1));
-      if (choice) onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
+      if (choice) await onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
     } catch (e) {
       error = String(e);
     } finally {
       changing = false;
+      onend();
     }
   }
 
@@ -155,14 +158,27 @@
     commit(Number(event.currentTarget.value), event.currentTarget);
   }
 
-  function commit(rawPosition: number, input: HTMLInputElement) {
+  async function commit(rawPosition: number, input: HTMLInputElement) {
     const choice = localChoice ?? choose(rawPosition, input);
     if (!choice) return;
     const key = `${choice.modId}:${choice.step.range}`;
     if (submitted === key) return;
     if (choice.modId !== slot.modId || Math.abs(choice.step.range - (slot.range ?? 0.5)) > 0.00001) {
+      if (!onbegin()) {
+        localChoice = null;
+        return;
+      }
       submitted = key;
-      onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
+      try {
+        const result = await onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
+        if (result !== undefined && result !== false) return;
+      } catch (e) {
+        error = String(e);
+      } finally {
+        onend();
+      }
+      localChoice = null;
+      submitted = null;
     }
   }
 </script>
