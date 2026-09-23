@@ -1,7 +1,7 @@
 # PoB Redux
 
-[![Latest release](https://img.shields.io/github/v/release/juddisjudd/pob-redux?style=flat-square&label=release)](../../releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/juddisjudd/pob-redux/total?style=flat-square&label=downloads)](../../releases)
+[![Latest release](https://img.shields.io/github/v/release/pobredux/pob-redux?style=flat-square&label=release)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/pobredux/pob-redux/total?style=flat-square&label=downloads)](../../releases)
 [![AUR](https://img.shields.io/aur/version/pob-redux-bin?style=flat-square&label=AUR)](https://aur.archlinux.org/packages/pob-redux-bin)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2a2a30?style=flat-square)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-2a2a30?style=flat-square)

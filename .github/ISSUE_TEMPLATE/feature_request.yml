@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Search the [open issues](https://github.com/juddisjudd/pob-redux/issues) first. To talk an idea through before you file it, use [Discord](https://discord.pobredux.com/).
+        Search the [open issues](https://github.com/pobredux/pob-redux/issues) first. To talk an idea through before you file it, use [Discord](https://discord.pobredux.com/).
   - type: textarea
     id: problem
     attributes:

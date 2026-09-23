@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const git = (argv) => execFileSync("git", argv, { cwd: root }).toString().trim();
 
-const REPO = "juddisjudd/pob-redux";
+const REPO = "pobredux/pob-redux";
 
 // Order is the order sections appear. `chore` and `style` are deliberately
 // absent: they say nothing to someone deciding whether to update.

@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Search the [open issues](https://github.com/juddisjudd/pob-redux/issues) first. For questions and help, ask on [Discord](https://discord.pobredux.com/).
+        Search the [open issues](https://github.com/pobredux/pob-redux/issues) first. For questions and help, ask on [Discord](https://discord.pobredux.com/).
   - type: input
     id: version
     attributes:

@@ -9,7 +9,7 @@ update before you report a problem.
 
 Do not open a public issue for a security problem. Report it privately on GitHub:
 
-1. Open [Report a vulnerability](https://github.com/juddisjudd/pob-redux/security/advisories/new) (the
+1. Open [Report a vulnerability](https://github.com/pobredux/pob-redux/security/advisories/new) (the
    Security tab, then **Report a vulnerability**).
 2. Say what the problem is, which version and operating system you used, and how to reproduce it. A
    proof of concept helps.
