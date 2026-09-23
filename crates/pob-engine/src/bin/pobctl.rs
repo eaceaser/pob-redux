@@ -86,7 +86,7 @@ enum Cmd {
         #[arg(long, default_value_t = 4)]
         pool: usize,
     },
-    /// Run the tree planner and gear optimiser on a corpus index (scripts/corpus).
+    /// Run the tree planner and gear optimiser on a corpus index (the pobredux/corpus repo).
     Corpus {
         index: PathBuf,
         #[arg(long)]
@@ -404,6 +404,25 @@ return {{ skill = group and group.displayLabel or false, stats = stats }}"#,
     )
 }
 
+/// The corpus commit a run used, marked when the working tree differs from it.
+fn corpus_commit(dir: &std::path::Path) -> Value {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    match git(&["rev-parse", "HEAD"]) {
+        Some(sha) if git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty()) => json!(format!("{sha}-dirty")),
+        Some(sha) => json!(sha),
+        None => Value::Null,
+    }
+}
+
 struct GoldenOpts {
     index: PathBuf,
     out: PathBuf,
@@ -418,7 +437,9 @@ fn golden_cmd(cfg: EngineConfig, o: GoldenOpts) -> Result<Value, pob_engine::Err
     use std::sync::atomic::{AtomicUsize, Ordering};
     let index = read_json(&o.index)?;
     let index_path = std::path::absolute(&o.index).map_err(|e| Error::Other(format!("{}: {e}", o.index.display())))?;
-    let xml_dir = index_path.parent().map(|p| p.join("xml")).unwrap_or_else(|| PathBuf::from("xml"));
+    let corpus_dir = index_path.parent().map(PathBuf::from).unwrap_or_default();
+    let xml_dir = corpus_dir.join("xml");
+    let corpus = corpus_commit(&corpus_dir);
     let stages = corpus_selection(&index, None);
     let code = golden_lua(o.all);
     let started = Instant::now();
@@ -457,7 +478,7 @@ fn golden_cmd(cfg: EngineConfig, o: GoldenOpts) -> Result<Value, pob_engine::Err
         json!({ "game": s["game"], "version": s["upstream_version"], "commit": s["upstream_commit"], "patches": s["patches"] })
     });
     // One build per line keeps a regenerated file reviewable as a diff.
-    let mut text = format!("{{\n\"pob\": {pob},\n\"stats\": {},\n\"builds\": {{\n", json!(if o.all { "all" } else { "curated" }));
+    let mut text = format!("{{\n\"pob\": {pob},\n\"corpus\": {corpus},\n\"stats\": {},\n\"builds\": {{\n", json!(if o.all { "all" } else { "curated" }));
     for (i, (id, b)) in builds.iter().enumerate() {
         text.push_str(&format!("{}: {b}{}\n", json!(id), if i + 1 < builds.len() { "," } else { "" }));
     }
@@ -467,10 +488,18 @@ fn golden_cmd(cfg: EngineConfig, o: GoldenOpts) -> Result<Value, pob_engine::Err
         "builds": builds.len(),
         "failed": failed,
         "seconds": started.elapsed().as_secs_f64().round(),
+        "corpus": corpus,
         "out": o.out.display().to_string(),
     });
+    if corpus.as_str().is_some_and(|c| c.ends_with("-dirty")) {
+        summary["warning"] = json!("the corpus has uncommitted changes, so CI cannot check out the commit this run used");
+    }
     if let Some(path) = &o.baseline {
-        let diff = golden_diff(&read_json(path)?, &json!({ "builds": builds }), o.tolerance);
+        let baseline = read_json(path)?;
+        let mut diff = golden_diff(&baseline, &json!({ "builds": builds }), o.tolerance);
+        if baseline["corpus"] != corpus {
+            diff["corpusChanged"] = json!({ "baseline": baseline["corpus"], "now": corpus });
+        }
         summary["passed"] = json!(diff["changedValues"] == 0 && diff["missing"].as_array().is_some_and(Vec::is_empty) && failed == 0);
         summary["diff"] = diff;
     }

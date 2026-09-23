@@ -110,11 +110,19 @@ jobs:
         run: cargo test -p pob-redux --lib && cargo test -p pob-engine
 
       # Private because it holds player names; see CLAUDE.md "Verifying a change".
+      # The baseline names the corpus commit it was made from, so a corpus refresh
+      # changes nothing here until the baseline is accepted again.
+      - name: Read the baseline's corpus commit
+        id: corpus
+        if: env.HAS_CORPUS == 'true'
+        run: echo "commit=$(jq -r .corpus golden/poe2.json)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout the build corpus
         if: env.HAS_CORPUS == 'true'
         uses: actions/checkout@v7
         with:
           repository: pobredux/corpus
+          ref: ${{ steps.corpus.outputs.commit }}
           ssh-key: ${{ secrets.CORPUS_DEPLOY_KEY }}
           path: corpus
 
