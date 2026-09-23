@@ -8028,6 +8028,11 @@ local function optScore(o, base, w, cfg)
 		return (x.Life or 0) + (x.EnergyShield or 0) + (keys.manaPool and (x.Mana or 0) or 0)
 	end
 	local s = w.dps * lr(dps(o), dps(base)) + w.life * lr(pool(o), pool(base)) + w.ehp * lr(o.TotalEHP, base.TotalEHP)
+	-- Unless damage outweighs defence, no amount of DPS buys more than a 5% EHP loss.
+	if w.ehp >= w.dps and (base.TotalEHP or 0) > 0 then
+		local kept = (o.TotalEHP or 0) / base.TotalEHP
+		if kept < 0.95 then s = s - (0.95 - kept) * 50 end
+	end
 	for _, r in ipairs({ "FireResist", "ColdResist", "LightningResist" }) do
 		local v = o[r] or 0
 		if v < cfg.resist then s = s - (cfg.resist - v) * 0.02 end
@@ -9499,7 +9504,7 @@ M.sanity_check = function()
 
 	if IS_POE2 and s.characterLevel >= 60 and s.weaponSetPointsUsed == 0 then
 		add("low", "weapon sets", "no weapon set passive points allocated",
-			"24 points per set, and weapon swap is instant. Half of published endgame builds leave these unused.")
+			"24 points per set that only count while that set is active, so a build that never swaps still gains them on set I. A poe.ninja export can leave them out; if the character has them in game, this finding is an import gap.")
 	end
 
 	for _, attr in ipairs({ "str", "dex", "int" }) do
