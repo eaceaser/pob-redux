@@ -7948,6 +7948,68 @@ local function optHeadline(o)
 	return out
 end
 
+-- Read from PoB's modifiers, so a keystone that an item grants counts too.
+local keystone = {}
+
+function keystone.profile()
+	local o = build.calcsTab and build.calcsTab.mainOutput or {}
+	local env = build.calcsTab and build.calcsTab.mainEnv
+	local function sum(name)
+		local ok, v = pcall(function() return env.modDB:Sum("BASE", nil, name) end)
+		return ok and tonumber(v) or 0
+	end
+	local esToMana = math.min(sum("EnergyShieldConvertToMana"), 100)
+	local manaFirst = math.min(tonumber(o.sharedMindOverMatter) or 0, 100)
+	return {
+		chaosImmune = o.ChaosInoculation == true,
+		noMana = (o.Mana or 0) <= 0,
+		esToMana = esToMana,
+		manaFirst = manaFirst,
+		evasionToArmour = math.min(sum("EvasionConvertToArmour"), 100),
+		manaPool = esToMana > 0 or manaFirst > 0,
+	}
+end
+
+function keystone.names()
+	local names, seen = array({}), {}
+	local function add(name)
+		if type(name) == "string" and not seen[name] then
+			seen[name] = true
+			names[#names + 1] = name
+		end
+	end
+	for _, node in pairs(build.spec and build.spec.allocNodes or {}) do
+		if node.type == "Keystone" then add(node.dn) end
+	end
+	local env = build.calcsTab and build.calcsTab.mainEnv
+	local ok, granted = pcall(function() return env.modDB:List(nil, "Keystone") end)
+	if ok and type(granted) == "table" then
+		for _, name in ipairs(granted) do add(name) end
+	end
+	table.sort(names)
+	return names
+end
+
+function keystone.rules(k)
+	local rules = array({})
+	if k.chaosImmune then
+		rules[#rules + 1] = "Maximum life is 1 (Chaos Inoculation): life lines and life recovery do nothing, and chaos resistance does not matter because the build is immune to chaos damage. Energy shield is the pool to raise."
+	end
+	if k.esToMana > 0 then
+		rules[#rules + 1] = string.format("%d%% of energy shield becomes mana (Eldritch Battery): energy shield lines raise mana.", k.esToMana)
+	end
+	if k.manaFirst > 0 then
+		rules[#rules + 1] = string.format("%d%% of damage is taken from mana before life (Mind Over Matter): mana is a defensive pool, so mana lines count as defence.", k.manaFirst)
+	end
+	if k.noMana then
+		rules[#rules + 1] = "The build has no mana (Blood Magic): skills cost life, so mana lines do nothing."
+	end
+	if k.evasionToArmour > 0 then
+		rules[#rules + 1] = "Evasion becomes armour (Iron Reflexes): evasion lines raise armour."
+	end
+	return rules
+end
+
 -- Log-ratio gains against the starting build, minus the cost of breaking a
 -- constraint. Log ratios keep DPS in the hundreds of thousands and life in
 -- the thousands on one scale; the penalties are sized so ten missing points
@@ -7961,8 +8023,9 @@ local function optScore(o, base, w, cfg)
 	local function dps(x)
 		return math.max(x.CombinedDPS or 0, x.MinionDPS or optMinionDps(x))
 	end
+	local keys = cfg.keys or {}
 	local function pool(x)
-		return (x.Life or 0) + (x.EnergyShield or 0)
+		return (x.Life or 0) + (x.EnergyShield or 0) + (keys.manaPool and (x.Mana or 0) or 0)
 	end
 	local s = w.dps * lr(dps(o), dps(base)) + w.life * lr(pool(o), pool(base)) + w.ehp * lr(o.TotalEHP, base.TotalEHP)
 	for _, r in ipairs({ "FireResist", "ColdResist", "LightningResist" }) do
@@ -7970,7 +8033,7 @@ local function optScore(o, base, w, cfg)
 		if v < cfg.resist then s = s - (cfg.resist - v) * 0.02 end
 	end
 	local chaos = o.ChaosResist or 0
-	if chaos < cfg.chaos then s = s - (cfg.chaos - chaos) * 0.01 end
+	if chaos < cfg.chaos and not keys.chaosImmune then s = s - (cfg.chaos - chaos) * 0.01 end
 	for _, a in ipairs({ "Str", "Dex", "Int" }) do
 		local have, need = o[a] or 0, o["Req" .. a] or 0
 		if have < need then s = s - (need - have) * 0.05 end
@@ -8193,7 +8256,9 @@ local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
 	}
 	-- A pure armour build gets nothing from an evasion or energy shield line
 	-- in play, whatever the effective-HP number says of it.
+	local keys = cfg.keys or {}
 	local profile = defenceProfile(base)
+	if (keys.evasionToArmour or 0) > 0 and (profile == "Armour" or profile == "Evasion") then profile = "Armour/Evasion" end
 	local unwanted = {}
 	if not profile:find("/", 1, true) then
 		if profile ~= "Evasion" then unwanted[#unwanted + 1] = "evasion" end
@@ -8202,11 +8267,19 @@ local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
 	end
 	-- No mana pool (Blood Magic) makes every mana line dead weight.
 	if (base.Mana or 0) <= 0 then unwanted[#unwanted + 1] = "mana" end
+	-- Chaos Inoculation kills pure life lines; hybrids, minion and MoM lines still count.
+	local function lifeOnly(g)
+		if not keys.chaosImmune or not g:find("life", 1, true) then return false end
+		for _, other in ipairs({ "minion", "allies", "nolife", "beforelife", "energyshield", "armour", "evasion", "mana", "spirit" }) do
+			if g:find(other, 1, true) then return false end
+		end
+		return true
+	end
 	for _, t in ipairs({ "prefixes", "suffixes" }) do
 		local kept = array({})
 		for _, fam in ipairs(pools[t]) do
 			local g = (fam.group or ""):lower():gsub("physicaldamagereductionrating", "armour")
-			local drop = false
+			local drop = lifeOnly(g)
 			for _, u in ipairs(unwanted) do
 				if g:find(u, 1, true) and not g:find("applies", 1, true) then drop = true end
 			end
@@ -8347,6 +8420,7 @@ local function runGearOpt(p)
 		chaos = tonumber(p.chaos) or 0,
 		moveSpeed = tonumber(p.moveSpeed) or 1.0,
 		bases = type(p.bases) == "table" and p.bases or nil,
+		keys = keystone.profile(),
 	}
 	-- Mods need an item level the character could have found; past 82 nothing
 	-- new rolls.
@@ -8694,9 +8768,18 @@ end
 -- Variants worth scoring on this build. A skill-level line for a skill the
 -- build does not run, or a notable it already has, cannot change a number;
 -- an old version of the item is not what drops. With no mana pool (Blood
--- Magic) or no energy shield, every line naming that pool is dead, including
--- "while not on Low Mana", which PoB does not derive from the missing pool.
+-- Magic), no energy shield or life fixed at 1 (Chaos Inoculation), every line
+-- naming that pool is dead, including "while not on Low Mana", which PoB does
+-- not derive from the missing pool.
 local function relevantVariants(item, ctx)
+	local function namesDeadPool(text, pool)
+		if pool == "life" then
+			for _, alive in ipairs({ "full life", "minion", "allies", " ally", "before life", "energy shield", "mana" }) do
+				if text:find(alive, 1, true) then return false end
+			end
+		end
+		return text:find(pool, 1, true) ~= nil
+	end
 	local hasCurrent = false
 	for _, name in ipairs(item.variantList) do
 		if name == "Current" then hasCurrent = true end
@@ -8713,7 +8796,7 @@ local function relevantVariants(item, ctx)
 				local text = line:lower()
 				if notable then text = ctx.notables[notable:lower()] or text end
 				for _, pool in ipairs(ctx.deadPools) do
-					if text:find(pool, 1, true) then
+					if namesDeadPool(text, pool) then
 						keep = false
 						ctx.deadSkipped = (ctx.deadSkipped or 0) + 1
 						break
@@ -8761,7 +8844,7 @@ M.jewel_plan = function(p)
 		started = GetTime(),
 		preset = p.preset or "balanced",
 		w = OPT_PRESETS[p.preset or "balanced"] or OPT_PRESETS.balanced,
-		cfg = { resist = tonumber(p.resist) or 75, chaos = tonumber(p.chaos) or 0, moveSpeed = 1.0 },
+		cfg = { resist = tonumber(p.resist) or 75, chaos = tonumber(p.chaos) or 0, moveSpeed = 1.0, keys = keystone.profile() },
 		range = range,
 		limit = tonumber(p.limit) or 20,
 		notScored = array({}),
@@ -8804,8 +8887,10 @@ M.jewel_plan = function(p)
 
 	local mainOut = build.calcsTab.mainOutput or {}
 	local ctx = { skills = buildSkillNames(), allocated = allocatedNodeNames(), deadPools = {} }
+	local keys = run.cfg.keys
 	if (mainOut.Mana or 0) <= 0 then ctx.deadPools[#ctx.deadPools + 1] = "mana" end
-	if (mainOut.EnergyShield or 0) <= 0 then ctx.deadPools[#ctx.deadPools + 1] = "energy shield" end
+	if (mainOut.EnergyShield or 0) <= 0 and keys.esToMana == 0 then ctx.deadPools[#ctx.deadPools + 1] = "energy shield" end
+	if keys.chaosImmune then ctx.deadPools[#ctx.deadPools + 1] = "life" end
 	if #ctx.deadPools > 0 then ctx.notables = notableStatText() end
 	run.ctx = ctx
 	local jobs = array({})
@@ -9112,7 +9197,7 @@ M.jewel_finish = function(p)
 	end
 	local notes = array({})
 	if run.ctx and #run.ctx.deadPools > 0 then
-		notes[#notes + 1] = string.format("The build has no %s, so %d variants naming it were skipped: a line about that pool, or a \"while not on Low ...\" condition on it, cannot work here.", table.concat(run.ctx.deadPools, " and no "), run.ctx.deadSkipped or 0)
+		notes[#notes + 1] = string.format("Lines about %s do nothing on this build (no such pool, or life fixed at 1 by Chaos Inoculation), so %d variants naming them were skipped, including \"while not on Low ...\" conditions.", table.concat(run.ctx.deadPools, " or "), run.ctx.deadSkipped or 0)
 	end
 	return {
 		summary = summary,
@@ -9309,6 +9394,8 @@ M.build_summary = function()
 		requirements = requirementSummary(),
 		movementSpeedMod = o.MovementSpeedMod or 0,
 		totalDPS = o.TotalDPS or o.CombinedDPS or 0,
+		keystones = keystone.names(),
+		keystoneRules = keystone.rules(keystone.profile()),
 	}
 end
 
@@ -9316,6 +9403,7 @@ M.sanity_check = function()
 	ensureBuild()
 	local o = build.calcsTab.mainOutput or {}
 	local s = M.build_summary()
+	local keys = keystone.profile()
 	local findings = array({})
 	local function add(severity, area, message, fix)
 		findings[#findings + 1] = { severity = severity, area = area, message = message, fix = opt(fix) }
@@ -9333,7 +9421,7 @@ M.sanity_check = function()
 			string.format("below the 75%% cap: %s", table.concat(uncapped, ", ")),
 			"Characters start at -50%. Quest rewards first, then suffixes on belt, boots, rings and body armour. An elemental rune in an armour piece is +14%.")
 	end
-	if s.chaosResist < 0 then
+	if s.chaosResist < 0 and not keys.chaosImmune then
 		add("low", "resistances", string.format("chaos resistance is %.0f%%", s.chaosResist),
 			"Chaos damage removes twice as much energy shield, and poison bypasses it entirely.")
 	end
@@ -9399,7 +9487,7 @@ M.sanity_check = function()
 			"The extra charms do nothing. Charm slots are a belt property; a Heavy Belt base can carry up to 3.")
 	end
 
-	if s.characterLevel >= 30 and s.life < 500 and s.energyShield < 500 then
+	if s.characterLevel >= 30 and s.life < 500 and s.energyShield < 500 and not (keys.manaFirst > 0 and s.mana >= 500) then
 		add("high", "survivability", string.format("life %.0f and energy shield %.0f at level %d", s.life, s.energyShield, s.characterLevel),
 			"Both pools are very low for this level.")
 	end

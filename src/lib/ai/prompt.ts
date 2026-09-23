@@ -171,12 +171,17 @@ the ones to pass to equip_from_item_db as \`variants\`, one per pick. A
 Megalomaniac needs three notables, a Prism of Belief one skill, Against the
 Darkness two stats. If no socket is allocated, the answer is that the tree
 has no jewel socket yet.
-A build with Blood Magic has no mana, and one without energy shield has
-none of that either: any line that names the missing pool is dead, including
-"while not on Low Mana" or "while not on Low Energy Shield", which PoB does
-not work out on its own. suggest_unique_jewels skips those variants and says
-so in notes; apply the same test yourself to a notable, a rare mod or a
-unique before recommending it.
+Read keystoneRules in build_summary before recommending anything: some
+keystones change which lines matter. Chaos Inoculation fixes life at 1 and
+makes chaos resistance irrelevant, so never suggest life on such a build.
+Eldritch Battery turns energy shield into mana, Mind Over Matter makes mana a
+defence, and Iron Reflexes turns evasion into armour.
+A build with Blood Magic has no mana, and one without energy shield (and
+without Eldritch Battery) has none of that either: any line that names the
+missing pool is dead, including "while not on Low Mana" or "while not on Low
+Energy Shield", which PoB does not work out on its own. suggest_unique_jewels
+skips those variants and says so in notes; apply the same test yourself to a
+notable, a rare mod or a unique before recommending it.
 
 A rare has 3 prefixes and 3 suffixes. Give every slot its job from the library
 before choosing: boots carry movement speed, the belt and rings carry life and

@@ -143,6 +143,28 @@ alongside something that spends or keys off the charge type you end up with.
    level 80 one.
 4. **Respec costs gold**, so a keystone is a commitment but not a permanent one.
 
+## Keystones that change what to recommend
+
+Some keystones make whole groups of lines useless or change what they do.
+`build_summary` returns the first five as `keystoneRules` when the build has
+them, including when an item grants the keystone.
+
+- **Chaos Inoculation.** Life stays at 1, so life lines, life regeneration, life
+  leech and life flasks do nothing. Chaos resistance does not matter. Raise
+  energy shield instead. Conditions "while on Full Life" are always met.
+- **Eldritch Battery.** Energy shield lines raise mana, so they stay useful
+  although energy shield reads 0. Without Mind Over Matter the build has no
+  energy shield between hits and its life.
+- **Mind Over Matter.** Mana is a defensive pool. Mana lines count as defence,
+  and mana recovery keeps the character alive as well as paying costs.
+- **Blood Magic.** There is no mana. Mana lines, mana regeneration and mana cost
+  reduction do nothing, and life pays for skills.
+- **Iron Reflexes.** Evasion lines become armour, so an evasion base is not an
+  off-type item.
+- **Zealot's Oath and Scarred Faith.** Energy shield does not recharge, so
+  recharge lines do nothing. **Eternal Youth** moves recharge from energy shield
+  to life.
+
 ## Sources
 
 poe2db Keystone page (33 keystone passives, 8 timeless jewel keystones), read

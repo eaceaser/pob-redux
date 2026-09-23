@@ -827,6 +827,8 @@ export interface BuildSummary {
   int: number;
   movementSpeedMod: number;
   totalDPS: number;
+  keystones: string[];
+  keystoneRules: string[];
 }
 
 export interface SanityFinding {
