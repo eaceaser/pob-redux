@@ -109,6 +109,27 @@ enum Cmd {
         #[arg(long)]
         no_tree: bool,
     },
+    /// Reference outputs for every usable stage of a corpus index, optionally compared with a baseline.
+    Golden {
+        index: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// Earlier outputs to compare against; lists every stat that moved.
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Relative change that counts as a difference.
+        #[arg(long, default_value_t = 1e-6)]
+        tolerance: f64,
+        /// Every number PoB outputs, not the curated list.
+        #[arg(long)]
+        all: bool,
+        /// Engines run in parallel.
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
+        /// Exit with status 1 when the baseline differs.
+        #[arg(long)]
+        check: bool,
+    },
     /// Unique jewel suggestions: one engine vs the worker pool, with an equality check.
     Jewels {
         file: PathBuf,
@@ -223,6 +244,30 @@ fn corpus_selection(index: &Value, per_ascendancy: Option<usize>) -> Vec<Value> 
     out
 }
 
+/// A corpus stage as ingest measured it: its loadout, and its main skill.
+fn load_stage(engine: &pob_engine::EngineHandle, stage: &Value, xml_dir: &std::path::Path) -> Result<(), pob_engine::Error> {
+    let xml = xml_dir.join(format!("{}.xml", stage["source"].as_str().unwrap_or_default()));
+    engine.call("load_build_file", json!({ "path": xml.to_string_lossy() }))?;
+    if let Some(name) = stage["loadout"].as_str() {
+        engine.call("select_loadout", json!({ "name": name }))?;
+    }
+    // Ingest replaced a 0-DPS main skill; group numbers shift between PoB versions, names do not.
+    if stage["mainSkillFixed"].as_bool() == Some(true) {
+        let by_name = stage["mainSkill"].as_str().map(|s| engine.call("set_main_skill", json!({ "skill": s })));
+        if !matches!(by_name, Some(Ok(_))) {
+            if let Some(group) = stage["mainSocketGroup"].as_u64() {
+                engine.call("set_main_skill", json!({ "index": group }))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_json(path: &std::path::Path) -> Result<Value, pob_engine::Error> {
+    let text = std::fs::read_to_string(path).map_err(|e| pob_engine::Error::Other(format!("{}: {e}", path.display())))?;
+    serde_json::from_str(&text).map_err(|e| pob_engine::Error::Other(format!("{}: {e}", path.display())))
+}
+
 fn corpus_cmd(cfg: EngineConfig, o: CorpusOpts) -> Result<Value, pob_engine::Error> {
     use pob_engine::{EngineHandle, EnginePool, Error};
     use std::io::Write;
@@ -266,20 +311,7 @@ fn corpus_cmd(cfg: EngineConfig, o: CorpusOpts) -> Result<Value, pob_engine::Err
             "mainSkill": stage["mainSkill"],
         });
         let mut run = || -> Result<(), Error> {
-            let xml = xml_dir.join(format!("{}.xml", stage["source"].as_str().unwrap_or_default()));
-            engine.call("load_build_file", json!({ "path": xml.to_string_lossy() }))?;
-            if let Some(name) = stage["loadout"].as_str() {
-                engine.call("select_loadout", json!({ "name": name }))?;
-            }
-            // Ingest replaced a 0-DPS main skill; group numbers shift between PoB versions, names do not.
-            if stage["mainSkillFixed"].as_bool() == Some(true) {
-                let by_name = stage["mainSkill"].as_str().map(|s| engine.call("set_main_skill", json!({ "skill": s })));
-                if !matches!(by_name, Some(Ok(_))) {
-                    if let Some(group) = stage["mainSocketGroup"].as_u64() {
-                        engine.call("set_main_skill", json!({ "index": group }))?;
-                    }
-                }
-            }
+            load_stage(&engine, stage, &xml_dir)?;
             line["before"] = engine.call("get_stats", json!({ "fields": CORPUS_STATS }))?.result["stats"].clone();
             let sanity = engine.call("sanity_check", Value::Null)?.result;
             line["findings"] = json!(sanity["findings"].as_array().into_iter().flatten().map(|f| f["area"].clone()).collect::<Vec<_>>());
@@ -331,6 +363,167 @@ fn corpus_cmd(cfg: EngineConfig, o: CorpusOpts) -> Result<Value, pob_engine::Err
         );
     }
     Ok(json!({ "stages": stages.len(), "ok": ok, "failed": failed, "minutes": started.elapsed().as_secs_f64() / 60.0 }))
+}
+
+const GOLDEN_STATS: &[&str] = &[
+    "Life", "Mana", "EnergyShield", "Spirit", "Ward", "Armour", "Evasion", "TotalEHP", "PhysicalMaximumHitTaken",
+    "FireMaximumHitTaken", "ColdMaximumHitTaken", "LightningMaximumHitTaken", "ChaosMaximumHitTaken", "FireResist",
+    "ColdResist", "LightningResist", "ChaosResist", "BlockChance", "SpellBlockChance", "SpellSuppressionChance",
+    "LifeRegenRecovery", "ManaRegenRecovery", "EnergyShieldRegenRecovery", "LifeUnreserved", "ManaUnreserved", "Str",
+    "Dex", "Int", "ReqStr", "ReqDex", "ReqInt", "MovementSpeedMod", "EffectiveMovementSpeedMod", "AverageHit",
+    "AverageDamage", "Speed", "HitChance", "CritChance", "CritMultiplier", "TotalDPS", "CombinedDPS", "FullDPS",
+    "TotalDotDPS", "BleedDPS", "IgniteDPS", "PoisonDPS", "ImpaleDPS", "ManaCost", "LifeCost",
+];
+const GOLDEN_MINION_STATS: &[&str] = &["Life", "EnergyShield", "TotalDPS", "CombinedDPS", "AverageHit", "Speed"];
+
+/// Lua returning the build's main skill and its output numbers: the listed stats, or every one with `all`.
+fn golden_lua(all: bool) -> String {
+    let list = |keys: &[&str]| {
+        if all {
+            "nil".to_string()
+        } else {
+            format!("{{ {} }}", keys.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>().join(", "))
+        }
+    };
+    format!(
+        r#"local build = main.modes["BUILD"]
+local out = build.calcsTab.mainOutput
+local stats = {{}}
+local function put(prefix, t, keys)
+	local function one(k, v)
+		if type(k) == "string" and type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge then stats[prefix .. k] = v end
+	end
+	if keys then for _, k in ipairs(keys) do one(k, t[k]) end else for k, v in pairs(t) do one(k, v) end end
+end
+put("", out, {main})
+if type(out.Minion) == "table" then put("Minion.", out.Minion, {minion}) end
+local group = build.skillsTab.socketGroupList[build.mainSocketGroup]
+return {{ skill = group and group.displayLabel or false, stats = stats }}"#,
+        main = list(GOLDEN_STATS),
+        minion = list(GOLDEN_MINION_STATS)
+    )
+}
+
+struct GoldenOpts {
+    index: PathBuf,
+    out: PathBuf,
+    baseline: Option<PathBuf>,
+    tolerance: f64,
+    all: bool,
+    jobs: usize,
+}
+
+fn golden_cmd(cfg: EngineConfig, o: GoldenOpts) -> Result<Value, pob_engine::Error> {
+    use pob_engine::{EngineHandle, Error};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let index = read_json(&o.index)?;
+    let index_path = std::path::absolute(&o.index).map_err(|e| Error::Other(format!("{}: {e}", o.index.display())))?;
+    let xml_dir = index_path.parent().map(|p| p.join("xml")).unwrap_or_else(|| PathBuf::from("xml"));
+    let stages = corpus_selection(&index, None);
+    let code = golden_lua(o.all);
+    let started = Instant::now();
+    let next = AtomicUsize::new(0);
+    let builds = std::sync::Mutex::new(std::collections::BTreeMap::<String, Value>::new());
+    std::thread::scope(|s| {
+        for _ in 0..o.jobs.clamp(1, 16).min(stages.len().max(1)) {
+            s.spawn(|| {
+                let engine = EngineHandle::spawn(cfg.clone());
+                if engine.wait_ready().is_err() {
+                    return;
+                }
+                loop {
+                    let n = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(stage) = stages.get(n) else { break };
+                    let mut entry = json!({ "ascendancy": stage["ascendancy"] });
+                    match load_stage(&engine, stage, &xml_dir).and_then(|_| engine.eval(&code)) {
+                        Ok(v) => {
+                            entry["skill"] = v["skill"].clone();
+                            entry["stats"] = if v["stats"].is_object() { v["stats"].clone() } else { json!({}) };
+                        }
+                        Err(e) => entry["error"] = json!(e.to_string()),
+                    }
+                    builds.lock().unwrap().insert(stage["id"].as_str().unwrap_or_default().to_string(), entry);
+                    if (n + 1).is_multiple_of(50) {
+                        eprintln!("[{}/{}] {:.0}s", n + 1, stages.len(), started.elapsed().as_secs_f64());
+                    }
+                }
+            });
+        }
+    });
+    let builds = builds.into_inner().unwrap();
+    let failed = builds.values().filter(|b| b.get("error").is_some()).count();
+    let sync = std::fs::read_to_string(cfg.pob_root.join("SYNC.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    let pob = sync.map_or(Value::Null, |s| {
+        json!({ "game": s["game"], "version": s["upstream_version"], "commit": s["upstream_commit"], "patches": s["patches"] })
+    });
+    // One build per line keeps a regenerated file reviewable as a diff.
+    let mut text = format!("{{\n\"pob\": {pob},\n\"stats\": {},\n\"builds\": {{\n", json!(if o.all { "all" } else { "curated" }));
+    for (i, (id, b)) in builds.iter().enumerate() {
+        text.push_str(&format!("{}: {b}{}\n", json!(id), if i + 1 < builds.len() { "," } else { "" }));
+    }
+    text.push_str("}\n}\n");
+    std::fs::write(&o.out, text).map_err(|e| Error::Other(format!("{}: {e}", o.out.display())))?;
+    let mut summary = json!({
+        "builds": builds.len(),
+        "failed": failed,
+        "seconds": started.elapsed().as_secs_f64().round(),
+        "out": o.out.display().to_string(),
+    });
+    if let Some(path) = &o.baseline {
+        let diff = golden_diff(&read_json(path)?, &json!({ "builds": builds }), o.tolerance);
+        summary["passed"] = json!(diff["changedValues"] == 0 && diff["missing"].as_array().is_some_and(Vec::is_empty) && failed == 0);
+        summary["diff"] = diff;
+    }
+    Ok(summary)
+}
+
+/// Every stat that moved by more than `tolerance` (relative, floored at 1) between two golden runs.
+fn golden_diff(base: &Value, new: &Value, tolerance: f64) -> Value {
+    let empty = serde_json::Map::new();
+    let a = base["builds"].as_object().unwrap_or(&empty);
+    let b = new["builds"].as_object().unwrap_or(&empty);
+    let mut per_stat: std::collections::BTreeMap<String, (usize, f64)> = std::collections::BTreeMap::new();
+    let mut rows: Vec<(f64, Value)> = Vec::new();
+    let mut changed_builds = 0;
+    let mut skill_changes = Vec::new();
+    for (id, before) in a {
+        let Some(after) = b.get(id) else { continue };
+        let (Some(sa), Some(sb)) = (before["stats"].as_object(), after["stats"].as_object()) else { continue };
+        if before["skill"] != after["skill"] {
+            skill_changes.push(json!({ "id": id, "before": before["skill"], "after": after["skill"] }));
+        }
+        let keys: std::collections::BTreeSet<&String> = sa.keys().chain(sb.keys()).collect();
+        let mut any = false;
+        for k in keys {
+            let (x, y) = (sa.get(k).and_then(Value::as_f64), sb.get(k).and_then(Value::as_f64));
+            let change = match (x, y) {
+                (Some(x), Some(y)) if (x - y).abs() <= tolerance * x.abs().max(y.abs()).max(1.0) => continue,
+                (Some(x), Some(y)) => (y - x).abs() / x.abs().max(1e-9),
+                _ => f64::INFINITY,
+            };
+            any = true;
+            let e = per_stat.entry(k.clone()).or_insert((0, 0.0));
+            e.0 += 1;
+            e.1 = e.1.max(change);
+            rows.push((change, json!({ "id": id, "ascendancy": after["ascendancy"], "skill": after["skill"], "stat": k, "before": x, "after": y })));
+        }
+        if any {
+            changed_builds += 1;
+        }
+    }
+    rows.sort_by(|p, q| q.0.total_cmp(&p.0));
+    let percent = |c: f64| if c.is_finite() { json!((c * 1000.0).round() / 10.0) } else { Value::Null };
+    json!({
+        "compared": a.keys().filter(|id| b.contains_key(*id)).count(),
+        "changedBuilds": changed_builds,
+        "changedValues": rows.len(),
+        "perStat": per_stat.into_iter().map(|(k, (n, max))| (k, json!({ "builds": n, "maxChangePercent": percent(max) }))).collect::<serde_json::Map<_, _>>(),
+        "largest": rows.iter().take(25).map(|(c, r)| { let mut r = r.clone(); r["changePercent"] = percent(*c); r }).collect::<Vec<_>>(),
+        "mainSkillChanged": skill_changes,
+        "missing": a.keys().filter(|id| !b.contains_key(*id)).collect::<Vec<_>>(),
+        "added": b.keys().filter(|id| !a.contains_key(*id)).collect::<Vec<_>>(),
+        "errors": b.iter().filter_map(|(id, v)| v.get("error").map(|e| json!({ "id": id, "error": e }))).collect::<Vec<_>>(),
+    })
 }
 
 fn jewels_cmd(cfg: EngineConfig, file: PathBuf, aim: Option<String>, pool_size: usize, no_sequential: bool) -> Result<Value, pob_engine::Error> {
@@ -600,11 +793,21 @@ fn main() {
             };
             Some(corpus_cmd(cfg, opts))
         }
+        Cmd::Golden { index, out, baseline, tolerance, all, jobs, .. } => {
+            let cfg = EngineConfig { pob_root: cli.pob_root.clone(), user_dir: user_dir.clone() };
+            let opts = GoldenOpts { index: index.clone(), out: out.clone(), baseline: baseline.clone(), tolerance: *tolerance, all: *all, jobs: *jobs };
+            Some(golden_cmd(cfg, opts))
+        }
         _ => None,
     };
     if let Some(out) = pooled {
         match out {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+            Ok(v) => {
+                println!("{}", serde_json::to_string_pretty(&v).unwrap());
+                if matches!(cli.cmd, Cmd::Golden { check: true, .. }) && v["passed"] == false {
+                    std::process::exit(1);
+                }
+            }
             Err(e) => {
                 eprintln!("error: {e}");
                 std::process::exit(2);
@@ -671,7 +874,9 @@ fn main() {
                 Ok(json!({ "iterations": iterations, "avg_ms": avg, "min_ms": min, "boot_ms": engine.boot_ms }))
             }),
         Cmd::Eval { code } => engine.eval(&code),
-        Cmd::Power { .. } | Cmd::Gems { .. } | Cmd::Jewels { .. } | Cmd::Plan { .. } | Cmd::Corpus { .. } => unreachable!("handled above"),
+        Cmd::Power { .. } | Cmd::Gems { .. } | Cmd::Jewels { .. } | Cmd::Plan { .. } | Cmd::Corpus { .. } | Cmd::Golden { .. } => {
+            unreachable!("handled above")
+        }
     };
 
     match out {
