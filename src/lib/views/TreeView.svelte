@@ -2371,7 +2371,7 @@
     position: absolute;
     width: max-content;
     min-width: min(320px, calc(100% - 16px));
-    max-width: calc(100% - 16px);
+    max-width: min(540px, calc(100% - 16px));
     max-height: calc(100% - 16px);
     overflow: hidden;
     padding: 10px 12px;
@@ -2403,6 +2403,7 @@
   .tip-stat {
     color: var(--c-magic);
     line-height: 1.35;
+    white-space: pre-line;
   }
   .tip-stat .rarity {
     color: var(--fg-0);
