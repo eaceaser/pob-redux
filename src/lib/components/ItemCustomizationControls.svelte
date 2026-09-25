@@ -4,24 +4,28 @@
   import ItemAffixSelector from "./ItemAffixSelector.svelte";
   import { m } from "$lib/paraglide/messages";
 
-  let { data, target, busy = false, sourceSlot, onchange }: {
+  let { data, target, busy = false, sourceSlot, onchange, onpendingchange }: {
     data: ItemCustomization;
     target: ItemTarget;
     busy?: boolean;
     sourceSlot?: string;
     onchange: (edit: ItemCustomizationEdit) => Promise<unknown>;
+    onpendingchange: (pending: boolean) => void;
   } = $props();
 
   let changingAffix = $state(false);
+  const controlsBusy = $derived(busy || changingAffix);
 
   function beginAffixChange(): boolean {
-    if (busy || changingAffix) return false;
+    if (controlsBusy) return false;
     changingAffix = true;
+    onpendingchange(true);
     return true;
   }
 
   function endAffixChange() {
     changingAffix = false;
+    onpendingchange(false);
   }
 
   let source = $state<"Custom" | "Prefix" | "Suffix">("Custom");
@@ -74,7 +78,7 @@
   }
 </script>
 
-<fieldset disabled={busy || changingAffix} class="controls">
+<fieldset disabled={controlsBusy} class="controls">
   <legend class="label">{m.items_customize()}</legend>
   <div class="row">
     {#if data.canQuality}
@@ -179,7 +183,7 @@
 </fieldset>
 
 {#key target.itemId ?? "draft"}
-  <ItemAdvancedControls {data} {target} {busy} {onchange} />
+  <ItemAdvancedControls {data} {target} busy={controlsBusy} {onchange} />
 {/key}
 
 <style>
