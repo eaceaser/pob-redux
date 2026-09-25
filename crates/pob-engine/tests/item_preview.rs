@@ -387,36 +387,40 @@ fn customization_edits_drafts_and_commits_saved_items() {
         .call("item_customization", &json!({"raw":crafted}))
         .unwrap();
     assert_eq!(crafted_data["affixes"]["crafted"], true);
-    let accuracy = crafted_data["affixes"]["prefixes"][0]["options"]
+    let poe1 = engine.call("version", &Value::Null).unwrap()["game"] == "poe1";
+    let ranged_group = if poe1 { "IncreasedLife" } else { "IncreasedAccuracy" };
+    let ranged_affix = crafted_data["affixes"]["prefixes"][0]["options"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|option| option["group"] == "IncreasedAccuracy")
+        .find(|option| option["group"] == ranged_group)
         .unwrap();
     let rolls = engine.call("item_affix_rolls", &json!({
-        "raw": crafted, "table": "prefixes", "index": 1, "group": accuracy["group"]
+        "raw": crafted, "table": "prefixes", "index": 1, "group": ranged_affix["group"]
     })).unwrap();
-    let accuracy_tiers = rolls["tiers"].as_array().unwrap();
-    assert!(accuracy_tiers.len() > 1);
+    let ranged_tiers = rolls["tiers"].as_array().unwrap();
+    assert!(ranged_tiers.len() > 1);
     let low_level = crafted.replace("Item Level: 80", "Item Level: 1");
     let low_level_rolls = engine.call("item_affix_rolls", &json!({
-        "raw": low_level, "table": "prefixes", "index": 1, "group": accuracy["group"]
+        "raw": low_level, "table": "prefixes", "index": 1, "group": ranged_affix["group"]
     })).unwrap();
-    assert_eq!(low_level_rolls["tiers"].as_array().unwrap().len(), accuracy_tiers.len());
-    assert_eq!(accuracy_tiers[0]["tier"], accuracy_tiers.len());
-    assert_eq!(accuracy_tiers.last().unwrap()["tier"], 1);
-    assert!(accuracy_tiers.iter().all(|tier| tier["steps"].as_array().unwrap().len() > 1));
-    assert!(accuracy_tiers[0]["steps"][0]["value"].as_str().unwrap().contains("Accuracy Rating"));
+    assert_eq!(low_level_rolls["tiers"].as_array().unwrap().len(), ranged_tiers.len());
+    assert_eq!(ranged_tiers[0]["tier"], ranged_tiers.len());
+    assert_eq!(ranged_tiers.last().unwrap()["tier"], 1);
+    assert!(ranged_tiers.iter().all(|tier| tier["steps"].as_array().unwrap().len() > 1));
+    let value_fragment = if poe1 { "maximum Life" } else { "Accuracy Rating" };
+    assert!(ranged_tiers[0]["steps"][0]["value"].as_str().unwrap().contains(value_fragment));
     let amulet = "Rarity: Rare\nAffix candidate\nJade Amulet\nCrafted: true\nItem Level: 80\nImplicits: 0";
     let amulet_data = engine.call("item_customization", &json!({"raw": amulet})).unwrap();
-    let spell_levels = amulet_data["affixes"]["suffixes"][0]["options"]
+    let discrete_group = if poe1 { "LifeGainPerTarget" } else { "GlobalIncreaseSpellSkillGemLevel" };
+    let discrete_affix = amulet_data["affixes"]["suffixes"][0]["options"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|option| option["group"] == "GlobalIncreaseSpellSkillGemLevel")
+        .find(|option| option["group"] == discrete_group)
         .unwrap();
     let discrete = engine.call("item_affix_rolls", &json!({
-        "raw": amulet, "table": "suffixes", "index": 1, "group": spell_levels["group"]
+        "raw": amulet, "table": "suffixes", "index": 1, "group": discrete_affix["group"]
     })).unwrap();
     assert!(discrete["tiers"].as_array().unwrap().len() > 1);
     assert!(discrete["tiers"].as_array().unwrap().iter().all(|tier| tier["steps"].as_array().unwrap().len() == 1));
