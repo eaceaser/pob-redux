@@ -122,9 +122,9 @@
   --c-gem: oklch(44.0% 0.080 176);
   --c-spirit: oklch(45.0% 0.088 80);
   --c-currency: oklch(45.5% 0.087 68);
-
   --c-author: oklch(44.0% 0.075 195);
   --c-class: oklch(45.0% 0.150 262);
+
   --primary-hover: #000000;
   /* Paper washes text out faster than near-black does, so the same recessed
      look costs a faded control more of its ink here. */
@@ -143,55 +143,55 @@
 :root[data-theme="wraeclast"] {
   color-scheme: dark;
 
-  --bg-0: oklch(26.9% 0.010 62);
-  --bg-1: oklch(28.9% 0.010 62);
-  --bg-2: oklch(31.3% 0.011 62);
-  --bg-3: oklch(33.4% 0.012 62);
-  --bg-hover: oklch(35.4% 0.014 62);
-  --bg-active: oklch(38.5% 0.016 62);
+  --bg-0: oklch(34.0% 0.014 255);
+  --bg-1: oklch(36.2% 0.015 255);
+  --bg-2: oklch(38.5% 0.016 255);
+  --bg-3: oklch(40.8% 0.017 255);
+  --bg-hover: oklch(43.0% 0.018 255);
+  --bg-active: oklch(46.0% 0.019 255);
 
-  --line-0: oklch(34.6% 0.013 64);
-  --line-1: oklch(39.2% 0.016 64);
-  --line-2: oklch(45.9% 0.020 64);
+  --line-0: oklch(42.0% 0.016 250);
+  --line-1: oklch(47.0% 0.019 250);
+  --line-2: oklch(54.0% 0.022 250);
 
-  --fg-0: oklch(91.0% 0.041 74);
-  --ramp-1: oklch(84.0% 0.035 74);
-  --ramp-2: oklch(74.0% 0.026 74);
-  --ramp-3: oklch(69.5% 0.022 74);
-  --ramp-4: oklch(56.5% 0.019 74);
+  --fg-0: oklch(97.5% 0.024 85);
+  --ramp-1: oklch(92.5% 0.030 85);
+  --ramp-2: oklch(86.0% 0.025 85);
+  --ramp-3: oklch(83.0% 0.022 85);
+  --ramp-4: oklch(68.0% 0.018 85);
 
   --focus: oklch(74.1% 0.108 269);
   --ok: oklch(79.4% 0.130 153);
   --warn: oklch(80.9% 0.123 81);
   --bad: oklch(77.5% 0.150 23);
 
-  --c-life: oklch(73.0% 0.159 22);
+  --c-life: oklch(75.5% 0.143 22);
   --c-mana: oklch(75.0% 0.128 265);
   --c-es: oklch(81.3% 0.097 211);
   --c-fire: oklch(75.3% 0.155 42);
   --c-cold: oklch(78.9% 0.120 240);
   --c-lightning: oklch(89.4% 0.156 106);
-  --c-chaos: oklch(75.1% 0.172 310);
+  --c-chaos: oklch(75.6% 0.168 310);
   --c-physical: oklch(84.8% 0.047 83);
-  --c-unique: oklch(73.2% 0.125 58);
+  --c-unique: oklch(74.7% 0.125 58);
   --c-rare: oklch(82.0% 0.137 95);
-  --c-magic: oklch(74.0% 0.135 277);
+  --c-magic: oklch(74.5% 0.131 277);
   --c-normal: oklch(88.0% 0.022 77);
   --c-gem: oklch(80.3% 0.127 174);
   --c-spirit: oklch(86.4% 0.117 84);
   --c-currency: oklch(76.6% 0.114 72);
-
-  --accent: oklch(46.2% 0.181 21);
   --c-author: oklch(81.0% 0.100 350);
   --c-class: oklch(80.0% 0.090 250);
-  --accent-fg: oklch(91.0% 0.041 74);
-  --primary-hover: oklch(50.1% 0.193 21);
+
+  --accent: oklch(80.0% 0.120 82);
+  --accent-fg: oklch(20.0% 0.020 82);
+  --primary-hover: oklch(85.0% 0.120 82);
   --fade-off: 0.55;
   --sel-mix: 42%;
   --pob-mix: 100%;
-  --backdrop: rgb(13 13 13 / 0.5);
-  --shadow-pop: 0 8px 30px rgba(13, 13, 13, 0.5);
-  --shadow-modal: 0 12px 40px rgba(13, 13, 13, 0.45);
+  --backdrop: rgb(12 14 20 / 0.45);
+  --shadow-pop: 0 8px 30px rgba(12, 14, 20, 0.45);
+  --shadow-modal: 0 12px 40px rgba(12, 14, 20, 0.4);
 }
 
 :root {
