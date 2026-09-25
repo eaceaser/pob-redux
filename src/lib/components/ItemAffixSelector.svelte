@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     engine,
     type AffixRollStep,
@@ -23,6 +24,9 @@
 
   const families = $derived(slot.options);
   const selectedSeries = $derived(families.find((series) => series.modIds.includes(slot.modId))?.id ?? "");
+  const seriesMods = $derived(families.find((series) => series.id === selectedSeries)?.modIds.join("|") ?? "");
+  const slotIndex = $derived(slot.index);
+  const savedRoll = $derived(`${slot.modId}|${slot.range}|${slot.rangeIsTable}|${slot.value}`);
   let tiers = $state<AffixRollTier[]>([]);
   let loading = $state(false);
   let changing = $state(false);
@@ -30,19 +34,20 @@
   let localChoice = $state<Choice | null>(null);
   // WebKit may skip change after snapping input.value or fire it after pointerup.
   let submitted: string | null = null;
+  let loadedSeries = "";
 
   $effect(() => {
     const seriesId = selectedSeries;
-    const currentTarget = target;
-    // Options can change when another affix changes the item's tags.
-    const optionIds = slot.options.flatMap((series) => series.modIds).join("|");
+    const modIds = seriesMods;
+    const index = slotIndex;
+    const currentTarget = untrack(() => target);
     let active = true;
-    tiers = [];
+    if (loadedSeries !== seriesId) tiers = [];
     error = null;
     loading = !!seriesId;
-    if (seriesId && optionIds) {
-      engine.itemAffixRolls(currentTarget, table, slot.index, seriesId).then(
-        (result) => { if (active) tiers = result.tiers; },
+    if (seriesId && modIds) {
+      engine.itemAffixRolls(currentTarget, table, index, seriesId).then(
+        (result) => { if (active) { tiers = result.tiers; loadedSeries = seriesId; } },
         (e) => { if (active) error = String(e); },
       ).finally(() => { if (active) loading = false; });
     }
@@ -50,11 +55,34 @@
   });
 
   $effect(() => {
-    slot.modId;
-    slot.range;
+    savedRoll;
     localChoice = null;
     submitted = null;
   });
+
+  function restoreFocusAfterBusy(input: HTMLInputElement) {
+    const fieldset = input.closest("fieldset");
+    let observer: MutationObserver | null = null;
+    function onFocusOut(event: FocusEvent) {
+      if (event.target !== input) return;
+      if (!fieldset || !input.matches(":disabled")) return;
+      observer?.disconnect();
+      observer = new MutationObserver(() => {
+        if (!input.isConnected || input.matches(":disabled")) return;
+        observer?.disconnect();
+        observer = null;
+        if (document.activeElement === document.body) input.focus();
+      });
+      observer.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
+    }
+    document.addEventListener("focusout", onFocusOut, true);
+    return {
+      destroy() {
+        document.removeEventListener("focusout", onFocusOut, true);
+        observer?.disconnect();
+      },
+    };
+  }
 
   function sliderPosition(tierIndex: number, stepPosition: number): number {
     return tierIndex * segment + stepPosition;
@@ -189,7 +217,7 @@
     </div>
     {#if choices.length > 1 && shownChoice}
       <div class="slider-wrap">
-        <input type="range" min="0" max={tiers.length * segment - 1} step="1" value={shownChoice.position} disabled={changing}
+        <input use:restoreFocusAfterBusy type="range" min="0" max={tiers.length * segment - 1} step="1" value={shownChoice.position} disabled={changing}
           aria-label={m.items_affix_roll()}
           aria-valuetext={`${valueText}, ${shownChoice.affix ?? ""}, ${m.items_affix_tier({ tier: shownChoice.tier })}`}
           oninput={(e) => choose(Number(e.currentTarget.value), e.currentTarget)}
