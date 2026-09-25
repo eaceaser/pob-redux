@@ -418,16 +418,26 @@ fn customization_edits_drafts_and_commits_saved_items() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|option| option["group"] == ranged_group)
+        .find(|option| {
+            option["modIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|id| id.as_str().unwrap().starts_with(ranged_group))
+        })
         .unwrap();
     let rolls = engine.call("item_affix_rolls", &json!({
-        "raw": crafted, "table": "prefixes", "index": 1, "group": ranged_affix["group"]
+        "raw": crafted, "table": "prefixes", "index": 1, "seriesId": ranged_affix["id"]
     })).unwrap();
     let ranged_tiers = rolls["tiers"].as_array().unwrap();
     assert!(ranged_tiers.len() > 1);
+    assert_eq!(
+        ranged_tiers.iter().map(|tier| &tier["modId"]).collect::<Vec<_>>(),
+        ranged_affix["modIds"].as_array().unwrap().iter().collect::<Vec<_>>()
+    );
     let low_level = crafted.replace("Item Level: 80", "Item Level: 1");
     let low_level_rolls = engine.call("item_affix_rolls", &json!({
-        "raw": low_level, "table": "prefixes", "index": 1, "group": ranged_affix["group"]
+        "raw": low_level, "table": "prefixes", "index": 1, "seriesId": ranged_affix["id"]
     })).unwrap();
     assert_eq!(low_level_rolls["tiers"].as_array().unwrap().len(), ranged_tiers.len());
     assert_eq!(ranged_tiers[0]["tier"], ranged_tiers.len());
@@ -437,19 +447,48 @@ fn customization_edits_drafts_and_commits_saved_items() {
     assert!(ranged_tiers[0]["steps"][0]["value"].as_str().unwrap().contains(value_fragment));
     let amulet = "Rarity: Rare\nAffix candidate\nJade Amulet\nCrafted: true\nItem Level: 80\nImplicits: 0";
     let amulet_data = engine.call("item_customization", &json!({"raw": amulet})).unwrap();
-    let discrete_group = if poe1 { "LifeGainPerTarget" } else { "GlobalIncreaseSpellSkillGemLevel" };
+    let special = if poe1 {
+        "Rarity: Rare\nAffix candidate\nJade Amulet\nElder Item\nCrafted: true\nItem Level: 80\nImplicits: 0"
+    } else {
+        "Rarity: Rare\nAffix candidate\nTime-Lost Ruby\nCrafted: true\nItem Level: 80\nImplicits: 0"
+    };
+    let special_data = engine.call("item_customization", &json!({"raw": special})).unwrap();
+    let special_series = special_data["affixes"]["prefixes"][0]["options"].as_array().unwrap();
+    let separate_mods = if poe1 {
+        ["MaximumZombiesUber1", "MaximumSkeletonsUber1"]
+    } else {
+        ["JewelRadiusMediumSize", "JewelRadiusLargeSize"]
+    };
+    for mod_id in separate_mods {
+        let series = special_series
+            .iter()
+            .find(|series| series["modIds"] == json!([mod_id]))
+            .unwrap();
+        let rolls = engine.call("item_affix_rolls", &json!({
+            "raw": special, "table": "prefixes", "index": 1, "seriesId": series["id"]
+        })).unwrap();
+        assert_eq!(rolls["tiers"].as_array().unwrap().len(), 1);
+        assert_eq!(rolls["tiers"][0]["modId"], mod_id);
+    }
+    let discrete_group = if poe1 { "LifeGainPerTarget" } else { "GlobalSpellGemsLevel" };
     let discrete_affix = amulet_data["affixes"]["suffixes"][0]["options"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|option| option["group"] == discrete_group)
+        .find(|option| {
+            option["modIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|id| id.as_str().unwrap().starts_with(discrete_group))
+        })
         .unwrap();
     let discrete = engine.call("item_affix_rolls", &json!({
-        "raw": amulet, "table": "suffixes", "index": 1, "group": discrete_affix["group"]
+        "raw": amulet, "table": "suffixes", "index": 1, "seriesId": discrete_affix["id"]
     })).unwrap();
     assert!(discrete["tiers"].as_array().unwrap().len() > 1);
     assert!(discrete["tiers"].as_array().unwrap().iter().all(|tier| tier["steps"].as_array().unwrap().len() == 1));
-    let affix = &crafted_data["affixes"]["prefixes"][0]["options"][0]["modId"];
+    let affix = &crafted_data["affixes"]["prefixes"][0]["options"][0]["modIds"][0];
     assert!(affix.is_string());
     let crafted_data=engine.call("item_customize",&json!({"raw":crafted,"operation":"affix","table":"prefixes","index":1,"modId":affix,"range":1.0})).unwrap();
     assert_eq!(crafted_data["affixes"]["prefixes"][0]["modId"], *affix);
@@ -833,7 +872,7 @@ fn crafted_customization_preserves_custom_edits_across_affix_changes() {
     let initial = engine
         .call("item_customization", &json!({"raw":raw}))
         .unwrap();
-    let prefix = &initial["affixes"]["prefixes"][0]["options"][0]["modId"];
+    let prefix = &initial["affixes"]["prefixes"][0]["options"][0]["modIds"][0];
     let initial = engine
         .call(
             "item_customize",
@@ -847,7 +886,7 @@ fn crafted_customization_preserves_custom_edits_across_affix_changes() {
             .iter()
             .all(|m| m["section"] != "explicit")
     );
-    let suffix = initial["affixes"]["suffixes"][0]["options"][0]["modId"].clone();
+    let suffix = initial["affixes"]["suffixes"][0]["options"][0]["modIds"][0].clone();
     for saved in [false, true] {
         let item_id = if saved {
             engine

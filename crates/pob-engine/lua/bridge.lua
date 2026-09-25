@@ -4465,21 +4465,39 @@ end
 
 local function affixSlotOptions(item, affixType, tableName, outputIndex)
 	local extraTags, excludeGroups = {}, {}
+	local rareLikeUnique = not IS_POE2 and item.rareLikeUnique
+	local allowDuplicateGroups = rareLikeUnique and rareLikeUnique.allowDuplicateGroups
+	if rareLikeUnique and rareLikeUnique.ignoreModType and tableName == "prefixes" then affixType = nil end
 	for _, tbl in ipairs({ "prefixes", "suffixes" }) do
 		for index = 1, (item[tbl].limit or (item.affixLimit / 2)) do
 			if index ~= outputIndex or tbl ~= tableName then
 				local mod = item.affixes[item[tbl][index] and item[tbl][index].modId]
 				if mod then
-					if mod.group then excludeGroups[mod.group] = true end
+					if mod.group and not allowDuplicateGroups then excludeGroups[mod.group] = true end
 					for _, tag in ipairs(mod.tags or {}) do extraTags[tag] = true end
 				end
 			end
 		end
 	end
+	if item.clusterJewel and item.clusterJewelSkill then
+		local skill = item.clusterJewel.skills[item.clusterJewelSkill]
+		if skill then extraTags[skill.tag] = true end
+	end
 	local affixList = {}
+	local retainedAffixes = {}
+	local selected = item[tableName][outputIndex] and item[tableName][outputIndex].modId
 	for modId, mod in pairs(item.affixes) do
-		if mod.type == affixType and not excludeGroups[mod.group] and item:GetModSpawnWeight(mod, extraTags) > 0 then
-			affixList[#affixList + 1] = modId
+		if (not affixType or mod.type == affixType) and not excludeGroups[mod.group] then
+			if IS_POE2 then
+				if item:GetModSpawnWeight(mod, extraTags) > 0 then affixList[#affixList + 1] = modId end
+			elseif not item:CheckIfModIsDelve(mod) then
+				if item:CanHaveMod(mod, extraTags) then
+					affixList[#affixList + 1] = modId
+				elseif modId == selected then
+					affixList[#affixList + 1] = modId
+					retainedAffixes[modId] = true
+				end
+			end
 		end
 	end
 	table.sort(affixList, function(a, b)
@@ -4494,20 +4512,35 @@ local function affixSlotOptions(item, affixType, tableName, outputIndex)
 				return modA.statOrder[i] < modB.statOrder[i]
 			end
 		end
-		return modA.level > modB.level
+		if IS_POE2 then return modA.level > modB.level end
+		if modA.level ~= modB.level then return modA.level < modB.level end
+		return a < b
 	end)
 	local opts = array({})
+	local lastSeries
+	local separateJewels = IS_POE2 and item.type == "Jewel" and item.base.subType ~= "Abyss"
 	for _, modId in ipairs(affixList) do
 		local mod = item.affixes[modId]
-		local modString = table.concat(mod, "/")
-		opts[#opts + 1] = {
-			modId = modId,
-			group = mod.group or modId,
-			affix = opt(mod.affix),
-			label = modString,
-			level = opt(mod.level),
-			haveRange = modString:match("%(%-?[%d%.]+%-%-?[%d%.]+%)") and true or false,
-		}
+		if separateJewels or not lastSeries or not tableDeepEquals(lastSeries.statOrder, mod.statOrder) then
+			local label = table.concat(mod, "/")
+			if separateJewels and item.baseName:find("Time%-Lost") then
+				label = label:gsub(" Passive Skills in Radius also grant", ":")
+			end
+			lastSeries = { id = modId, label = label, modIds = array({}), statOrder = mod.statOrder }
+			opts[#opts + 1] = lastSeries
+		end
+		if retainedAffixes[modId] and item.clusterJewel then lastSeries.label = "[Retained] " .. lastSeries.label end
+		if IS_POE2 and not separateJewels then
+			table.insert(lastSeries.modIds, 1, modId)
+		else
+			lastSeries.modIds[#lastSeries.modIds + 1] = modId
+		end
+		if #lastSeries.modIds == 2 then
+			lastSeries.label = lastSeries.label:gsub("%(%-?[%d%.]+%-%-?[%d%.]+%)", "#"):gsub("%-?%d+%.?%d*", "#")
+		end
+	end
+	for _, series in ipairs(opts) do
+		series.statOrder = nil
 	end
 	return opts
 end
@@ -4561,19 +4594,15 @@ M.item_affix_rolls = function(p)
 	local index = tonumber(p.index) or 1
 	local limit = item[tableName].limit or (item.affixLimit / 2)
 	if index % 1 ~= 0 or index < 1 or index > limit then error("affix index out of range", 0) end
-	local group = p.group
-	if type(group) ~= "string" or group == "" then error("affix group required", 0) end
+	local seriesId = p.seriesId
+	if type(seriesId) ~= "string" or seriesId == "" then error("affix series required", 0) end
 	local options = affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)
-	local tiers = {}
+	local series
 	for _, option in ipairs(options) do
-		if option.group == group then tiers[#tiers + 1] = option end
+		if option.id == seriesId then series = option; break end
 	end
-	if #tiers == 0 then error("affix family is not compatible with this item", 0) end
-	-- PoB's affix slider runs from the weakest tier to the strongest.
-	table.sort(tiers, function(a, b)
-		if a.level ~= b.level then return a.level < b.level end
-		return a.modId < b.modId
-	end)
+	if not series then error("affix series is not compatible with this item", 0) end
+	local tiers = series.modIds
 	local out = array({})
 	local function renderAffix(mod, range)
 		local lines = {}
@@ -4593,14 +4622,14 @@ M.item_affix_rolls = function(p)
 		if minA % 1 ~= 0 or maxA % 1 ~= 0 or minB % 1 ~= 0 or maxB % 1 ~= 0 then return false end
 		return minA < minB and minA + 1 == maxB or minA >= minB and minA - 1 == maxB
 	end
-	for tierIndex, option in ipairs(tiers) do
-		local mod = item.affixes[option.modId]
+	for tierIndex, modId in ipairs(tiers) do
+		local mod = item.affixes[modId]
 		local steps = array({})
-		local hasRange = option.haveRange
+		local hasRange = table.concat(mod, "/"):match("%(%-?[%d%.]+%-%-?[%d%.]+%)") ~= nil
 		local lastValue
 		local prior, nextTier = tiers[tierIndex - 1], tiers[tierIndex + 1]
-		local flip = prior and flipRange(item.affixes[prior.modId], mod)
-			or not prior and nextTier and flipRange(mod, item.affixes[nextTier.modId]) or false
+		local flip = prior and flipRange(item.affixes[prior], mod)
+			or not prior and nextTier and flipRange(mod, item.affixes[nextTier]) or false
 		for percent = 0, hasRange and 100 or 0 do
 			local range = hasRange and (flip and 1 - percent / 100 or percent / 100) or 0.5
 			local value = renderAffix(mod, range)
@@ -4615,7 +4644,7 @@ M.item_affix_rolls = function(p)
 				step.position = math.floor((step.position + nextStart - 1) / 2)
 			end
 		end
-		out[#out + 1] = { modId = option.modId, affix = option.affix, tier = #tiers - tierIndex + 1, steps = steps }
+		out[#out + 1] = { modId = modId, affix = opt(mod.affix), tier = #tiers - tierIndex + 1, steps = steps }
 	end
 	return { tiers = out }
 end
@@ -4630,8 +4659,11 @@ M.set_item_affix = function(p)
 	if index % 1 ~= 0 or index < 1 or index > limit then error("affix index out of range", 0) end
 	local modId = p.modId or "None"
 	local valid = modId == "None"
-	for _, option in ipairs(affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)) do
-		if option.modId == modId then valid = true; break end
+	for _, series in ipairs(affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)) do
+		for _, optionId in ipairs(series.modIds) do
+			if optionId == modId then valid = true; break end
+		end
+		if valid then break end
 	end
 	if not valid then error("affix is not compatible with this item", 0) end
 	if p.range ~= nil and (type(p.range) ~= "number" or p.range < 0 or p.range > 1) then error("invalid affix roll", 0) end

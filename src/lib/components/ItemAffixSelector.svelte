@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     engine,
-    type AffixOption,
     type AffixRollStep,
     type AffixRollTier,
     type AffixSlot,
@@ -19,26 +18,11 @@
     onend: () => void;
   } = $props();
 
-  type Family = { group: string; label: string; tiers: AffixOption[] };
   type Choice = { modId: string; affix: string | null; tier: number; step: AffixRollStep; position: number };
   const segment = 101;
 
-  const families: Family[] = $derived.by(() => {
-    const byGroup = new Map<string, AffixOption[]>();
-    for (const option of slot.options) {
-      const tiers = byGroup.get(option.group) ?? [];
-      tiers.push(option);
-      byGroup.set(option.group, tiers);
-    }
-    return [...byGroup].map(([group, tiers]) => ({
-      group,
-      label: tiers.length > 1
-        ? tiers[0].label.replace(/\(-?\d+(?:\.\d+)?--?\d+(?:\.\d+)?\)/g, "#").replace(/-?\d+(?:\.\d+)?/g, "#")
-        : tiers[0].label,
-      tiers,
-    }));
-  });
-  const selectedGroup = $derived(slot.options.find((option) => option.modId === slot.modId)?.group ?? "");
+  const families = $derived(slot.options);
+  const selectedSeries = $derived(families.find((series) => series.modIds.includes(slot.modId))?.id ?? "");
   let tiers = $state<AffixRollTier[]>([]);
   let loading = $state(false);
   let changing = $state(false);
@@ -48,16 +32,16 @@
   let submitted: string | null = null;
 
   $effect(() => {
-    const group = selectedGroup;
+    const seriesId = selectedSeries;
     const currentTarget = target;
     // Options can change when another affix changes the item's tags.
-    const optionIds = slot.options.map((option) => option.modId).join("|");
+    const optionIds = slot.options.flatMap((series) => series.modIds).join("|");
     let active = true;
     tiers = [];
     error = null;
-    loading = !!group;
-    if (group && optionIds) {
-      engine.itemAffixRolls(currentTarget, table, slot.index, group).then(
+    loading = !!seriesId;
+    if (seriesId && optionIds) {
+      engine.itemAffixRolls(currentTarget, table, slot.index, seriesId).then(
         (result) => { if (active) tiers = result.tiers; },
         (e) => { if (active) error = String(e); },
       ).finally(() => { if (active) loading = false; });
@@ -105,19 +89,19 @@
     position: sliderPosition(tierIndex, step.position),
   }))));
 
-  async function changeFamily(group: string) {
-    if (changing || group === selectedGroup || !onbegin()) return;
+  async function changeFamily(seriesId: string) {
+    if (changing || seriesId === selectedSeries || !onbegin()) return;
     const fraction = shownChoice && tiers.length ? shownChoice.position / (tiers.length * segment - 1) : 0.5;
     changing = true;
     error = null;
     try {
-      if (!group) {
+      if (!seriesId) {
         await onchange({ operation: "affix", table, index: slot.index, modId: "None" });
         return;
       }
-      const family = families.find((candidate) => candidate.group === group);
+      const family = families.find((candidate) => candidate.id === seriesId);
       if (!family) return;
-      const result = await engine.itemAffixRolls(target, table, slot.index, group);
+      const result = await engine.itemAffixRolls(target, table, slot.index, seriesId);
       const choice = nearest(result.tiers, fraction * (result.tiers.length * segment - 1));
       if (choice) await onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
     } catch (e) {
@@ -189,13 +173,13 @@
 </script>
 
 <select class="select" aria-label={table === "prefixes" ? m.items_prefix_number({ index: slot.index }) : m.items_suffix_number({ index: slot.index })}
-  value={selectedGroup} disabled={changing} onchange={(e) => {
-    const group = e.currentTarget.value;
-    e.currentTarget.value = selectedGroup;
-    void changeFamily(group);
+  value={selectedSeries} disabled={changing} onchange={(e) => {
+    const seriesId = e.currentTarget.value;
+    e.currentTarget.value = selectedSeries;
+    void changeFamily(seriesId);
   }}>
   <option value="">{table === "prefixes" ? m.items_empty_prefix() : m.items_empty_suffix()}</option>
-  {#each families as family (family.group)}<option value={family.group}>{family.label}</option>{/each}
+  {#each families as family (family.id)}<option value={family.id}>{family.label}</option>{/each}
 </select>
 {#if slot.modId !== "None"}
   <div class="affix-roll">

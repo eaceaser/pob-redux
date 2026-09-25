@@ -1015,13 +1015,10 @@ export interface CraftBase {
   subType: string | null;
 }
 
-export interface AffixOption {
-  modId: string;
-  group: string;
-  affix: string | null;
+export interface AffixSeries {
+  id: string;
   label: string;
-  level: number | null;
-  haveRange: boolean;
+  modIds: string[];
 }
 
 export interface AffixSlot {
@@ -1032,7 +1029,7 @@ export interface AffixSlot {
   label: string | null;
   value: string | null;
   affix: string | null;
-  options: AffixOption[];
+  options: AffixSeries[];
 }
 
 export interface AffixRollStep {
@@ -1615,8 +1612,8 @@ export const engine = {
   craftItem: (opts: { type: string; baseName: string; rarity?: string; title?: string; equip?: boolean }) =>
     call<{ ok: boolean; itemId: number; name: string; crafted: boolean }>("craft_item", opts),
   itemAffixes: (itemId: number) => call<ItemAffixes>("item_affixes", { itemId }),
-  itemAffixRolls: (target: ItemTarget, table: "prefixes" | "suffixes", index: number, group: string) =>
-    call<{ tiers: AffixRollTier[] }>("item_affix_rolls", { ...target, table, index, group }),
+  itemAffixRolls: (target: ItemTarget, table: "prefixes" | "suffixes", index: number, seriesId: string) =>
+    call<{ tiers: AffixRollTier[] }>("item_affix_rolls", { ...target, table, index, seriesId }),
   setItemAffix: (itemId: number, table: "prefixes" | "suffixes", index: number, modId: string, range?: number) =>
     call<ItemAffixes>("set_item_affix", { itemId, table, index, modId, range }),
   itemRunes: (itemId: number) => call<ItemRunes>("item_runes", { itemId }),
