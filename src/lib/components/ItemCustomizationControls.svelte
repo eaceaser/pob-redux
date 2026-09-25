@@ -9,7 +9,7 @@
     target: ItemTarget;
     busy?: boolean;
     sourceSlot?: string;
-    onchange: (edit: ItemCustomizationEdit) => Promise<unknown>;
+    onchange: (edit: ItemCustomizationEdit) => Promise<ItemCustomization | false | undefined>;
     onpendingchange: (pending: boolean) => void;
   } = $props();
 

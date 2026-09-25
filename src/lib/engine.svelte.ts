@@ -1071,6 +1071,7 @@ export type ItemTarget = { itemId: number; raw?: never; generation?: number } | 
 export type ItemCustomizationEdit =
   | { operation: "props"; quality?: number; itemLevel?: number; corrupted?: boolean; catalyst?: number; catalystQuality?: number }
   | { operation: "affix"; table: "prefixes" | "suffixes"; index: number; modId: string; range?: number }
+  | { operation: "affix"; table: "prefixes" | "suffixes"; index: number; seriesId: string; relativePosition: number }
   | { operation: "rune"; index: number; name: string }
   | { operation: "variant"; picks: number[] }
   | { operation: "shape"; influences?: string[]; sockets?: ItemSocket[]; clusterSkill?: string; clusterNodeCount?: number }
@@ -1085,6 +1086,7 @@ export type ItemCustomizationEdit =
   | { operation: "modifier"; section: string; index: number; text?: string; disabled?: boolean; remove?: boolean; range?: number };
 
 export interface ItemCustomization {
+  selectedRolls?: { table: "prefixes" | "suffixes"; index: number; seriesId: string; tiers: AffixRollTier[] };
   shape: ItemShape;
   crucible: ItemCrucible;
   anoints: AnointInfo;
@@ -1614,8 +1616,6 @@ export const engine = {
   itemAffixes: (itemId: number) => call<ItemAffixes>("item_affixes", { itemId }),
   itemAffixRolls: (target: ItemTarget, table: "prefixes" | "suffixes", index: number, seriesId: string) =>
     call<{ tiers: AffixRollTier[] }>("item_affix_rolls", { ...target, table, index, seriesId }),
-  setItemAffix: (itemId: number, table: "prefixes" | "suffixes", index: number, modId: string, range?: number) =>
-    call<ItemAffixes>("set_item_affix", { itemId, table, index, modId, range }),
   itemRunes: (itemId: number) => call<ItemRunes>("item_runes", { itemId }),
   setItemRune: (itemId: number, index: number, name: string) => call<ItemRunes>("set_item_rune", { itemId, index, name }),
   setItemProps: (itemId: number, patch: { quality?: number; itemLevel?: number; corrupted?: boolean; catalyst?: number; catalystQuality?: number }) =>

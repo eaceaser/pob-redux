@@ -128,7 +128,9 @@
     previewError = null;
     try {
       const updated = await engine.customizeItem({ raw: preview.text, generation }, edit);
-      if (alive && stamp === previewStamp) return await requestPreview(updated.raw, stamp, undefined, false, updated);
+      if (alive && stamp === previewStamp) {
+        if (await requestPreview(updated.raw, stamp, undefined, false, updated)) return updated;
+      }
       return false;
     } catch (e) {
       if (alive && stamp === previewStamp) previewError = String(e);

@@ -4545,6 +4545,24 @@ local function affixSlotOptions(item, affixType, tableName, outputIndex)
 	return opts
 end
 
+-- Keep these helpers on M to stay within Lua's top-level local variable limit.
+M._affix = {}
+
+function M._affix.render(mod, range)
+	local lines = {}
+	for _, line in ipairs(mod) do lines[#lines + 1] = itemLib.applyRange(line, range) end
+	return table.concat(lines, "/")
+end
+
+function M._affix.resolveSlot(item, p)
+	if not item.crafted or not item.affixes then error("only crafted magic/rare items expose affixes", 0) end
+	local tableName = p.table == "suffixes" and "suffixes" or "prefixes"
+	local index = tonumber(p.index) or 1
+	local limit = item[tableName].limit or (item.affixLimit / 2)
+	if index % 1 ~= 0 or index < 1 or index > limit then error("affix index out of range", 0) end
+	return tableName, index
+end
+
 M.item_affixes = function(p)
 	ensureBuild()
 	local item = requireItem(p)
@@ -4552,11 +4570,6 @@ M.item_affixes = function(p)
 		return { crafted = false, prefixes = array({}), suffixes = array({}) }
 	end
 	local function slots(tableName, affixType)
-		local function renderAffix(mod, range)
-			local lines = {}
-			for _, line in ipairs(mod) do lines[#lines + 1] = itemLib.applyRange(line, range) end
-			return table.concat(lines, "/")
-		end
 		local limit = item[tableName].limit or (item.affixLimit / 2)
 		local out = array({})
 		for i = 1, limit do
@@ -4571,7 +4584,7 @@ M.item_affixes = function(p)
 				range = sliderRange,
 				rangeIsTable = type(rollRange) == "table",
 				label = curMod and table.concat(curMod, "/") or null,
-				value = curMod and renderAffix(curMod, rollRange) or null,
+				value = curMod and M._affix.render(curMod, rollRange) or null,
 				affix = curMod and opt(curMod.affix) or null,
 				options = affixSlotOptions(item, affixType, tableName, i),
 			}
@@ -4586,15 +4599,7 @@ M.item_affixes = function(p)
 	}
 end
 
-M.item_affix_rolls = function(p)
-	ensureBuild()
-	local item = requireItem(p)
-	if not item.crafted or not item.affixes then error("only crafted magic/rare items expose affixes", 0) end
-	local tableName = p.table == "suffixes" and "suffixes" or "prefixes"
-	local index = tonumber(p.index) or 1
-	local limit = item[tableName].limit or (item.affixLimit / 2)
-	if index % 1 ~= 0 or index < 1 or index > limit then error("affix index out of range", 0) end
-	local seriesId = p.seriesId
+function M._affix.rollTiers(item, tableName, index, seriesId)
 	if type(seriesId) ~= "string" or seriesId == "" then error("affix series required", 0) end
 	local options = affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)
 	local series
@@ -4604,11 +4609,6 @@ M.item_affix_rolls = function(p)
 	if not series then error("affix series is not compatible with this item", 0) end
 	local tiers = series.modIds
 	local out = array({})
-	local function renderAffix(mod, range)
-		local lines = {}
-		for _, line in ipairs(mod) do lines[#lines + 1] = itemLib.applyRange(line, range) end
-		return table.concat(lines, "/")
-	end
 	local function flipRange(modA, modB)
 		local function bounds(mod)
 			for _, line in ipairs(mod) do
@@ -4632,7 +4632,7 @@ M.item_affix_rolls = function(p)
 			or not prior and nextTier and flipRange(mod, item.affixes[nextTier]) or false
 		for percent = 0, hasRange and 100 or 0 do
 			local range = hasRange and (flip and 1 - percent / 100 or percent / 100) or 0.5
-			local value = renderAffix(mod, range)
+			local value = M._affix.render(mod, range)
 			if value ~= lastValue then
 				steps[#steps + 1] = { position = hasRange and percent or 50, range = range, value = value }
 				lastValue = value
@@ -4646,34 +4646,52 @@ M.item_affix_rolls = function(p)
 		end
 		out[#out + 1] = { modId = modId, affix = opt(mod.affix), tier = #tiers - tierIndex + 1, steps = steps }
 	end
-	return { tiers = out }
+	return out, series
 end
 
-M.set_item_affix = function(p)
+function M._affix.chooseRoll(tiers, fraction)
+	if type(fraction) ~= "number" or fraction ~= fraction or fraction < 0 or fraction > 1 then
+		error("invalid affix position", 0)
+	end
+	if #tiers == 0 then error("affix series has no tiers", 0) end
+	local position = fraction * (#tiers * 101 - 1)
+	local tierIndex = math.min(#tiers, math.max(1, math.floor(position / 101) + 1))
+	local tier = tiers[tierIndex]
+	local inTier = math.min(100, math.max(0, position - (tierIndex - 1) * 101))
+	local step = tier.steps[1]
+	for i = 2, #tier.steps do
+		local candidate = tier.steps[i]
+		if math.abs(candidate.position - inTier) < math.abs(step.position - inTier) then step = candidate end
+	end
+	return tier.modId, step.range
+end
+
+M.item_affix_rolls = function(p)
 	ensureBuild()
 	local item = requireItem(p)
-	if not item.crafted or not item.affixes then error("only crafted magic/rare items expose affixes", 0) end
-	local tableName = p.table == "suffixes" and "suffixes" or "prefixes"
-	local index = tonumber(p.index) or 1
-	local limit = item[tableName].limit or (item.affixLimit / 2)
-	if index % 1 ~= 0 or index < 1 or index > limit then error("affix index out of range", 0) end
-	local modId = p.modId or "None"
+	local tableName, index = M._affix.resolveSlot(item, p)
+	local tiers = M._affix.rollTiers(item, tableName, index, p.seriesId)
+	return { tiers = tiers }
+end
+
+function M._affix.applyEdit(item, tableName, index, modId, range, series)
+	modId = modId or "None"
 	local valid = modId == "None"
-	for _, series in ipairs(affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)) do
-		for _, optionId in ipairs(series.modIds) do
+	local options = series and { series } or affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)
+	for _, option in ipairs(options) do
+		for _, optionId in ipairs(option.modIds) do
 			if optionId == modId then valid = true; break end
 		end
 		if valid then break end
 	end
 	if not valid then error("affix is not compatible with this item", 0) end
-	if p.range ~= nil and (type(p.range) ~= "number" or p.range < 0 or p.range > 1) then error("invalid affix roll", 0) end
+	if range ~= nil and (type(range) ~= "number" or range < 0 or range > 1) then error("invalid affix roll", 0) end
 	item[tableName][index] = {
 		modId = modId,
-		range = tonumber(p.range) or (main.defaultItemAffixQuality or 0.5),
+		range = tonumber(range) or (main.defaultItemAffixQuality or 0.5),
 	}
 	item:Craft()
 	commitItemEdit(item)
-	return M.item_affixes(p)
 end
 
 M.item_runes = function(p)
@@ -5162,10 +5180,21 @@ do
 
 	M.item_customize = function(p)
 		local item = requireItem(p)
-		local setters = { props = M.set_item_props, affix = M.set_item_affix, rune = M.set_item_rune, variant = M.set_item_variant,
+		local setters = { props = M.set_item_props, rune = M.set_item_rune, variant = M.set_item_variant,
 			shape = M.set_item_shape, crucible = M.set_item_crucible, enchant = M.set_item_enchant,
 			anoint = M.set_item_anoint, corruption = M.corrupt_item }
-		if setters[p.operation] then
+		local selectedRolls
+		if p.operation == "affix" then
+			local tableName, index = M._affix.resolveSlot(item, p)
+			if p.seriesId ~= nil then
+				local tiers, series = M._affix.rollTiers(item, tableName, index, p.seriesId)
+				local modId, range = M._affix.chooseRoll(tiers, p.relativePosition)
+				M._affix.applyEdit(item, tableName, index, modId, range, series)
+				selectedRolls = { table = tableName, index = index, seriesId = p.seriesId, tiers = tiers }
+			else
+				M._affix.applyEdit(item, tableName, index, p.modId, p.range)
+			end
+		elseif setters[p.operation] then
 			setters[p.operation](p)
 		else
 			if p.operation == "normalize" then
@@ -5216,7 +5245,9 @@ do
 			else error("unknown customization operation", 0) end
 			commitItemEdit(item)
 		end
-		return M.item_customization(p)
+		local result = M.item_customization(p)
+		if selectedRolls then result.selectedRolls = selectedRolls end
+		return result
 	end
 end
 

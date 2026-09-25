@@ -5,6 +5,7 @@
     type AffixRollStep,
     type AffixRollTier,
     type AffixSlot,
+    type ItemCustomization,
     type ItemCustomizationEdit,
     type ItemTarget,
   } from "$lib/engine.svelte";
@@ -14,7 +15,7 @@
     slot: AffixSlot;
     table: "prefixes" | "suffixes";
     target: ItemTarget;
-    onchange: (edit: ItemCustomizationEdit) => Promise<unknown>;
+    onchange: (edit: ItemCustomizationEdit) => Promise<ItemCustomization | false | undefined>;
     onbegin: () => boolean;
     onend: () => void;
   } = $props();
@@ -40,19 +41,25 @@
   // WebKit may skip change after snapping input.value or fire it after pointerup.
   let submitted: string | null = null;
   let loadedSeries = "";
-  let pendingRolls: { seriesId: string; modIds: string; tiers: AffixRollTier[] } | null = null;
+  let pendingRolls: { seriesId: string; modIds: string; tiers: AffixRollTier[] | null } | null = null;
+  let rollRefresh = $state(0);
 
   $effect(() => {
+    rollRefresh;
     const seriesId = selectedSeries;
     const modIds = seriesMods;
     const index = slotIndex;
     const currentTarget = untrack(() => target);
     let active = true;
     if (pendingRolls?.seriesId === seriesId && pendingRolls.modIds === modIds) {
-      tiers = pendingRolls.tiers;
-      loadedSeries = seriesId;
-      pendingRolls = null;
-      loading = false;
+      if (pendingRolls.tiers) {
+        tiers = pendingRolls.tiers;
+        loadedSeries = seriesId;
+        pendingRolls = null;
+        loading = false;
+      } else {
+        loading = true;
+      }
       return;
     }
     if (loadedSeries !== seriesId || !modIds) tiers = [];
@@ -142,15 +149,25 @@
       }
       const family = families.find((candidate) => candidate.id === seriesId);
       if (!family) return;
-      const result = await engine.itemAffixRolls(target, table, slot.index, seriesId);
-      const choice = nearest(result.tiers, fraction * (result.tiers.length * segment - 1));
-      if (choice) {
-        pendingRolls = { seriesId, modIds: family.modIds.join("|"), tiers: result.tiers };
-        const updated = await onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
-        if (updated === false || updated === undefined) pendingRolls = null;
+      const modIds = family.modIds.join("|");
+      pendingRolls = { seriesId, modIds, tiers: null };
+      const updated = await onchange({ operation: "affix", table, index: slot.index, seriesId, relativePosition: fraction });
+      const selected = updated && updated.selectedRolls;
+      if (selected && selected.table === table && selected.index === slot.index && selected.seriesId === seriesId) {
+        if (pendingRolls?.seriesId === seriesId) pendingRolls.tiers = selected.tiers;
+        if (selectedSeries === seriesId && seriesMods === modIds) {
+          tiers = selected.tiers;
+          loadedSeries = seriesId;
+          pendingRolls = null;
+          loading = false;
+        }
+      } else {
+        pendingRolls = null;
+        if (selectedSeries === seriesId) rollRefresh++;
       }
     } catch (e) {
       pendingRolls = null;
+      if (selectedSeries === seriesId) rollRefresh++;
       error = String(e);
     } finally {
       changing = false;
