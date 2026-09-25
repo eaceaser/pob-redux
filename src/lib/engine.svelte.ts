@@ -320,7 +320,7 @@ export function listBuildFolders(): Promise<string[]> {
 export interface GameBuildList {
   dir: string;
   exists: boolean;
-  builds: { path: string; name: string; author: string | null; modified: number }[];
+  builds: { path: string; name: string; author: string | null; ascendancy: string | null; modified: number }[];
 }
 
 export function listGameBuilds(dir?: string): Promise<GameBuildList> {
@@ -628,7 +628,7 @@ export interface TreePower {
 export interface ClassInfo {
   id: number;
   name: string;
-  ascendancies: { id: number; name: string }[];
+  ascendancies: { id: number; name: string; internalId?: string | null }[];
 }
 
 export interface GemInfo {

@@ -1179,7 +1179,7 @@ M.list_classes = function()
 		local ascendancies = array({})
 		for ascendId, ascendData in pairs(classData.classes or {}) do
 			if ascendId ~= 0 then
-				ascendancies[#ascendancies + 1] = { id = ascendId, name = ascendData.name }
+				ascendancies[#ascendancies + 1] = { id = ascendId, name = ascendData.name, internalId = opt(ascendData.internalId) }
 			end
 		end
 		table.sort(ascendancies, function(a, b) return a.id < b.id end)

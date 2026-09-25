@@ -37,8 +37,10 @@
     type MaxrollGuide,
     type MaxrollPobLink,
   } from "$lib/engine.svelte";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { build, autosaveKey } from "$lib/state/build.svelte";
   import { game } from "$lib/state/game.svelte";
+  import Icon from "$lib/components/Icon.svelte";
   import { m } from "$lib/paraglide/messages";
 
   let { paths }: { paths: AppPaths | null } = $props();
@@ -142,12 +144,23 @@
       .sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
   });
 
+  const ascendByKey = $derived.by(() => {
+    const map = new Map<string, { cls: string; asc: string }>();
+    for (const c of build.classes) {
+      for (const a of c.ascendancies) {
+        const v = { cls: c.name, asc: a.name };
+        map.set(a.name, v);
+        if (a.internalId) map.set(a.internalId, v);
+      }
+    }
+    return map;
+  });
+
   const recentEntries = $derived(recent.map((p) => builds.find((b) => b.path === p)).filter((b): b is BuildEntry => !!b));
 
   // GGG Build Planner (*.build) files
   let gameBuilds = $state<GameBuildList | null>(null);
   let plannerDir = $state("");
-  let editPlannerDir = $state(false);
   let gbCollapsed = $state<Set<string>>(new Set());
   try {
     plannerDir = localStorage.getItem("pob-redux:planner-dir") ?? "";
@@ -157,7 +170,7 @@
   const gameBuildGroups = $derived.by(() => {
     const groups = new Map<string, GameBuildList["builds"]>();
     for (const b of gameBuilds?.builds ?? []) {
-      const author = b.author ?? "Unknown author";
+      const author = b.author ?? m.import_unknown_author();
       if (!groups.has(author)) groups.set(author, []);
       groups.get(author)!.push(b);
     }
@@ -231,13 +244,24 @@
   }
   onMount(refresh);
 
-  function commitPlannerDir() {
-    editPlannerDir = false;
+  function setPlannerDir(dir: string) {
+    plannerDir = dir.trim();
     try {
-      localStorage.setItem("pob-redux:planner-dir", plannerDir.trim());
+      localStorage.setItem("pob-redux:planner-dir", plannerDir);
     } catch {}
     refresh();
   }
+
+  async function browsePlannerDir() {
+    const dir = await open({ directory: true, defaultPath: gameBuilds?.dir || undefined, title: m.import_browse_title() }).catch(() => null);
+    if (typeof dir === "string") setPlannerDir(dir);
+  }
+
+  function reveal(path: string) {
+    revealItemInDir(path).catch((e) => say(String(e)));
+  }
+
+  const rootOnly = $derived(grouped.length === 1 && grouped[0][0] === "");
 
   async function importGameBuildFile(path: string, name: string) {
     try {
@@ -751,11 +775,11 @@
         {#if showFolder && b.folder}<span class="dim">{b.folder}/</span>{/if}{b.name}
       </button>
       <span class="meta">
-        <span>{b.class_name ?? "?"}{#if b.ascend_class_name}<span class="dim"> · {b.ascend_class_name}</span>{/if}</span>
-        <span class="num dim">L{b.level ?? "?"}</span>
-        <span class="num dim">{fmtDate(b.modified)}</span>
+        <span class="cls">{b.class_name ?? "?"}{#if b.ascend_class_name}<span class="sep">·</span>{b.ascend_class_name}{/if}</span>
+        <span class="lvl num dim">L{b.level ?? "?"}</span>
+        <span class="date num dim">{fmtDate(b.modified)}</span>
       </span>
-      <span class="acts">
+      <span class="acts" class:open={moving === b.path || movingNew === b.path || confirmDelete === b.path}>
         {#if moving === b.path}
           <select
             class="select xs"
@@ -794,9 +818,9 @@
           <button class="act danger" onclick={() => commitDelete(b)}>{m.import_confirm()}</button>
           <button class="act" onclick={() => (confirmDelete = null)}>{m.import_keep()}</button>
         {:else}
-          <button class="act" title={m.common_rename()} onclick={() => { renaming = b.path; renameDraft = b.name; }}>{m.import_rename_short()}</button>
-          <button class="act" title={m.import_move_title()} onclick={() => (moving = b.path)}>{m.import_move_short()}</button>
-          <button class="act" title={m.common_delete()} onclick={() => (confirmDelete = b.path)}>{m.import_delete_short()}</button>
+          <button class="ibtn" title={m.common_rename()} aria-label={m.common_rename()} onclick={() => { renaming = b.path; renameDraft = b.name; }}><Icon name="pencil" size={13} /></button>
+          <button class="ibtn" title={m.import_move_title()} aria-label={m.import_move_title()} onclick={() => (moving = b.path)}><Icon name="folder" size={13} /></button>
+          <button class="ibtn" title={m.common_delete()} aria-label={m.common_delete()} onclick={() => (confirmDelete = b.path)}><Icon name="trash" size={13} /></button>
         {/if}
       </span>
     {/if}
@@ -836,7 +860,7 @@
           />
           <button class="btn sm primary" disabled={!newFolder.trim()} onclick={commitNewFolder}>{m.common_create()}</button>
           <button class="btn sm ghost" onclick={() => (newFolder = null)}>{m.common_cancel()}</button>
-          <span class="hint">{m.import_folder_hint_before()} <b>{m.import_move_short()}</b> {m.import_folder_hint_after()}</span>
+          <span class="hint">{m.import_folder_hint()}</span>
         </div>
       {/if}
       {#if autosave && autosave.name !== build.info?.name}
@@ -849,36 +873,56 @@
         </div>
       {/if}
       {#if recentEntries.length && !filter.trim()}
-        <div class="ghead">{m.import_recent()}</div>
+        <div class="srchead" title={m.import_recent_desc()}>
+          <div class="srctitle">{m.import_recent_title()}</div>
+        </div>
         {#each recentEntries as b (b.path)}
           {@render buildRow(b, true)}
         {/each}
       {/if}
+
+      <div class="srchead">
+        <div class="srctitle" title={m.import_pob_desc()}>
+          {m.import_pob_title()}
+          <span class="count num">{builds.length}</span>
+        </div>
+        {#if paths?.builds_dir}
+          <div class="srcpath">
+            <span class="picon"><Icon name="folder" size={13} /></span>
+            <code class="mono ptext" title={paths.builds_dir}>{paths.builds_dir}</code>
+            <button class="btn sm" onclick={() => paths && reveal(paths.builds_dir)}>{m.import_show_folder()}</button>
+          </div>
+        {/if}
+      </div>
       {#if shown.length === 0}
         <div class="dim small pad">{m.import_no_builds()}</div>
       {/if}
       {#each grouped as [folder, items] (folder)}
-        <div class="ghead ghrow">
-          <button class="ghtoggle" title={paths?.builds_dir ?? ""} aria-expanded={folderOpen(folder)} onclick={() => toggleFolder(folder)}>
-            <span class="caret" class:open={folderOpen(folder)}>▸</span>
-            <span>{folder === "" ? "Builds" : folder}</span>
-            <span class="dim num">{items.length}</span>
-          </button>
-          {#if folder !== ""}
-            {#if confirmFolder === folder}
-              <button class="act danger" onclick={() => commitDeleteFolder(folder)}>{m.import_confirm()}</button>
-              <button class="act" onclick={() => (confirmFolder = null)}>{m.import_keep()}</button>
-            {:else}
-              <button
-                class="act"
-                title={folderCount(folder) ? "Move its builds out first, with mv on each" : "Delete this empty folder"}
-                disabled={folderCount(folder) > 0}
-                onclick={() => (confirmFolder = folder)}>{m.import_delete_short()}</button
-              >
+        {#if !rootOnly}
+          <div class="ghead ghrow">
+            <button class="ghtoggle" aria-expanded={folderOpen(folder)} onclick={() => toggleFolder(folder)}>
+              <span class="caret" class:open={folderOpen(folder)}>▸</span>
+              {#if folder !== ""}<Icon name="folder" size={12} />{/if}
+              <span>{folder === "" ? m.import_top_level_group() : folder}</span>
+              <span class="dim num">{items.length}</span>
+            </button>
+            {#if folder !== ""}
+              {#if confirmFolder === folder}
+                <button class="act danger" onclick={() => commitDeleteFolder(folder)}>{m.import_confirm()}</button>
+                <button class="act" onclick={() => (confirmFolder = null)}>{m.import_keep()}</button>
+              {:else}
+                <button
+                  class="ibtn"
+                  title={folderCount(folder) ? m.import_folder_not_empty() : m.import_folder_delete_title()}
+                  aria-label={m.import_folder_delete_title()}
+                  disabled={folderCount(folder) > 0}
+                  onclick={() => (confirmFolder = folder)}><Icon name="trash" size={13} /></button
+                >
+              {/if}
             {/if}
-          {/if}
-        </div>
-        {#if folderOpen(folder)}
+          </div>
+        {/if}
+        {#if rootOnly || folderOpen(folder)}
           {#each items as b (b.path)}
             {@render buildRow(b, false)}
           {/each}
@@ -887,92 +931,104 @@
           {/if}
         {/if}
       {/each}
+
       {#if game.isPoe2}
-      <div class="ghead gb" title={gameBuilds?.dir ?? ""}>
-        <span>{m.import_planner()}</span>
-        <span class="dim num">{gameBuilds?.builds.length ?? 0}</span>
-        <button class="act" title={m.import_planner_folder_title()} onclick={() => (editPlannerDir = true)}>{m.import_planner_folder()}</button>
-      </div>
-      {#if editPlannerDir}
-        <div class="pdirrow">
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="input grow"
-            bind:value={plannerDir}
-            placeholder={gameBuilds?.dir ?? m.import_planner_dir_placeholder()}
-            autofocus
-            onblur={commitPlannerDir}
-            onkeydown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              if (e.key === "Escape") (editPlannerDir = false);
-            }}
-          />
-        </div>
-      {:else if gameBuilds && !gameBuilds.exists}
-        <div class="dim small pad">{m.import_planner_missing()}</div>
-      {/if}
-      {/if}
-      {#each gameBuildGroups as [group, items] (group)}
-        {#if editAuthor === group}
-          <div class="ahead editing">
-            <span class="caret open">▸</span>
-            <!-- svelte-ignore a11y_autofocus -->
+        <div class="srchead">
+          <div class="srctitle" title={m.import_planner_desc()}>
+            {m.import_planner()}
+            <span class="count num">{gameBuilds?.builds.length ?? 0}</span>
+          </div>
+          <div class="srcpath">
+            <span class="picon"><Icon name="folder" size={13} /></span>
             <input
-              class="input grow"
-              bind:value={authorDraft}
-              placeholder={m.import_author_placeholder()}
-              autofocus
-              onblur={() => commitGroupAuthor(items)}
-              onkeydown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                if (e.key === "Escape") (editAuthor = null);
-              }}
+              class="input mono pathin"
+              value={plannerDir || gameBuilds?.dir || ""}
+              placeholder={m.import_planner_dir_placeholder()}
+              aria-label={m.import_planner()}
+              onchange={(e) => setPlannerDir((e.target as HTMLInputElement).value)}
+              onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
             />
+            <button class="btn sm" onclick={browsePlannerDir}>{m.import_browse()}</button>
+            {#if gameBuilds?.exists}
+              <button class="btn sm" onclick={() => gameBuilds && reveal(gameBuilds.dir)}>{m.import_show_folder()}</button>
+            {/if}
+            {#if plannerDir}
+              <button class="btn sm" title={m.import_planner_reset_title()} onclick={() => setPlannerDir("")}>{m.import_reset()}</button>
+            {/if}
           </div>
-        {:else}
-          <div class="ahead">
-            <button class="ahead-toggle" onclick={() => toggleAuthor(group)}>
-              <span class="caret" class:open={!gbCollapsed.has(group)}>▸</span>
-              <span class="aname">{group}</span>
-              <span class="dim num">{items.length}</span>
-            </button>
-            <button
-              class="act"
-              title={m.import_author_group_title()}
-              onclick={() => {
-                authorDraft = items[0]?.author ?? "";
-                editAuthor = group;
-              }}>{m.import_author()}</button>
-          </div>
-        {/if}
-        {#if !gbCollapsed.has(group)}
-          {#each items as gb (gb.path)}
-            <div class="row gbrow">
-              {#if gbEdit?.path === gb.path}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  class="input grow gbedit"
-                  bind:value={gbDraft}
-                  placeholder={gbEdit.field === "name" ? m.import_build_name() : m.import_author_placeholder()}
-                  autofocus
-                  onblur={() => commitGbEdit(gb)}
-                  onkeydown={(e) => {
-                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                    if (e.key === "Escape") (gbEdit = null);
-                  }}
-                />
-              {:else}
-                <button class="name" onclick={() => importGameBuildFile(gb.path, gb.name)} disabled={build.busy > 0}>{gb.name}</button>
-                <span class="meta"><span class="num dim">{fmtDate(gb.modified)}</span></span>
-                <span class="acts">
-                  <button class="act" title={m.import_gb_rename_title()} onclick={() => { gbDraft = gb.name; gbEdit = { path: gb.path, field: "name" }; }}>{m.import_rename_short()}</button>
-                  <button class="act" title={m.import_gb_author_title()} onclick={() => { gbDraft = gb.author ?? ""; gbEdit = { path: gb.path, field: "author" }; }}>{m.import_author()}</button>
-                </span>
-              {/if}
+          {#if gameBuilds && !gameBuilds.exists}
+            <p class="srcwarn">{m.import_planner_missing()}</p>
+          {/if}
+        </div>
+        {#each gameBuildGroups as [group, items] (group)}
+          {#if editAuthor === group}
+            <div class="ahead editing">
+              <span class="caret open">▸</span>
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                class="input grow"
+                bind:value={authorDraft}
+                placeholder={m.import_author_placeholder()}
+                autofocus
+                onblur={() => commitGroupAuthor(items)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  if (e.key === "Escape") (editAuthor = null);
+                }}
+              />
             </div>
-          {/each}
-        {/if}
-      {/each}
+          {:else}
+            <div class="ahead">
+              <button class="ahead-toggle" onclick={() => toggleAuthor(group)}>
+                <span class="caret" class:open={!gbCollapsed.has(group)}>▸</span>
+                <span class="aname">{group}</span>
+                <span class="dim num">{items.length}</span>
+              </button>
+              <button
+                class="ibtn"
+                title={m.import_author_group_title()}
+                aria-label={m.import_author_group_title()}
+                onclick={() => {
+                  authorDraft = items[0]?.author ?? "";
+                  editAuthor = group;
+                }}><Icon name="user" size={13} /></button
+              >
+            </div>
+          {/if}
+          {#if !gbCollapsed.has(group)}
+            {#each items as gb (gb.path)}
+              <div class="row gbrow">
+                {#if gbEdit?.path === gb.path}
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input
+                    class="input grow gbedit"
+                    bind:value={gbDraft}
+                    placeholder={gbEdit.field === "name" ? m.import_build_name() : m.import_author_placeholder()}
+                    autofocus
+                    onblur={() => commitGbEdit(gb)}
+                    onkeydown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      if (e.key === "Escape") (gbEdit = null);
+                    }}
+                  />
+                {:else}
+                  {@const who = gb.ascendancy ? ascendByKey.get(gb.ascendancy) : undefined}
+                  <button class="name" onclick={() => importGameBuildFile(gb.path, gb.name)} disabled={build.busy > 0}>{gb.name}</button>
+                  <span class="meta">
+                    <span class="cls">{#if who}{who.cls}<span class="sep">·</span>{who.asc}{/if}</span>
+                    <span class="lvl"></span>
+                    <span class="date num dim">{fmtDate(gb.modified)}</span>
+                  </span>
+                  <span class="acts">
+                    <button class="ibtn" title={m.import_gb_rename_title()} aria-label={m.common_rename()} onclick={() => { gbDraft = gb.name; gbEdit = { path: gb.path, field: "name" }; }}><Icon name="pencil" size={13} /></button>
+                    <button class="ibtn" title={m.import_gb_author_title()} aria-label={m.import_gb_author_title()} onclick={() => { gbDraft = gb.author ?? ""; gbEdit = { path: gb.path, field: "author" }; }}><Icon name="user" size={13} /></button>
+                  </span>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        {/each}
+      {/if}
     </div>
   </section>
 
@@ -1239,20 +1295,83 @@
     background: var(--bg-0);
     z-index: 1;
   }
-  .ghead.gb {
+  .srchead {
+    padding: 9px 12px;
+    border-top: 1px solid var(--line-2);
+    border-bottom: 1px solid var(--line-1);
+    background: var(--bg-3);
+  }
+  .list > .srchead:first-child {
+    border-top: 0;
+  }
+  .srctitle {
     display: flex;
     align-items: baseline;
     gap: 8px;
-    margin-top: 8px;
-    border-top: 1px solid var(--line-0);
-    padding-top: 8px;
+    font-size: var(--fs-md);
+    font-weight: 600;
+    color: var(--fg-0);
   }
-  .ghead.gb .act {
-    margin-left: auto;
+  .count {
+    font-size: var(--fs-xs);
+    font-weight: 400;
+    color: var(--fg-2);
   }
-  .pdirrow {
+  .srcpath {
     display: flex;
-    padding: 2px 10px 6px;
+    align-items: center;
+    gap: 6px;
+    margin-top: 7px;
+  }
+  .picon {
+    display: grid;
+    color: var(--fg-2);
+  }
+  .ptext {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-xs);
+    color: var(--fg-1);
+  }
+  .pathin {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-xs);
+  }
+  .srcwarn {
+    margin: 6px 0 0;
+    font-size: var(--fs-xs);
+    color: var(--warn);
+  }
+  .ibtn {
+    appearance: none;
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 24px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-1);
+    background: none;
+    color: var(--fg-2);
+    cursor: pointer;
+  }
+  .ibtn:hover:not(:disabled) {
+    background: var(--bg-active);
+    color: var(--fg-0);
+  }
+  .ibtn:disabled {
+    opacity: var(--fade-off);
+    cursor: default;
+  }
+  .aname {
+    font-size: var(--fs-md);
+    letter-spacing: 0;
+    color: var(--c-author);
   }
   .ahead {
     appearance: none;
@@ -1285,11 +1404,11 @@
     text-align: left;
     padding: 0;
   }
-  .ahead .act {
+  .ahead .ibtn {
     opacity: 0;
   }
-  .ahead:hover .act,
-  .ahead .act:focus {
+  .ahead:hover .ibtn,
+  .ahead .ibtn:focus-visible {
     opacity: 1;
   }
   .ahead.editing {
@@ -1325,11 +1444,11 @@
     align-items: center;
     gap: 6px;
   }
-  .ghrow .act {
+  .ghrow .ibtn {
     opacity: 0;
   }
-  .ghrow:hover .act,
-  .ghrow .act:focus-visible {
+  .ghrow:hover .ibtn,
+  .ghrow .ibtn:focus-visible {
     opacity: 1;
   }
   .ghtoggle {
@@ -1417,6 +1536,7 @@
     gap: 6px;
   }
   .row {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -1447,19 +1567,49 @@
   }
   .row .meta {
     display: flex;
-    gap: 14px;
+    align-items: baseline;
+    gap: 12px;
     white-space: nowrap;
     font-size: var(--fs-xs);
     color: var(--fg-2);
   }
+  .cls {
+    color: var(--c-class);
+  }
+  .sep {
+    margin: 0 5px;
+    color: var(--fg-3);
+  }
+  .lvl {
+    width: 38px;
+    text-align: right;
+  }
+  .date {
+    width: 78px;
+    text-align: right;
+  }
   .acts {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
     display: flex;
+    align-items: center;
     gap: 2px;
+    padding-left: 18px;
+    background: linear-gradient(to right, transparent, var(--bg-2) 14px);
     opacity: 0;
+    pointer-events: none;
   }
   .row:hover .acts,
-  .acts:focus-within {
+  .acts:focus-within,
+  .acts.open {
     opacity: 1;
+    pointer-events: auto;
+  }
+  .row:hover .date,
+  .row:has(.acts:focus-within, .acts.open) .date {
+    visibility: hidden;
   }
   .act {
     appearance: none;

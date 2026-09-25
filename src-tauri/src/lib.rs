@@ -782,6 +782,7 @@ struct GameBuildEntry {
     path: String,
     name: String,
     author: Option<String>,
+    ascendancy: Option<String>,
     modified: f64,
 }
 
@@ -816,27 +817,21 @@ fn list_game_builds(state: State<'_, AppState>, dir: Option<String>) -> Result<G
             let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
             // name and author live in the JSON; the filename is the game's
             // truncated copy of the name
-            let (name, author) = read_text_lossy(&path.to_string_lossy())
+            let json = read_text_lossy(&path.to_string_lossy())
                 .ok()
-                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                .map(|v| {
-                    let name = v
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .filter(|n| !n.trim().is_empty())
-                        .map(|n| n.to_string());
-                    let author = v
-                        .get("author")
-                        .and_then(|a| a.as_str())
-                        .filter(|a| !a.trim().is_empty())
-                        .map(|a| a.to_string());
-                    (name, author)
-                })
-                .unwrap_or((None, None));
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+            let field = |key: &str| {
+                json.as_ref()
+                    .and_then(|v| v.get(key))
+                    .and_then(|n| n.as_str())
+                    .filter(|n| !n.trim().is_empty())
+                    .map(|n| n.to_string())
+            };
             builds.push(GameBuildEntry {
                 path: path.to_string_lossy().to_string(),
-                name: name.unwrap_or(stem),
-                author,
+                name: field("name").unwrap_or(stem),
+                author: field("author"),
+                ascendancy: field("ascendancy").or_else(|| field("ascendancy_class")),
                 modified,
             });
         }
@@ -1233,12 +1228,12 @@ pub fn run() {
                 first_run: std::sync::atomic::AtomicBool::new(first_run),
                 pending_link: std::sync::Mutex::new(link),
                 recovery_pending: std::sync::atomic::AtomicBool::new(session.unclean_exit),
-            app.manage(decide::DecideState::new(&app.handle().clone()));
                 session,
             });
             watch_links(app.handle());
             spawn_pool_reaper(app.handle().clone());
             app.manage(ai::AiState::new(&app.handle().clone()));
+            app.manage(decide::DecideState::new(&app.handle().clone()));
             // POB_REDUX_MCP=<port> brings the MCP server up at launch (scripts, tests)
             if let Some(port) = std::env::var("POB_REDUX_MCP").ok().and_then(|v| v.parse::<u16>().ok()) {
                 let handle = app.handle().clone();
@@ -1303,15 +1298,15 @@ pub fn run() {
             ai_call_tool,
             ai::ai_providers,
             ai::ai_key_set,
-            decide::decide_status,
-            decide::decide_select,
-            decide::decide_configure,
-            decide::decide_ask,
             ai::ai_key_clear,
             ai::ai_base_set,
             ai::ai_models,
             ai::ai_warm_model,
             ai::ai_chat_stream,
+            decide::decide_status,
+            decide::decide_select,
+            decide::decide_configure,
+            decide::decide_ask,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

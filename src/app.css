@@ -65,6 +65,8 @@
   --c-gem: oklch(79.4% 0.132 173);
   --c-spirit: oklch(86.4% 0.117 84);
   --c-currency: oklch(74.1% 0.117 72);
+  --c-author: oklch(79.0% 0.110 350);
+  --c-class: oklch(78.0% 0.100 250);
 
   --accent: var(--fg-0);
   --accent-fg: var(--bg-0);
@@ -120,6 +122,8 @@
   --c-spirit: oklch(45.0% 0.088 80);
   --c-currency: oklch(45.5% 0.087 68);
 
+  --c-author: oklch(44.0% 0.075 195);
+  --c-class: oklch(45.0% 0.150 262);
   --primary-hover: #000000;
   /* Paper washes text out faster than near-black does, so the same recessed
      look costs a faded control more of its ink here. */
@@ -176,6 +180,8 @@
   --c-currency: oklch(76.6% 0.114 72);
 
   --accent: oklch(46.2% 0.181 21);
+  --c-author: oklch(81.0% 0.100 350);
+  --c-class: oklch(80.0% 0.090 250);
   --accent-fg: oklch(91.0% 0.041 74);
   --primary-hover: oklch(50.1% 0.193 21);
   --fade-off: 0.55;
