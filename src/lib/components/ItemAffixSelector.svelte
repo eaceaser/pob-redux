@@ -41,7 +41,7 @@
   // WebKit may skip change after snapping input.value or fire it after pointerup.
   let submitted: string | null = null;
   let loadedSeries = "";
-  let pendingRolls: { seriesId: string; modIds: string; tiers: AffixRollTier[] | null } | null = null;
+  let pendingRolls: { seriesId: string; tiers: AffixRollTier[] | null } | null = null;
   let rollRefresh = $state(0);
 
   $effect(() => {
@@ -52,7 +52,7 @@
     const currentTarget = untrack(() => target);
     const currentRolls = untrack(() => slot.rolls);
     let active = true;
-    if (pendingRolls?.seriesId === seriesId && pendingRolls.modIds === modIds) {
+    if (pendingRolls?.seriesId === seriesId) {
       if (pendingRolls.tiers) {
         tiers = pendingRolls.tiers;
         loadedSeries = seriesId;
@@ -115,15 +115,20 @@
     return tierIndex * segment + stepPosition;
   }
 
-  function nearest(rollTiers: AffixRollTier[], position: number): Choice | null {
-    if (!rollTiers.length) return null;
-    const tierIndex = Math.min(rollTiers.length - 1, Math.max(0, Math.floor(position / segment)));
-    const tier = rollTiers[tierIndex];
+  function makeChoice(tierIndex: number, step: AffixRollStep): Choice {
+    const tier = tiers[tierIndex];
+    return { modId: tier.modId, affix: tier.affix, tier: tier.tier, step, position: sliderPosition(tierIndex, step.position) };
+  }
+
+  function nearest(position: number): Choice | null {
+    if (!tiers.length) return null;
+    const tierIndex = Math.min(tiers.length - 1, Math.max(0, Math.floor(position / segment)));
+    const tier = tiers[tierIndex];
     const inTier = Math.min(100, Math.max(0, position - tierIndex * segment));
     const step = tier.steps.reduce((best, candidate) =>
       Math.abs(candidate.position - inTier) < Math.abs(best.position - inTier) ? candidate : best,
     );
-    return { modId: tier.modId, affix: tier.affix, tier: tier.tier, step, position: sliderPosition(tierIndex, step.position) };
+    return makeChoice(tierIndex, step);
   }
 
   const savedChoice: Choice | null = $derived.by(() => {
@@ -135,14 +140,11 @@
     const step = matchingStep ?? tier.steps.reduce((best, candidate) =>
       Math.abs(candidate.range - range) < Math.abs(best.range - range) ? candidate : best,
     );
-    return { modId: tier.modId, affix: tier.affix, tier: tier.tier, step, position: sliderPosition(tierIndex, step.position) };
+    return makeChoice(tierIndex, step);
   });
   const shownChoice = $derived(localChoice ?? savedChoice);
   const valueText = $derived(localChoice?.step.value ?? slot.value ?? shownChoice?.step.value ?? slot.label ?? "");
-  const choices: Choice[] = $derived(tiers.flatMap((tier, tierIndex) => tier.steps.map((step) => ({
-    modId: tier.modId, affix: tier.affix, tier: tier.tier, step,
-    position: sliderPosition(tierIndex, step.position),
-  }))));
+  const choices: Choice[] = $derived(tiers.flatMap((tier, tierIndex) => tier.steps.map((step) => makeChoice(tierIndex, step))));
 
   async function changeFamily(seriesId: string) {
     if (changing || seriesId === selectedSeries || !onbegin()) return;
@@ -154,15 +156,12 @@
         await onchange({ operation: "affix", table, index: slot.index, modId: "None" });
         return;
       }
-      const family = families.find((candidate) => candidate.id === seriesId);
-      if (!family) return;
-      const modIds = family.modIds.join("|");
-      pendingRolls = { seriesId, modIds, tiers: null };
+      pendingRolls = { seriesId, tiers: null };
       const updated = await onchange({ operation: "affix", table, index: slot.index, seriesId, relativePosition: fraction });
       const selected = updated && updated.affixes[table][slot.index - 1]?.rolls;
       if (selected && selected.seriesId === seriesId) {
         if (pendingRolls?.seriesId === seriesId) pendingRolls.tiers = selected.tiers;
-        if (selectedSeries === seriesId && seriesMods === modIds) {
+        if (selectedSeries === seriesId) {
           tiers = selected.tiers;
           loadedSeries = seriesId;
           pendingRolls = null;
@@ -183,7 +182,7 @@
   }
 
   function choose(rawPosition: number, input: HTMLInputElement): Choice | null {
-    const choice = nearest(tiers, rawPosition);
+    const choice = nearest(rawPosition);
     if (choice) {
       if (localChoice?.position !== choice.position) submitted = null;
       localChoice = choice;
@@ -202,10 +201,7 @@
     const index = current ? choices.findIndex((choice) => choice.modId === current.modId && choice.position === current.position) : -1;
     const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1
       : Math.max(0, Math.min(choices.length - 1, index + direction));
-    const choice = choices[nextIndex];
-    if (localChoice?.position !== choice.position) submitted = null;
-    localChoice = choice;
-    event.currentTarget.value = String(choice.position);
+    choose(choices[nextIndex].position, event.currentTarget);
   }
 
   function keyup(event: KeyboardEvent & { currentTarget: EventTarget & HTMLInputElement }) {
