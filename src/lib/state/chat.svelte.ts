@@ -14,6 +14,8 @@ import {
   type ProviderStatus,
 } from "$lib/ai/providers";
 import { proxyFetch } from "$lib/ai/transport";
+import { routeTools } from "$lib/ai/decide";
+import { decider } from "$lib/state/decide.svelte";
 import { MODE_PROMPT, STYLE, type Mode } from "$lib/ai/prompt";
 import {
   callTool,
@@ -242,6 +244,7 @@ class ChatStore {
   private active = new Set<string>();
   /** Tool rounds elided to stay inside the context window. */
   private elided = 0;
+  private routed: { picked?: string[]; model?: string; ms?: number; error?: string } | null = null;
   private history: ModelMessage[] = [];
   private abort: AbortController | null = null;
   private pending = new Map<string, (ok: boolean) => void>();
@@ -286,6 +289,7 @@ class ChatStore {
     this.defs = await loadToolDefs().catch(() => []);
     this.toolNames = this.defs;
     void gems.load();
+    void decider.init();
     void this.warmUp();
   }
 
@@ -590,7 +594,57 @@ class ChatStore {
     // The snapshot rides with the question rather than the instructions, so the
     // cached prefix stays byte-identical between turns.
     this.history.push({ role: "user", content: `${await this.context()}\n\n${text}` });
+    await this.route(text);
     await this.run();
+  }
+
+  /** Experimental: load the tools a decision model expects this message to need. */
+  private async route(text: string) {
+    this.routed = null;
+    if (!decider.routingOn) return;
+    if (!this.defs.length) this.defs = await loadToolDefs().catch(() => []);
+    const candidates = this.defs.filter(
+      (d) => !CORE.has(d.name) && !this.active.has(d.name) && (this.mode !== "ask" || d.read_only),
+    );
+    const users = this.turns.filter((t) => t.kind === "user");
+    const previous = users.length > 1 ? users[users.length - 2].text : undefined;
+    try {
+      const r = await routeTools(text, candidates, { previous, min: 0.15, max: 3 });
+      this.routed = { picked: r.picks.map((p) => p.name), model: r.model, ms: r.ms };
+      if (!r.picks.length) return;
+      for (const p of r.picks) this.active.add(p.name);
+      this.turns = [
+        ...this.turns,
+        {
+          kind: "tool",
+          id: `route-${Date.now()}`,
+          name: "pick_tools",
+          args: { tools: r.picks.map((p) => p.name).join(", ") },
+          readOnly: true,
+          status: "done",
+          result: { loaded: r.picks.map((p) => ({ name: p.name, p: Math.round(p.p * 100) / 100 })), model: r.model, ms: r.ms },
+        },
+      ];
+    } catch (e) {
+      this.routed = { error: String(e) };
+    }
+  }
+
+  /** find_tools: keyword matches, led by the decision model's picks when routing is on. */
+  private async searchTools(query: string): Promise<ToolDef[]> {
+    const readOnly = this.mode === "ask";
+    const keyword = findTools(this.defs, query, 8, readOnly);
+    if (!decider.routingOn) return keyword;
+    try {
+      const candidates = this.defs.filter((d) => !readOnly || d.read_only);
+      const r = await routeTools(query, candidates, { min: 0.1, max: 5 });
+      const byName = new Map(this.defs.map((d) => [d.name, d]));
+      const exact = keyword.filter((d) => d.name === query.trim());
+      const picked = r.picks.flatMap((p) => byName.get(p.name) ?? []);
+      return [...new Set([...exact, ...picked, ...keyword])].slice(0, 8);
+    } catch {
+      return keyword;
+    }
   }
 
   /**
@@ -827,7 +881,7 @@ class ChatStore {
 
           if (call.toolName === FIND_TOOLS) {
             const query = String((call.input as { query?: unknown })?.query ?? "");
-            const found = findTools(this.defs, query, 8, this.mode === "ask");
+            const found = await this.searchTools(query);
             for (const d of found) this.active.add(d.name);
             const value = found.length
               ? { loaded: found.map((d) => ({ name: d.name, description: d.description, writes: !d.read_only })) }
@@ -944,6 +998,7 @@ class ChatStore {
       notice: this.notice,
       usage: this.usage,
       tools: this.activeDefs().length,
+      routing: this.routed ?? undefined,
       elided: this.elided || undefined,
       turns,
     };

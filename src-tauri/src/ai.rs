@@ -134,19 +134,34 @@ fn base_url(app: &AppHandle, p: &Provider) -> String {
         .unwrap_or_else(|| p.default_base.to_string())
 }
 
+/// Chat providers and decision backends share the credential store.
+fn known(id: &str) -> Result<(), String> {
+    if PROVIDERS.iter().any(|p| p.id == id) || crate::decide::BACKENDS.iter().any(|b| b.id == id) {
+        Ok(())
+    } else {
+        Err(format!("unknown provider {id}"))
+    }
+}
+
 fn entry(id: &str) -> Result<keyring::Entry, String> {
-    find(id)?;
+    known(id)?;
     keyring::Entry::new(SERVICE, id).map_err(|e| e.to_string())
 }
 
 /// The fallback file wins: it only exists when the store refused the newer key,
 /// so any copy still in the store is older.
-fn stored_key(app: &AppHandle, id: &str) -> Option<String> {
+pub(crate) fn stored_key(app: &AppHandle, id: &str) -> Option<String> {
     key_file::read(app, id).or_else(|| entry(id).ok().and_then(|e| e.get_password().ok()))
 }
 
 pub(crate) fn stored_keys(app: &AppHandle) -> Vec<String> {
-    PROVIDERS.iter().filter_map(|p| stored_key(app, p.id)).collect()
+    let ids = PROVIDERS.iter().map(|p| p.id).chain(crate::decide::BACKENDS.iter().map(|b| b.id));
+    ids.filter_map(|id| stored_key(app, id)).collect()
+}
+
+/// Last four characters, so the user can tell which key is stored.
+pub(crate) fn hint(key: &str) -> String {
+    key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()
 }
 
 /// Windows Credential Manager can refuse a write outright (error 8 when its
@@ -250,9 +265,7 @@ pub fn ai_providers(app: AppHandle) -> Vec<ProviderStatus> {
                 base_url: base_url(&app, p),
                 default_base: p.default_base,
                 has_key: key.is_some(),
-                hint: key
-                    .as_ref()
-                    .map(|k| k.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect()),
+                hint: key.as_deref().map(hint),
                 ready: !p.needs_key || key.is_some(),
             }
         })
@@ -304,7 +317,7 @@ fn keyring_error(e: keyring::Error) -> String {
 
 #[tauri::command]
 pub fn ai_key_clear(app: AppHandle, provider: String) -> Result<(), String> {
-    find(&provider)?;
+    known(&provider)?;
     key_file::remove(&app, &provider);
     match entry(&provider)?.delete_credential() {
         Ok(()) => Ok(()),

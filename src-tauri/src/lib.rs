@@ -6,6 +6,7 @@ mod mcp;
 mod tools;
 mod library;
 mod ai;
+mod decide;
 mod sites;
 mod mobalytics;
 mod maxroll;
@@ -1232,6 +1233,7 @@ pub fn run() {
                 first_run: std::sync::atomic::AtomicBool::new(first_run),
                 pending_link: std::sync::Mutex::new(link),
                 recovery_pending: std::sync::atomic::AtomicBool::new(session.unclean_exit),
+            app.manage(decide::DecideState::new(&app.handle().clone()));
                 session,
             });
             watch_links(app.handle());
@@ -1301,6 +1303,10 @@ pub fn run() {
             ai_call_tool,
             ai::ai_providers,
             ai::ai_key_set,
+            decide::decide_status,
+            decide::decide_select,
+            decide::decide_configure,
+            decide::decide_ask,
             ai::ai_key_clear,
             ai::ai_base_set,
             ai::ai_models,
