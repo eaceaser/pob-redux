@@ -80,7 +80,9 @@
     previewLoading = false;
   }
 
-  async function requestPreview(text: string, stamp = ++previewStamp, normalise?: boolean, reportUnrecognized = false) {
+  async function requestPreview(
+    text: string, stamp = ++previewStamp, normalise?: boolean, reportUnrecognized = false, updated?: ItemCustomization,
+  ) {
     previewLoading = true;
     previewError = null;
     try {
@@ -101,7 +103,7 @@
         const revision = build.rev;
         [result, customization] = await Promise.all([
           engine.itemPreview(text, generation),
-          engine.itemCustomization({ raw: text, generation }),
+          updated?.raw === text ? updated : engine.itemCustomization({ raw: text, generation }),
         ]);
         if (!alive || stamp !== previewStamp) return false;
         if (revision !== build.rev || showDifferences !== statDiff) continue;
@@ -126,7 +128,7 @@
     previewError = null;
     try {
       const updated = await engine.customizeItem({ raw: preview.text, generation }, edit);
-      if (alive && stamp === previewStamp) return await requestPreview(updated.raw, stamp);
+      if (alive && stamp === previewStamp) return await requestPreview(updated.raw, stamp, undefined, false, updated);
       return false;
     } catch (e) {
       if (alive && stamp === previewStamp) previewError = String(e);
@@ -214,6 +216,7 @@
   let craftEquip = $state(true);
 
   let detail = $state<{ itemId: number; tt: Tooltip; customization: ItemCustomization } | null>(null);
+  let pendingDetail: { itemId: number; customization: ItemCustomization } | null = null;
   $effect(() => {
     const id = selectedItem;
     build.rev;
@@ -222,10 +225,13 @@
       if (id == null) {
         detail = null;
         detailLoading = false;
+        pendingDetail = null;
         return;
       }
       detailLoading = true;
-      Promise.all([engine.itemTooltip({ itemId: id }), engine.itemCustomization({ itemId: id, generation })])
+      const customization = pendingDetail?.itemId === id ? pendingDetail.customization : null;
+      pendingDetail = null;
+      Promise.all([engine.itemTooltip({ itemId: id }), customization ?? engine.itemCustomization({ itemId: id, generation })])
         .then(([tt, customization]) => {
           if (active) detail = { itemId: id, tt, customization };
         })
@@ -239,6 +245,18 @@
     });
     return () => { active = false; };
   });
+
+  async function customizeSavedItem(edit: ItemCustomizationEdit) {
+    const itemId = selectedItem;
+    if (itemId == null) return;
+    const result = await build.run(async () => {
+      const customization = await engine.customizeItem({ itemId, generation }, edit);
+      pendingDetail = { itemId, customization };
+      return customization;
+    });
+    if (!result && pendingDetail?.itemId === itemId) pendingDetail = null;
+    return result;
+  }
 
   // shared items (main.sharedItemList; app-added ones persisted locally)
   const SHARED_KEY = "pob-redux:shared-items";
@@ -679,7 +697,7 @@
             data={detail.customization}
             target={{ itemId: selectedItem, generation }}
             busy={itemBusy}
-            onchange={(edit) => build.run(() => engine.customizeItem({ itemId: selectedItem!, generation }, edit))}
+            onchange={customizeSavedItem}
             onpendingchange={(pending) => (affixPending = pending)}
           />
 

@@ -40,6 +40,7 @@
   // WebKit may skip change after snapping input.value or fire it after pointerup.
   let submitted: string | null = null;
   let loadedSeries = "";
+  let pendingRolls: { seriesId: string; modIds: string; tiers: AffixRollTier[] } | null = null;
 
   $effect(() => {
     const seriesId = selectedSeries;
@@ -47,6 +48,13 @@
     const index = slotIndex;
     const currentTarget = untrack(() => target);
     let active = true;
+    if (pendingRolls?.seriesId === seriesId && pendingRolls.modIds === modIds) {
+      tiers = pendingRolls.tiers;
+      loadedSeries = seriesId;
+      pendingRolls = null;
+      loading = false;
+      return;
+    }
     if (loadedSeries !== seriesId || !modIds) tiers = [];
     error = null;
     loading = !!seriesId && !!modIds;
@@ -136,8 +144,13 @@
       if (!family) return;
       const result = await engine.itemAffixRolls(target, table, slot.index, seriesId);
       const choice = nearest(result.tiers, fraction * (result.tiers.length * segment - 1));
-      if (choice) await onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
+      if (choice) {
+        pendingRolls = { seriesId, modIds: family.modIds.join("|"), tiers: result.tiers };
+        const updated = await onchange({ operation: "affix", table, index: slot.index, modId: choice.modId, range: choice.step.range });
+        if (updated === false || updated === undefined) pendingRolls = null;
+      }
     } catch (e) {
+      pendingRolls = null;
       error = String(e);
     } finally {
       changing = false;
