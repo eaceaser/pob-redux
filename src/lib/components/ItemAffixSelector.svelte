@@ -238,9 +238,9 @@
     {:else if loading}
       <span class="dim">{m.items_mod_loading()}</span>
     {/if}
-    {#if error}<span class="error" role="alert">{error}</span>{/if}
   </div>
 {/if}
+{#if error}<span class="error" role="alert">{error}</span>{/if}
 
 <style>
   .select { width: 100%; min-width: 0; font-size: var(--fs-xs); }
