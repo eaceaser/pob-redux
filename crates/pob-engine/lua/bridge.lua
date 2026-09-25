@@ -4563,7 +4563,7 @@ function M._affix.resolveSlot(item, p)
 	return tableName, index
 end
 
-M.item_affixes = function(p)
+M.item_affixes = function(p, selectedRolls)
 	ensureBuild()
 	local item = requireItem(p)
 	if not item.crafted or not item.affixes then
@@ -4578,6 +4578,19 @@ M.item_affixes = function(p)
 			local defaultRange = main.defaultItemAffixQuality or 0.5
 			local rollRange = cur.range or defaultRange
 			local sliderRange = type(rollRange) == "table" and (rollRange[1] or defaultRange) or rollRange
+			local options = affixSlotOptions(item, affixType, tableName, i)
+			local rolls
+			for _, series in ipairs(options) do
+				for _, modId in ipairs(series.modIds) do
+					if modId == cur.modId then
+						local cached = selectedRolls and selectedRolls.table == tableName and selectedRolls.index == i
+							and selectedRolls.seriesId == series.id and selectedRolls.tiers
+						rolls = { seriesId = series.id, tiers = cached or M._affix.rollTiers(item, tableName, i, series.id, options) }
+						break
+					end
+				end
+				if rolls then break end
+			end
 			out[#out + 1] = {
 				index = i,
 				modId = cur.modId,
@@ -4586,7 +4599,8 @@ M.item_affixes = function(p)
 				label = curMod and table.concat(curMod, "/") or null,
 				value = curMod and M._affix.render(curMod, rollRange) or null,
 				affix = curMod and opt(curMod.affix) or null,
-				options = affixSlotOptions(item, affixType, tableName, i),
+				options = options,
+				rolls = rolls or null,
 			}
 		end
 		return out
@@ -4599,9 +4613,9 @@ M.item_affixes = function(p)
 	}
 end
 
-function M._affix.rollTiers(item, tableName, index, seriesId)
+function M._affix.rollTiers(item, tableName, index, seriesId, options)
 	if type(seriesId) ~= "string" or seriesId == "" then error("affix series required", 0) end
-	local options = affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)
+	options = options or affixSlotOptions(item, tableName == "suffixes" and "Suffix" or "Prefix", tableName, index)
 	local series
 	for _, option in ipairs(options) do
 		if option.id == seriesId then series = option; break end
@@ -5132,7 +5146,7 @@ do
 		return text
 	end
 
-	M.item_customization = function(p)
+	M.item_customization = function(p, selectedRolls)
 		local item = requireItem(p)
 		local lines = array({})
 		for _, section in ipairs({ "implicit", "enchant", "explicit" }) do
@@ -5148,7 +5162,7 @@ do
 			canQuality = not not (item.base.quality or (not IS_POE2 and (item.base.weapon or item.base.armour or item.base.flask or item.base.tincture))),
 			itemLevel = item.itemLevel or 1, corrupted = item.corrupted == true,
 			runeSocketLimit = IS_POE2 and (item.base.socketLimit or 0) or 0,
-			affixes = M.item_affixes(p), runes = M.item_runes(p), variants = M.item_variants(p),
+			affixes = M.item_affixes(p, selectedRolls), runes = M.item_runes(p), variants = M.item_variants(p),
 			catalyst = M.catalyst_info(p), modifiers = lines,
 			shape = M.item_shape(p), crucible = M.item_crucible(p),
 			anoints = M.item_anoints(p), corruptions = M.item_corruptions(p),
@@ -5245,9 +5259,7 @@ do
 			else error("unknown customization operation", 0) end
 			commitItemEdit(item)
 		end
-		local result = M.item_customization(p)
-		if selectedRolls then result.selectedRolls = selectedRolls end
-		return result
+		return M.item_customization(p, selectedRolls)
 	end
 end
 

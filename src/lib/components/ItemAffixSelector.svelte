@@ -50,6 +50,7 @@
     const modIds = seriesMods;
     const index = slotIndex;
     const currentTarget = untrack(() => target);
+    const currentRolls = untrack(() => slot.rolls);
     let active = true;
     if (pendingRolls?.seriesId === seriesId && pendingRolls.modIds === modIds) {
       if (pendingRolls.tiers) {
@@ -60,6 +61,12 @@
       } else {
         loading = true;
       }
+      return;
+    }
+    if (currentRolls?.seriesId === seriesId && modIds) {
+      tiers = currentRolls.tiers;
+      loadedSeries = seriesId;
+      loading = false;
       return;
     }
     if (loadedSeries !== seriesId || !modIds) tiers = [];
@@ -152,8 +159,8 @@
       const modIds = family.modIds.join("|");
       pendingRolls = { seriesId, modIds, tiers: null };
       const updated = await onchange({ operation: "affix", table, index: slot.index, seriesId, relativePosition: fraction });
-      const selected = updated && updated.selectedRolls;
-      if (selected && selected.table === table && selected.index === slot.index && selected.seriesId === seriesId) {
+      const selected = updated && updated.affixes[table][slot.index - 1]?.rolls;
+      if (selected && selected.seriesId === seriesId) {
         if (pendingRolls?.seriesId === seriesId) pendingRolls.tiers = selected.tiers;
         if (selectedSeries === seriesId && seriesMods === modIds) {
           tiers = selected.tiers;

@@ -1030,6 +1030,7 @@ export interface AffixSlot {
   value: string | null;
   affix: string | null;
   options: AffixSeries[];
+  rolls: { seriesId: string; tiers: AffixRollTier[] } | null;
 }
 
 export interface AffixRollStep {
@@ -1086,7 +1087,6 @@ export type ItemCustomizationEdit =
   | { operation: "modifier"; section: string; index: number; text?: string; disabled?: boolean; remove?: boolean; range?: number };
 
 export interface ItemCustomization {
-  selectedRolls?: { table: "prefixes" | "suffixes"; index: number; seriesId: string; tiers: AffixRollTier[] };
   shape: ItemShape;
   crucible: ItemCrucible;
   anoints: AnointInfo;

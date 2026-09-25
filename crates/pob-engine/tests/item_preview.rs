@@ -668,6 +668,7 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
     let data = engine
         .call("item_customization", &json!({"raw":crafted}))
         .unwrap();
+    assert!(data["affixes"]["prefixes"][0]["rolls"].is_null());
     let poe1 = engine.call("version", &Value::Null).unwrap()["game"] == "poe1";
     let prefix = if poe1 {
         "IncreasedLife"
@@ -694,13 +695,18 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
                 "seriesId":ranged_family["id"], "relativePosition":position
             }))
             .unwrap();
-        let tiers = edited["selectedRolls"]["tiers"].as_array().unwrap();
+        let tiers = edited["affixes"]["prefixes"][0]["rolls"]["tiers"].as_array().unwrap();
         let tier = if first { &tiers[0] } else { tiers.last().unwrap() };
         let steps = tier["steps"].as_array().unwrap();
         let step = if first { &steps[0] } else { steps.last().unwrap() };
-        assert_eq!(edited["selectedRolls"]["seriesId"], ranged_family["id"]);
+        assert_eq!(edited["affixes"]["prefixes"][0]["rolls"]["seriesId"], ranged_family["id"]);
         assert_eq!(edited["affixes"]["prefixes"][0]["modId"], tier["modId"]);
         assert_eq!(edited["affixes"]["prefixes"][0]["range"], step["range"]);
+        let reloaded = engine.call("item_customization", &json!({"raw":edited["raw"]})).unwrap();
+        assert_eq!(
+            reloaded["affixes"]["prefixes"][0]["rolls"]["tiers"],
+            edited["affixes"]["prefixes"][0]["rolls"]["tiers"]
+        );
         assert_eq!(snapshot(&engine), before);
         raw = edited["raw"].clone();
     }
@@ -737,7 +743,7 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
         "raw":amulet, "operation":"affix", "table":"suffixes", "index":1,
         "seriesId":discrete_family["id"], "relativePosition":0.5
     })).unwrap();
-    let tiers = discrete_edit["selectedRolls"]["tiers"].as_array().unwrap();
+    let tiers = discrete_edit["affixes"]["suffixes"][0]["rolls"]["tiers"].as_array().unwrap();
     assert!(tiers.iter().all(|tier| tier["steps"].as_array().unwrap().len() == 1));
     assert!(tiers
         .iter()
@@ -753,11 +759,11 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
         .unwrap();
     assert_eq!(
         edited["affixes"]["prefixes"][0]["modId"],
-        edited["selectedRolls"]["tiers"][0]["modId"]
+        edited["affixes"]["prefixes"][0]["rolls"]["tiers"][0]["modId"]
     );
     assert_eq!(
         edited["affixes"]["prefixes"][0]["range"],
-        edited["selectedRolls"]["tiers"][0]["steps"][0]["range"]
+        edited["affixes"]["prefixes"][0]["rolls"]["tiers"][0]["steps"][0]["range"]
     );
     assert_eq!(
         edited["raw"],
