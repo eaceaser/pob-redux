@@ -726,11 +726,6 @@
     width: 48px;
     text-align: right;
   }
-  .btn.on {
-    color: var(--fg-0);
-    border-color: var(--fg-2);
-    background: var(--bg-active);
-  }
   .pdps {
     text-align: right;
     font-size: var(--fs-2xs);

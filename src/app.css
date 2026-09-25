@@ -72,6 +72,7 @@
   --accent-fg: var(--bg-0);
   --primary-hover: #ffffff;
   --fade-off: 0.55;
+  --sel-mix: 38%;
   --pob-mix: 100%;
   --backdrop: rgb(0 0 0 / 0.55);
   --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.55);
@@ -128,6 +129,7 @@
   /* Paper washes text out faster than near-black does, so the same recessed
      look costs a faded control more of its ink here. */
   --fade-off: 0.7;
+  --sel-mix: 24%;
   /* PoB emits raw hex for mod text; on paper it needs deepening to stay legible. */
   --pob-mix: 38%;
   --backdrop: rgb(40 40 50 / 0.35);
@@ -185,6 +187,7 @@
   --accent-fg: oklch(91.0% 0.041 74);
   --primary-hover: oklch(50.1% 0.193 21);
   --fade-off: 0.55;
+  --sel-mix: 42%;
   --pob-mix: 100%;
   --backdrop: rgb(13 13 13 / 0.5);
   --shadow-pop: 0 8px 30px rgba(13, 13, 13, 0.5);
@@ -338,6 +341,14 @@ label:has(input:disabled) {
 .btn.ghost {
   background: transparent;
   border-color: transparent;
+}
+.btn.on {
+  background: color-mix(in oklab, var(--focus) var(--sel-mix), var(--bg-1));
+  border-color: transparent;
+  color: var(--fg-0);
+}
+.btn.on:hover {
+  background: color-mix(in oklab, var(--focus) calc(var(--sel-mix) + 8%), var(--bg-1));
 }
 .btn.sm {
   height: 22px;

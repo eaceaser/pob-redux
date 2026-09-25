@@ -2139,20 +2139,24 @@
     background: var(--line-1);
     margin: 0 2px;
   }
-  .btn.on {
-    color: var(--fg-0);
-    border-color: var(--fg-2);
-    background: var(--bg-active);
-  }
   .btn.set1.on {
-    border-color: var(--bad);
+    background: color-mix(in oklab, var(--bad) var(--sel-mix), var(--bg-1));
+  }
+  .btn.set1.on:hover {
+    background: color-mix(in oklab, var(--bad) calc(var(--sel-mix) + 8%), var(--bg-1));
   }
   .btn.set2.on {
-    border-color: var(--ok);
+    background: color-mix(in oklab, var(--ok) var(--sel-mix), var(--bg-1));
+  }
+  .btn.set2.on:hover {
+    background: color-mix(in oklab, var(--ok) calc(var(--sel-mix) + 8%), var(--bg-1));
   }
   .btn .num {
     margin-left: 4px;
     color: var(--fg-3);
+  }
+  .btn.on .num {
+    color: var(--fg-1);
   }
   .wsbadge {
     position: absolute;

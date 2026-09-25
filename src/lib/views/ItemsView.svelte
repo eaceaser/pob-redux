@@ -856,11 +856,6 @@
     border-radius: 0 var(--r-1) var(--r-1) 0;
     border-left: 0;
   }
-  .btn.on {
-    color: var(--fg-0);
-    border-color: var(--fg-2);
-    background: var(--bg-active);
-  }
   .cols {
     flex: 1;
     display: grid;
