@@ -161,6 +161,10 @@
   async function commit(rawPosition: number, input: HTMLInputElement) {
     const choice = localChoice ?? choose(rawPosition, input);
     if (!choice) return;
+    if (choice.modId === savedChoice?.modId && choice.step === savedChoice.step) {
+      localChoice = null;
+      return;
+    }
     const key = `${choice.modId}:${choice.step.range}`;
     if (submitted === key) return;
     if (choice.modId !== slot.modId || Math.abs(choice.step.range - (slot.range ?? 0.5)) > 0.00001) {
