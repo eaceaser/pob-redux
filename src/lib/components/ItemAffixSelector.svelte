@@ -23,8 +23,13 @@
   const segment = 101;
 
   const families = $derived(slot.options);
-  const selectedSeries = $derived(families.find((series) => series.modIds.includes(slot.modId))?.id ?? "");
-  const seriesMods = $derived(families.find((series) => series.id === selectedSeries)?.modIds.join("|") ?? "");
+  const selectedFamily = $derived(families.find((series) => series.modIds.includes(slot.modId)));
+  const missingCurrent = $derived(slot.modId !== "None" && !selectedFamily);
+  const selectedSeries = $derived(selectedFamily?.id ?? (missingCurrent ? slot.modId : ""));
+  const seriesMods = $derived(selectedFamily?.modIds.join("|") ?? "");
+  const missingLabel = $derived(slot.affix
+    ? `${slot.affix}: ${slot.value ?? slot.label ?? slot.modId}`
+    : slot.value ?? slot.label ?? slot.modId);
   const slotIndex = $derived(slot.index);
   const savedRoll = $derived(`${slot.modId}|${slot.range}|${slot.rangeIsTable}|${slot.value}`);
   let tiers = $state<AffixRollTier[]>([]);
@@ -42,9 +47,9 @@
     const index = slotIndex;
     const currentTarget = untrack(() => target);
     let active = true;
-    if (loadedSeries !== seriesId) tiers = [];
+    if (loadedSeries !== seriesId || !modIds) tiers = [];
     error = null;
-    loading = !!seriesId;
+    loading = !!seriesId && !!modIds;
     if (seriesId && modIds) {
       engine.itemAffixRolls(currentTarget, table, index, seriesId).then(
         (result) => { if (active) { tiers = result.tiers; loadedSeries = seriesId; } },
@@ -207,6 +212,7 @@
     void changeFamily(seriesId);
   }}>
   <option value="">{table === "prefixes" ? m.items_empty_prefix() : m.items_empty_suffix()}</option>
+  {#if missingCurrent}<option value={slot.modId}>{missingLabel}</option>{/if}
   {#each families as family (family.id)}<option value={family.id}>{family.label}</option>{/each}
 </select>
 {#if slot.modId !== "None"}

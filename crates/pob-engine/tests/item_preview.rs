@@ -470,6 +470,24 @@ fn customization_edits_drafts_and_commits_saved_items() {
         assert_eq!(rolls["tiers"].as_array().unwrap().len(), 1);
         assert_eq!(rolls["tiers"][0]["modId"], mod_id);
     }
+    let retained_mod = if poe1 { "MaximumZombiesUber1" } else { "JewelRadiusMediumSize" };
+    let retained_base = if poe1 { "Jade Amulet" } else { "Ruby" };
+    let retained = format!(
+        "Rarity: Rare\nRetained affix\n{retained_base}\nCrafted: true\nItem Level: 80\nPrefix: {{range:0.5}}{retained_mod}\nImplicits: 0"
+    );
+    let retained_data = engine.call("item_customization", &json!({"raw": retained})).unwrap();
+    let retained_slot = &retained_data["affixes"]["prefixes"][0];
+    assert_eq!(retained_slot["modId"], retained_mod);
+    assert_eq!(
+        retained_slot["options"].as_array().unwrap().iter().any(|series| {
+            series["modIds"].as_array().unwrap().contains(&json!(retained_mod))
+        }),
+        poe1
+    );
+    let removed = engine.call("item_customize", &json!({
+        "raw": retained, "operation": "affix", "table": "prefixes", "index": 1, "modId": "None"
+    })).unwrap();
+    assert_eq!(removed["affixes"]["prefixes"][0]["modId"], "None");
     let discrete_group = if poe1 { "LifeGainPerTarget" } else { "GlobalSpellGemsLevel" };
     let discrete_affix = amulet_data["affixes"]["suffixes"][0]["options"]
         .as_array()
