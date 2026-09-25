@@ -309,25 +309,42 @@
               <span class="hint">{m.settings_version_hint()}</span>
             </span>
             <div class="row">
-              {#if appUpdate.phase === "available" || appUpdate.phase === "ready"}
+              {#if appUpdate.phase === "available"}
+                <span>{m.update_available()} <span class="mono" style:color="var(--ok)">{appUpdate.version}</span> {m.update_available_suffix()}</span>
+                {#if appUpdate.method === "self"}
+                  <button class="btn sm" onclick={() => appUpdate.install()}>{m.update_install()}</button>
+                {:else if appUpdate.method === "aur"}
+                  <span class="dim">{m.update_aur_before()} <span class="mono">pob-redux-bin</span> {m.update_aur_after()}</span>
+                {:else}
+                  <button class="btn sm" onclick={() => appUpdate.openReleases()} title={m.update_download_title()}>{m.update_download()}</button>
+                {/if}
+              {:else if appUpdate.phase === "downloading"}
+                <span class="dim">
+                  {m.update_downloading()} <span class="mono">{appUpdate.version}</span>
+                  {#if appUpdate.progress !== null}<span class="mono">{appUpdate.progress}%</span>{/if}
+                </span>
+              {:else if appUpdate.phase === "ready"}
                 <span class="mono" style:color="var(--ok)">{m.settings_version_ready({ version: appUpdate.version ?? "" })}</span>
-              {:else if appUpdate.phase === "checking"}
-                <span class="dim">{m.settings_version_checking()}</span>
-              {:else if appUpdate.phase === "error"}
-                <span class="mono" style:color="var(--bad)" title={appUpdate.error}>{m.settings_version_failed()}</span>
-              {:else if checked}
-                <span class="dim">{m.settings_version_current()}</span>
+                <button class="btn sm" onclick={() => appUpdate.restart()}>{m.update_restart()}</button>
+              {:else}
+                {#if appUpdate.phase === "checking"}
+                  <span class="dim">{m.settings_version_checking()}</span>
+                {:else if appUpdate.phase === "error"}
+                  <span class="mono" style:color="var(--bad)" title={appUpdate.error}>{m.settings_version_failed()}</span>
+                {:else if checked}
+                  <span class="dim">{m.settings_version_current()}</span>
+                {/if}
+                <button
+                  class="btn sm ghost"
+                  onclick={async () => {
+                    await appUpdate.check(true);
+                    checked = true;
+                  }}
+                  disabled={appUpdate.phase === "checking"}
+                >
+                  {m.settings_check_updates()}
+                </button>
               {/if}
-              <button
-                class="btn sm ghost"
-                onclick={async () => {
-                  await appUpdate.check(true);
-                  checked = true;
-                }}
-                disabled={appUpdate.phase === "checking" || appUpdate.phase === "downloading"}
-              >
-                {m.settings_check_updates()}
-              </button>
             </div>
           </div>
         </div>
