@@ -4529,12 +4529,13 @@ M.item_affixes = function(p)
 		for i = 1, limit do
 			local cur = item[tableName][i] or { modId = "None" }
 			local curMod = item.affixes[cur.modId]
+			local rollRange = type(cur.range) == "number" and cur.range or (main.defaultItemAffixQuality or 0.5)
 			out[#out + 1] = {
 				index = i,
 				modId = cur.modId,
 				range = type(cur.range) == "table" and null or (cur.range or (main.defaultItemAffixQuality or 0.5)),
 				label = curMod and table.concat(curMod, "/") or null,
-				value = curMod and renderAffix(curMod, type(cur.range) == "number" and cur.range or (main.defaultItemAffixQuality or 0.5)) or null,
+				value = curMod and renderAffix(curMod, rollRange) or null,
 				affix = curMod and opt(curMod.affix) or null,
 				options = affixSlotOptions(item, affixType, tableName, i),
 			}
@@ -4549,7 +4550,6 @@ M.item_affixes = function(p)
 	}
 end
 
--- Generate rolls on demand to avoid expanding every dropdown tier.
 M.item_affix_rolls = function(p)
 	ensureBuild()
 	local item = requireItem(p)

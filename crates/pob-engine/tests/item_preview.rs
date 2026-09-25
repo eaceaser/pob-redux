@@ -410,7 +410,9 @@ fn customization_edits_drafts_and_commits_saved_items() {
     let amulet = "Rarity: Rare\nAffix candidate\nJade Amulet\nCrafted: true\nItem Level: 80\nImplicits: 0";
     let amulet_data = engine.call("item_customization", &json!({"raw": amulet})).unwrap();
     let spell_levels = amulet_data["affixes"]["suffixes"][0]["options"]
-        .as_array().unwrap().iter()
+        .as_array()
+        .unwrap()
+        .iter()
         .find(|option| option["group"] == "GlobalIncreaseSpellSkillGemLevel")
         .unwrap();
     let discrete = engine.call("item_affix_rolls", &json!({

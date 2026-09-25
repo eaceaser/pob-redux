@@ -44,7 +44,7 @@
   let changing = $state(false);
   let error = $state<string | null>(null);
   let localChoice = $state<Choice | null>(null);
-  // WebKit can skip change after snapping input.value, and can also fire it after pointerup.
+  // WebKit may skip change after snapping input.value or fire it after pointerup.
   let submitted: string | null = null;
 
   $effect(() => {
