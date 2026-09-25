@@ -92,7 +92,8 @@
     if (tierIndex < 0) return null;
     const tier = tiers[tierIndex];
     const range = slot.range ?? 0.5;
-    const step = tier.steps.find((candidate) => candidate.value === slot.value) ?? tier.steps.reduce((best, candidate) =>
+    const matchingStep = slot.rangeIsTable ? undefined : tier.steps.find((candidate) => candidate.value === slot.value);
+    const step = matchingStep ?? tier.steps.reduce((best, candidate) =>
       Math.abs(candidate.range - range) < Math.abs(best.range - range) ? candidate : best,
     );
     return { modId: tier.modId, affix: tier.affix, tier: tier.tier, step, position: sliderPosition(tierIndex, step.position) };

@@ -388,6 +388,31 @@ fn customization_edits_drafts_and_commits_saved_items() {
         .unwrap();
     assert_eq!(crafted_data["affixes"]["crafted"], true);
     let poe1 = engine.call("version", &Value::Null).unwrap()["game"] == "poe1";
+    let paired_base = if poe1 { "Iron Ring" } else { "Prismatic Ring" };
+    let paired_raw = format!(
+        "Rarity: Rare\nPaired roll\n{paired_base}\nCrafted: true\nItem Level: 80\nPrefix: {{range:0.1,0.9}}AddedPhysicalDamage2\nImplicits: 0"
+    );
+    let paired = engine
+        .call("item_customization", &json!({"raw":paired_raw}))
+        .unwrap();
+    let paired_slot = &paired["affixes"]["prefixes"][0];
+    assert_eq!(paired_slot["range"], 0.1);
+    assert_eq!(paired_slot["rangeIsTable"], true);
+    assert_eq!(
+        paired_slot["value"],
+        if poe1 { "Adds 2 to 5 Physical Damage to Attacks" } else { "Adds 2 to 6 Physical Damage to Attacks" }
+    );
+    assert!(paired["raw"].as_str().unwrap().contains("{range:0.1,0.9}"));
+    let edited = engine
+        .call("item_customize", &json!({
+            "raw":paired["raw"], "operation":"affix", "table":"prefixes", "index":1,
+            "modId":"AddedPhysicalDamage2", "range":0.4
+        }))
+        .unwrap();
+    assert_eq!(edited["affixes"]["prefixes"][0]["range"], 0.4);
+    assert_eq!(edited["affixes"]["prefixes"][0]["rangeIsTable"], false);
+    assert!(edited["raw"].as_str().unwrap().contains("{range:0.4}AddedPhysicalDamage2"));
+    assert_eq!(snapshot(&engine), before);
     let ranged_group = if poe1 { "IncreasedLife" } else { "IncreasedAccuracy" };
     let ranged_affix = crafted_data["affixes"]["prefixes"][0]["options"]
         .as_array()

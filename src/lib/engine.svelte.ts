@@ -1028,6 +1028,7 @@ export interface AffixSlot {
   index: number;
   modId: string;
   range?: number | null;
+  rangeIsTable: boolean;
   label: string | null;
   value: string | null;
   affix: string | null;

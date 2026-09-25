@@ -4529,11 +4529,14 @@ M.item_affixes = function(p)
 		for i = 1, limit do
 			local cur = item[tableName][i] or { modId = "None" }
 			local curMod = item.affixes[cur.modId]
-			local rollRange = type(cur.range) == "number" and cur.range or (main.defaultItemAffixQuality or 0.5)
+			local defaultRange = main.defaultItemAffixQuality or 0.5
+			local rollRange = cur.range or defaultRange
+			local sliderRange = type(rollRange) == "table" and (rollRange[1] or defaultRange) or rollRange
 			out[#out + 1] = {
 				index = i,
 				modId = cur.modId,
-				range = type(cur.range) == "table" and null or (cur.range or (main.defaultItemAffixQuality or 0.5)),
+				range = sliderRange,
+				rangeIsTable = type(rollRange) == "table",
 				label = curMod and table.concat(curMod, "/") or null,
 				value = curMod and renderAffix(curMod, rollRange) or null,
 				affix = curMod and opt(curMod.affix) or null,
