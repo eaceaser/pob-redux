@@ -11,6 +11,7 @@ const KEY = "pob-redux:options";
 class OptionsStore {
   values = $state<AppOptions | null>(null);
   open = $state(false);
+  section = $state("appearance");
 
   /** Called once the engine is ready: overlay saved values onto PoB defaults. */
   async init() {

@@ -10,7 +10,11 @@
   import { save } from "@tauri-apps/plugin-dialog";
   import { exportDiagnostics, revealLogs } from "$lib/engine.svelte";
   import { locale, LOCALES, LOCALE_LABEL, type LocalePreference } from "$lib/state/locale.svelte";
+  import { decider } from "$lib/state/decide.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { m } from "$lib/paraglide/messages";
+
+  type Tone = "ok" | "warn" | "off" | undefined;
 
   let reportNote = $state("");
   async function saveReport() {
@@ -59,33 +63,48 @@
 
   const v = $derived(appOptions.values);
 
-  const sections = $derived([
+  const dm = $derived(decider.current);
+  let keyDraft = $state("");
+  let baseDraft = $derived(dm && dm.base_url !== dm.default_base ? dm.base_url : "");
+  let modelDraft = $derived(dm && dm.model !== dm.default_model ? dm.model : "");
+  async function saveDecideKey() {
+    if (!dm || !keyDraft.trim()) return;
+    await decider.saveKey(dm.id, keyDraft.trim());
+    keyDraft = "";
+  }
+
+  const mcpTone = $derived<Tone>(mcp.status?.running ? "ok" : "off");
+  const mcpState = $derived(mcp.status?.running ? m.settings_mcp_running_port({ port: mcp.status.port }) : m.status_off());
+  const decideTone = $derived<Tone>(decider.enabled ? (decider.ready ? "ok" : "warn") : "off");
+  const decideState = $derived(decider.enabled ? (decider.ready ? m.status_on() : m.status_needs_setup()) : m.status_off());
+
+  const sections = $derived<{ id: string; label: string; tone?: Tone }[]>([
     { id: "appearance", label: m.settings_appearance() },
     { id: "numbers", label: m.settings_numbers() },
-    ...(game.isPoe2 ? [{ id: "mcp", label: m.settings_mcp() }] : []),
+    ...(game.isPoe2
+      ? [
+          { id: "mcp", label: m.settings_mcp(), tone: mcpTone },
+          { id: "experimental", label: m.settings_experimental(), tone: decideTone },
+        ]
+      : []),
     { id: "updates", label: m.settings_updates() },
     { id: "diagnostics", label: m.settings_diagnostics() },
   ]);
+  const active = $derived(sections.some((s) => s.id === appOptions.section) ? appOptions.section : "appearance");
   let scroller = $state<HTMLDivElement | null>(null);
-  let active = $state("appearance");
 
   function go(id: string) {
-    active = id;
-    scroller?.querySelector(`#settings-${id}`)?.scrollIntoView({ block: "start" });
+    appOptions.section = id;
+    scroller?.scrollTo({ top: 0 });
   }
 
-  function onScroll() {
-    if (!scroller) return;
-    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
-      active = sections[sections.length - 1].id;
-      return;
-    }
-    let current = sections[0].id;
-    for (const s of sections) {
-      const el = scroller.querySelector<HTMLElement>(`#settings-${s.id}`);
-      if (el && el.offsetTop <= scroller.scrollTop + 32) current = s.id;
-    }
-    active = current;
+  function onNavKey(e: KeyboardEvent) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const i = sections.findIndex((s) => s.id === active);
+    const next = sections[(i + (e.key === "ArrowDown" ? 1 : sections.length - 1)) % sections.length];
+    go(next.id);
+    (e.currentTarget as HTMLElement).querySelector<HTMLElement>(`[data-section="${next.id}"]`)?.focus();
   }
 
   function close() {
@@ -93,6 +112,7 @@
   }
 
   onMount(() => {
+    void decider.init();
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || document.querySelector('[role="alertdialog"]')) return;
       close();
@@ -102,21 +122,38 @@
   });
 </script>
 
+{#snippet head(title: string, desc: string, status?: string, tone?: Tone)}
+  <header class="phead">
+    <div class="ptitle">
+      <h1>{title}</h1>
+      {#if status}
+        <span class="badge" class:mono={!tone}>
+          {#if tone}<span class="bdot {tone}" aria-hidden="true"></span>{/if}
+          {status}
+        </span>
+      {/if}
+    </div>
+    <p>{desc}</p>
+  </header>
+{/snippet}
+
 <div class="settings">
-  <nav class="snav" aria-label={m.settings_sections()}>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <nav class="snav" aria-label={m.settings_sections()} onkeydown={onNavKey}>
     <div class="label ntitle">{m.settings_title()}</div>
     {#each sections as s (s.id)}
-      <button class="nitem" class:on={active === s.id} aria-current={active === s.id ? "true" : undefined} onclick={() => go(s.id)}>
-        {s.label}
+      <button class="nitem" class:on={active === s.id} aria-current={active === s.id ? "page" : undefined} data-section={s.id} onclick={() => go(s.id)}>
+        <span>{s.label}</span>
+        {#if s.tone === "ok" || s.tone === "warn"}<span class="ndot {s.tone}" aria-hidden="true"></span>{/if}
       </button>
     {/each}
     <button class="btn sm ghost back" onclick={close}>{m.common_close()} <kbd>Esc</kbd></button>
   </nav>
 
-  <div class="sbody" bind:this={scroller} onscroll={onScroll}>
+  <div class="sbody" bind:this={scroller}>
     <div class="sinner">
-      <section id="settings-appearance">
-        <div class="shead"><h2 class="label">{m.settings_appearance()}</h2></div>
+      {#if active === "appearance"}
+        {@render head(m.settings_appearance(), m.settings_appearance_desc())}
         <div class="rows">
           <label class="opt">
             <span>
@@ -173,135 +210,232 @@
             </select>
           </label>
         </div>
-      </section>
-
-      <section id="settings-numbers">
-        <div class="shead"><h2 class="label">{m.settings_numbers()}</h2></div>
+      {:else if active === "numbers"}
+        {@render head(m.settings_numbers(), m.settings_numbers_desc())}
         {#if v}
-          <div class="rows">
-            <label class="opt">
-              <span>{m.settings_thousands_show()}</span>
-              <input type="checkbox" checked={v.showThousandsSeparators} onchange={(e) => appOptions.set({ showThousandsSeparators: (e.target as HTMLInputElement).checked })} />
-            </label>
-            <label class="opt">
-              <span>{m.settings_thousands_separator()}</span>
-              <input
-                class="input chr"
-                maxlength="1"
-                value={v.thousandsSeparator}
-                onchange={(e) => appOptions.set({ thousandsSeparator: (e.target as HTMLInputElement).value || "," })}
-              />
-            </label>
-            <label class="opt">
-              <span>{m.settings_decimal_separator()}</span>
-              <input
-                class="input chr"
-                maxlength="1"
-                value={v.decimalSeparator}
-                onchange={(e) => appOptions.set({ decimalSeparator: (e.target as HTMLInputElement).value || "." })}
-              />
-            </label>
-            <label class="opt">
-              <span>{m.settings_gem_quality()}</span>
-              <input
-                class="input num"
-                type="number"
-                min="0"
-                max="20"
-                value={v.defaultGemQuality}
-                onchange={(e) => appOptions.set({ defaultGemQuality: Math.max(0, Math.min(20, Number((e.target as HTMLInputElement).value) || 0)) })}
-              />
-            </label>
-            <label class="opt">
-              <span>{m.settings_char_level()}</span>
-              <input
-                class="input num"
-                type="number"
-                min="1"
-                max="100"
-                value={v.defaultCharLevel}
-                onchange={(e) => appOptions.set({ defaultCharLevel: Math.max(1, Math.min(100, Number((e.target as HTMLInputElement).value) || 1)) })}
-              />
-            </label>
-            <label class="opt">
-              <span>{m.settings_affix_quality()}</span>
-              <select class="select" value={String(v.defaultItemAffixQuality)} onchange={(e) => appOptions.set({ defaultItemAffixQuality: Number((e.target as HTMLSelectElement).value) })}>
-                <option value="0">{m.settings_affix_worst()}</option>
-                <option value="0.25">25%</option>
-                <option value="0.5">{m.settings_affix_average()}</option>
-                <option value="0.75">75%</option>
-                <option value="1">{m.settings_affix_best()}</option>
-              </select>
-            </label>
+          <div class="cols">
+            <div>
+              <h2 class="label ghead">{m.settings_numbers_format()}</h2>
+              <div class="rows">
+                <label class="opt">
+                  <span>{m.settings_thousands_show()}</span>
+                  <input
+                    class="switch"
+                    type="checkbox"
+                    role="switch"
+                    checked={v.showThousandsSeparators}
+                    onchange={(e) => appOptions.set({ showThousandsSeparators: (e.target as HTMLInputElement).checked })}
+                  />
+                </label>
+                <label class="opt">
+                  <span>{m.settings_thousands_separator()}</span>
+                  <input
+                    class="input chr"
+                    maxlength="1"
+                    value={v.thousandsSeparator}
+                    onchange={(e) => appOptions.set({ thousandsSeparator: (e.target as HTMLInputElement).value || "," })}
+                  />
+                </label>
+                <label class="opt">
+                  <span>{m.settings_decimal_separator()}</span>
+                  <input
+                    class="input chr"
+                    maxlength="1"
+                    value={v.decimalSeparator}
+                    onchange={(e) => appOptions.set({ decimalSeparator: (e.target as HTMLInputElement).value || "." })}
+                  />
+                </label>
+              </div>
+            </div>
+            <div>
+              <h2 class="label ghead">{m.settings_numbers_defaults()}</h2>
+              <div class="rows">
+                <label class="opt">
+                  <span>{m.settings_gem_quality()}</span>
+                  <input
+                    class="input num"
+                    type="number"
+                    min="0"
+                    max="20"
+                    value={v.defaultGemQuality}
+                    onchange={(e) => appOptions.set({ defaultGemQuality: Math.max(0, Math.min(20, Number((e.target as HTMLInputElement).value) || 0)) })}
+                  />
+                </label>
+                <label class="opt">
+                  <span>{m.settings_char_level()}</span>
+                  <input
+                    class="input num"
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={v.defaultCharLevel}
+                    onchange={(e) => appOptions.set({ defaultCharLevel: Math.max(1, Math.min(100, Number((e.target as HTMLInputElement).value) || 1)) })}
+                  />
+                </label>
+                <label class="opt">
+                  <span>{m.settings_affix_quality()}</span>
+                  <select class="select" value={String(v.defaultItemAffixQuality)} onchange={(e) => appOptions.set({ defaultItemAffixQuality: Number((e.target as HTMLSelectElement).value) })}>
+                    <option value="0">{m.settings_affix_worst()}</option>
+                    <option value="0.25">25%</option>
+                    <option value="0.5">{m.settings_affix_average()}</option>
+                    <option value="0.75">75%</option>
+                    <option value="1">{m.settings_affix_best()}</option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
-          <p class="note dim">{m.settings_numbers_note()}</p>
+          <p class="note">{m.settings_numbers_note()}</p>
         {:else}
-          <p class="note dim">{m.settings_numbers_waiting()}</p>
+          <p class="note">{m.settings_numbers_waiting()}</p>
         {/if}
-      </section>
-
-      {#if game.isPoe2}
-        <section id="settings-mcp">
-          <div class="shead">
-            <h2 class="label">{m.settings_mcp()}</h2>
-            <span class="dim" style:color={mcp.status?.running ? "var(--ok)" : undefined}>{mcp.status?.running ? m.settings_mcp_running() : m.common_off()}</span>
+      {:else if active === "mcp"}
+        {@render head(m.settings_mcp(), m.settings_mcp_desc(), mcpState, mcpTone)}
+        <h2 class="label ghead">{m.settings_mcp_server()}</h2>
+        <div class="rows">
+          <label class="opt">
+            <span>
+              {m.settings_mcp_enable()}
+              <span class="hint">{m.settings_mcp_enable_hint()}</span>
+            </span>
+            <input class="switch" type="checkbox" role="switch" checked={mcp.enabled} disabled={mcp.busy} onchange={(e) => mcp.setEnabled((e.target as HTMLInputElement).checked)} />
+          </label>
+          <label class="opt">
+            <span>{m.settings_mcp_port()}</span>
+            <input
+              class="input num"
+              type="number"
+              min="1024"
+              max="65535"
+              value={mcp.port}
+              disabled={mcp.busy}
+              onchange={(e) => mcp.setPort(Number((e.target as HTMLInputElement).value))}
+            />
+          </label>
+          {#if mcp.status?.error}
+            <div class="opt err mono">{mcp.status.error}</div>
+          {/if}
+        </div>
+        {#if mcpUrl}
+          <h2 class="label ghead">{m.settings_mcp_connect()}</h2>
+          <div class="rows">
+            <div class="opt col">
+              <div class="row">
+                <span class="dim">URL</span>
+                <code class="mono selectable">{mcpUrl}</code>
+                <button class="btn sm ghost" onclick={() => copy("url", mcpUrl)}>{copied === "url" ? m.common_copied() : m.common_copy()}</button>
+              </div>
+              <div class="row">
+                <span class="dim">Token</span>
+                <code class="mono selectable">{mcpToken}</code>
+                <button class="btn sm ghost" onclick={() => copy("token", mcpToken)}>{copied === "token" ? m.common_copied() : m.common_copy()}</button>
+              </div>
+              <div class="row">
+                <span class="dim">Claude Code</span>
+                <code class="mono selectable">{claudeCmd}</code>
+                <button class="btn sm ghost" onclick={() => copy("cmd", claudeCmd)}>{copied === "cmd" ? m.common_copied() : m.common_copy()}</button>
+              </div>
+              <div class="row">
+                <span class="dim">JSON</span>
+                <code class="mono selectable">{jsonCfg}</code>
+                <button class="btn sm ghost" onclick={() => copy("json", jsonCfg)}>{copied === "json" ? m.common_copied() : m.common_copy()}</button>
+              </div>
+            </div>
           </div>
+        {/if}
+      {:else if active === "experimental"}
+        {@render head(m.settings_experimental(), m.settings_experimental_desc(), decideState, decideTone)}
+        <div class="rows master" class:live={decider.enabled}>
+          <label class="opt">
+            <span>
+              {m.experimental_enable()}
+              <span class="hint">{m.experimental_enable_hint()}</span>
+            </span>
+            <input class="switch" type="checkbox" role="switch" checked={decider.enabled} onchange={(e) => decider.setEnabled((e.target as HTMLInputElement).checked)} />
+          </label>
+        </div>
+        {#if decider.enabled && dm && decider.status}
+          <h2 class="label ghead">{m.experimental_setup()}</h2>
+          <div class="rows">
+            <div class="opt">
+              <span>
+                {m.experimental_backend()}
+                <span class="hint">{m.experimental_backend_hint()}</span>
+              </span>
+              <div class="seg" role="radiogroup" aria-label={m.experimental_backend()}>
+                {#each decider.status.backends as b (b.id)}
+                  <button role="radio" aria-checked={b.id === dm.id} class:on={b.id === dm.id} disabled={decider.busy} onclick={() => decider.select(b.id)}>{b.label}</button>
+                {/each}
+              </div>
+            </div>
+            <div class="opt">
+              <span>
+                {m.experimental_key()}
+                {#if dm.has_key}
+                  <span class="hint mono">···{dm.hint}</span>
+                {:else if !dm.needs_key}
+                  <span class="hint">{m.experimental_key_optional()}</span>
+                {/if}
+                {#if dm.keys_url}
+                  <button class="link" onclick={() => openUrl(dm.keys_url!)}>{m.provider_get_key()}</button>
+                {/if}
+              </span>
+              <div class="row">
+                <input
+                  class="input key"
+                  type="password"
+                  placeholder={dm.has_key ? m.provider_replace_key() : m.provider_paste_key()}
+                  bind:value={keyDraft}
+                  onkeydown={(e) => e.key === "Enter" && saveDecideKey()}
+                />
+                <button class="btn sm" disabled={decider.busy || !keyDraft.trim()} onclick={saveDecideKey}>{m.common_save()}</button>
+                {#if dm.has_key}
+                  <button class="btn sm ghost" disabled={decider.busy} onclick={() => decider.removeKey(dm.id)}>{m.provider_remove()}</button>
+                {/if}
+              </div>
+            </div>
+            <div class="opt">
+              <span>
+                {m.experimental_address()}
+                <span class="hint">{m.experimental_address_hint()}</span>
+              </span>
+              <div class="row">
+                <input class="input mono addr" bind:value={baseDraft} placeholder={dm.default_base} aria-label={m.experimental_address()} />
+                <input class="input mono model" bind:value={modelDraft} placeholder={dm.default_model} aria-label={m.experimental_model()} />
+                <button class="btn sm ghost" disabled={decider.busy} onclick={() => decider.configure(dm.id, baseDraft, modelDraft)}>{m.common_save()}</button>
+              </div>
+            </div>
+            <div class="opt">
+              <span>
+                {m.experimental_connection()}
+                {#if decider.test}
+                  <span class="hint mono" style:color={decider.test.ok ? "var(--ok)" : "var(--bad)"}>{decider.test.text}</span>
+                {:else if !decider.ready}
+                  <span class="hint warn">{m.experimental_not_ready()}</span>
+                {/if}
+              </span>
+              <button class="btn sm ghost" disabled={decider.testing || decider.busy || !decider.ready} onclick={() => decider.runTest()}>
+                {decider.testing ? m.experimental_testing() : m.experimental_test()}
+              </button>
+            </div>
+            {#if decider.error}
+              <div class="opt err mono">{decider.error}</div>
+            {/if}
+          </div>
+          <h2 class="label ghead">{m.experimental_features()}</h2>
           <div class="rows">
             <label class="opt">
               <span>
-                {m.settings_mcp_enable()}
-                <span class="hint">{m.settings_mcp_enable_hint()}</span>
+                {m.experimental_routing()}
+                <span class="hint">{m.experimental_routing_hint()}</span>
               </span>
-              <input type="checkbox" checked={mcp.enabled} disabled={mcp.busy} onchange={(e) => mcp.setEnabled((e.target as HTMLInputElement).checked)} />
+              <input class="switch" type="checkbox" role="switch" checked={decider.routing} onchange={(e) => decider.setRouting((e.target as HTMLInputElement).checked)} />
             </label>
-            <label class="opt">
-              <span>{m.settings_mcp_port()}</span>
-              <input
-                class="input num"
-                type="number"
-                min="1024"
-                max="65535"
-                value={mcp.port}
-                disabled={mcp.busy}
-                onchange={(e) => mcp.setPort(Number((e.target as HTMLInputElement).value))}
-              />
-            </label>
-            {#if mcp.status?.error}
-              <div class="opt err mono">{mcp.status.error}</div>
-            {/if}
-            {#if mcpUrl}
-              <div class="opt col">
-                <div class="row">
-                  <span class="dim">URL</span>
-                  <code class="mono selectable">{mcpUrl}</code>
-                  <button class="btn sm ghost" onclick={() => copy("url", mcpUrl)}>{copied === "url" ? m.common_copied() : m.common_copy()}</button>
-                </div>
-                <div class="row">
-                  <span class="dim">Token</span>
-                  <code class="mono selectable">{mcpToken}</code>
-                  <button class="btn sm ghost" onclick={() => copy("token", mcpToken)}>{copied === "token" ? m.common_copied() : m.common_copy()}</button>
-                </div>
-                <div class="row">
-                  <span class="dim">Claude Code</span>
-                  <code class="mono selectable">{claudeCmd}</code>
-                  <button class="btn sm ghost" onclick={() => copy("cmd", claudeCmd)}>{copied === "cmd" ? m.common_copied() : m.common_copy()}</button>
-                </div>
-                <div class="row">
-                  <span class="dim">JSON</span>
-                  <code class="mono selectable">{jsonCfg}</code>
-                  <button class="btn sm ghost" onclick={() => copy("json", jsonCfg)}>{copied === "json" ? m.common_copied() : m.common_copy()}</button>
-                </div>
-              </div>
-            {/if}
           </div>
-        </section>
-      {/if}
-
-      <section id="settings-updates">
-        <div class="shead">
-          <h2 class="label">{m.settings_updates()}</h2>
-          <span class="dim mono">{version}</span>
-        </div>
+          <p class="note">{m.experimental_privacy()}</p>
+        {/if}
+      {:else if active === "updates"}
+        {@render head(m.settings_updates(), m.settings_updates_desc(), version)}
         <div class="rows">
           <div class="opt">
             <span>
@@ -348,10 +482,8 @@
             </div>
           </div>
         </div>
-      </section>
-
-      <section id="settings-diagnostics">
-        <div class="shead"><h2 class="label">{m.settings_diagnostics()}</h2></div>
+      {:else if active === "diagnostics"}
+        {@render head(m.settings_diagnostics(), m.settings_diagnostics_desc())}
         <div class="rows">
           <div class="opt">
             <span>
@@ -365,7 +497,7 @@
             </div>
           </div>
         </div>
-      </section>
+      {/if}
     </div>
   </div>
 </div>
@@ -377,13 +509,13 @@
     min-height: 0;
   }
   .snav {
-    width: 200px;
+    width: 210px;
     flex: none;
     display: flex;
     flex-direction: column;
     gap: 2px;
     padding: 14px 8px 10px;
-    border-right: 1px solid var(--line-0);
+    border-right: 1px solid var(--line-1);
     background: var(--bg-1);
     overflow-y: auto;
   }
@@ -392,13 +524,17 @@
   }
   .nitem {
     appearance: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     border: 0;
     border-radius: var(--r-1);
     background: transparent;
     color: var(--fg-2);
-    font-size: var(--fs-sm);
+    font-size: var(--fs-md);
     text-align: left;
-    padding: 6px 10px;
+    padding: 7px 10px;
   }
   .nitem:hover {
     color: var(--fg-0);
@@ -407,6 +543,19 @@
   .nitem.on {
     color: var(--fg-0);
     background: var(--bg-active);
+    box-shadow: inset 2px 0 0 var(--fg-0);
+  }
+  .ndot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .ndot.ok {
+    background: var(--ok);
+  }
+  .ndot.warn {
+    background: var(--warn);
   }
   .back {
     margin-top: auto;
@@ -417,36 +566,98 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
+    background: var(--bg-0);
   }
   .sinner {
-    max-width: 760px;
-    padding: 18px 24px 48px;
+    max-width: 1080px;
+    padding: 26px 36px 48px;
   }
-  section + section {
-    margin-top: 26px;
+  .phead {
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--line-1);
   }
-  .shead {
+  .ptitle {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    gap: 12px;
   }
-  .shead h2 {
+  .phead h1 {
     margin: 0;
+    font-size: var(--fs-xl);
+    font-weight: 600;
+    color: var(--fg-0);
+  }
+  .phead p {
+    margin: 6px 0 0;
+    font-size: var(--fs-sm);
+    color: var(--fg-2);
+    max-width: 640px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 9px;
+    border: 1px solid var(--line-1);
+    border-radius: 999px;
+    background: var(--bg-1);
+    font-size: var(--fs-xs);
+    color: var(--fg-1);
+    white-space: nowrap;
+  }
+  .bdot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--fg-3);
+  }
+  .bdot.ok {
+    background: var(--ok);
+  }
+  .bdot.warn {
+    background: var(--warn);
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 0 20px;
+    align-items: start;
+  }
+  .cols > div > .ghead {
+    margin-top: 0;
+  }
+  .ghead {
+    margin: 22px 2px 8px;
+  }
+  .phead + .ghead {
+    margin-top: 0;
   }
   .rows {
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--line-0);
+    border: 1px solid var(--line-1);
     border-radius: var(--r-2);
     background: var(--bg-1);
+  }
+  .rows.master {
+    border-color: var(--line-2);
+  }
+  .rows.master .opt {
+    padding: 14px 14px;
+    font-size: var(--fs-md);
+    color: var(--fg-0);
+  }
+  .rows.master.live {
+    border-color: var(--fg-3);
   }
   .opt {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 16px;
-    padding: 9px 12px;
+    min-height: 48px;
+    padding: 11px 14px;
     border-bottom: 1px solid var(--line-0);
     font-size: var(--fs-sm);
     color: var(--fg-1);
@@ -455,8 +666,9 @@
     border-bottom: 0;
   }
   .note {
-    margin: 8px 2px 0;
+    margin: 10px 2px 0;
     font-size: var(--fs-xs);
+    color: var(--fg-2);
   }
   .ctrast {
     display: flex;
@@ -470,11 +682,6 @@
   }
   .ctrast .range:disabled {
     opacity: var(--fade-off);
-  }
-  .ctrast .btn.on {
-    color: var(--fg-0);
-    border-color: var(--fg-2);
-    background: var(--bg-active);
   }
   .ctval {
     min-width: 34px;
@@ -512,14 +719,36 @@
     width: 70px;
     text-align: right;
   }
+  .input.key,
+  .input.addr {
+    width: 180px;
+  }
+  .input.model {
+    width: 110px;
+  }
   .hint {
     display: block;
     color: var(--fg-2);
     font-size: var(--fs-xs);
-    max-width: 440px;
+    max-width: 600px;
+    margin-top: 2px;
   }
   .hint.warn {
     color: var(--warn);
+  }
+  .link {
+    display: block;
+    margin-top: 2px;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--focus);
+    font: inherit;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
   }
   .opt.err {
     color: var(--bad);
@@ -550,7 +779,48 @@
     font-size: var(--fs-xs);
     color: var(--fg-1);
   }
-  input[type="checkbox"] {
-    accent-color: var(--fg-0);
+  .switch {
+    appearance: none;
+    position: relative;
+    flex: none;
+    width: 32px;
+    height: 18px;
+    margin: 0;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    background: var(--bg-3);
+    cursor: pointer;
+    transition:
+      background 0.12s,
+      border-color 0.12s;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--fg-3);
+    transition:
+      transform 0.12s,
+      background 0.12s;
+  }
+  .switch:checked {
+    background: var(--fg-0);
+    border-color: var(--fg-0);
+  }
+  .switch:checked::after {
+    transform: translateX(16px);
+    background: var(--bg-0);
+  }
+  .switch:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .switch:disabled {
+    opacity: var(--fade-off);
+    cursor: default;
   }
 </style>
