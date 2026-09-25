@@ -15,6 +15,8 @@
   import ImportView from "$lib/views/ImportView.svelte";
   import SettingsView from "$lib/views/SettingsView.svelte";
   import ConfirmModal from "$lib/components/ConfirmModal.svelte";
+  import Tooltip from "$lib/components/Tooltip.svelte";
+  import { tooltip } from "$lib/state/tooltip.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import logo from "$lib/assets/logo.png";
@@ -58,9 +60,11 @@
       }
     };
     window.addEventListener("keydown", onKey);
+    const offTooltips = tooltip.install();
     void app.boot();
     return () => {
       window.removeEventListener("keydown", onKey);
+      offTooltips();
     };
   });
 </script>
@@ -121,6 +125,7 @@
   </div>
   <StatusBar {status} {paths} />
   <ConfirmModal />
+  <Tooltip />
   {#if game.firstRun}
     <div class="pick-backdrop">
       <div class="pick">
