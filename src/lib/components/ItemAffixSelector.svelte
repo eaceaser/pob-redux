@@ -148,7 +148,7 @@
 
   async function changeFamily(seriesId: string) {
     if (changing || seriesId === selectedSeries || !onbegin()) return;
-    const fraction = shownChoice && tiers.length ? shownChoice.position / (tiers.length * segment - 1) : 0.5;
+    const fraction = shownChoice && tiers.length ? shownChoice.position / (tiers.length * segment - 1) : (slot.range ?? 0.5);
     changing = true;
     error = null;
     try {

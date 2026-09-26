@@ -688,7 +688,7 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
         })
         .unwrap();
     let mut raw = json!(crafted);
-    for (position, first) in [(0.0, true), (1.0, false)] {
+    for position in [0.0, 0.25, 0.5, 0.75, 1.0] {
         let edited = engine
             .call("item_customize", &json!({
                 "raw":raw, "operation":"affix", "table":"prefixes", "index":1,
@@ -696,13 +696,16 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
             }))
             .unwrap();
         let tiers = edited["affixes"]["prefixes"][0]["rolls"]["tiers"].as_array().unwrap();
-        let tier = if first { &tiers[0] } else { tiers.last().unwrap() };
-        let steps = tier["steps"].as_array().unwrap();
-        let step = if first { &steps[0] } else { steps.last().unwrap() };
+        let scaled = position * tiers.len() as f64;
+        let tier_index = (scaled.ceil() as usize).max(1) - 1;
+        let tier = &tiers[tier_index];
+        let range = scaled - tier_index as f64;
+        let expected_range = if tier["flipped"] == true { 1.0 - range } else { range };
         assert_eq!(edited["affixes"]["prefixes"][0]["rolls"]["seriesId"], ranged_family["id"]);
         assert_eq!(edited["affixes"]["prefixes"][0]["modId"], tier["modId"]);
-        assert_eq!(edited["affixes"]["prefixes"][0]["range"], step["range"]);
+        assert!((edited["affixes"]["prefixes"][0]["range"].as_f64().unwrap() - expected_range).abs() < 1e-9);
         let reloaded = engine.call("item_customization", &json!({"raw":edited["raw"]})).unwrap();
+        assert!((reloaded["affixes"]["prefixes"][0]["range"].as_f64().unwrap() - expected_range).abs() < 1e-9);
         assert_eq!(
             reloaded["affixes"]["prefixes"][0]["rolls"]["tiers"],
             edited["affixes"]["prefixes"][0]["rolls"]["tiers"]
@@ -761,10 +764,9 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
         edited["affixes"]["prefixes"][0]["modId"],
         edited["affixes"]["prefixes"][0]["rolls"]["tiers"][0]["modId"]
     );
-    assert_eq!(
-        edited["affixes"]["prefixes"][0]["range"],
-        edited["affixes"]["prefixes"][0]["rolls"]["tiers"][0]["steps"][0]["range"]
-    );
+    let first_tier = &edited["affixes"]["prefixes"][0]["rolls"]["tiers"][0];
+    let expected_range = if first_tier["flipped"] == true { 1.0 } else { 0.0 };
+    assert_eq!(edited["affixes"]["prefixes"][0]["range"].as_f64().unwrap(), expected_range);
     assert_eq!(
         edited["raw"],
         engine.call("item_customization", &json!({"itemId":saved["itemId"]})).unwrap()["raw"]

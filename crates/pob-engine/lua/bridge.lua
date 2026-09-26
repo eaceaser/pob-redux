@@ -4658,7 +4658,7 @@ function M._affix.rollTiers(item, tableName, index, seriesId, options)
 				step.position = math.floor((step.position + nextStart - 1) / 2)
 			end
 		end
-		out[#out + 1] = { modId = modId, affix = opt(mod.affix), tier = #tiers - tierIndex + 1, steps = steps }
+		out[#out + 1] = { modId = modId, affix = opt(mod.affix), tier = #tiers - tierIndex + 1, flipped = flip, steps = steps }
 	end
 	return out, series
 end
@@ -4668,16 +4668,11 @@ function M._affix.chooseRoll(tiers, fraction)
 		error("invalid affix position", 0)
 	end
 	if #tiers == 0 then error("affix series has no tiers", 0) end
-	local position = fraction * (#tiers * 101 - 1)
-	local tierIndex = math.min(#tiers, math.max(1, math.floor(position / 101) + 1))
+	local position = fraction * #tiers
+	local tierIndex = math.min(#tiers, math.max(1, math.ceil(position)))
 	local tier = tiers[tierIndex]
-	local inTier = math.min(100, math.max(0, position - (tierIndex - 1) * 101))
-	local step = tier.steps[1]
-	for i = 2, #tier.steps do
-		local candidate = tier.steps[i]
-		if math.abs(candidate.position - inTier) < math.abs(step.position - inTier) then step = candidate end
-	end
-	return tier.modId, step.range
+	local range = position - tierIndex + 1
+	return tier.modId, tier.flipped and 1 - range or range
 end
 
 M.item_affix_rolls = function(p)

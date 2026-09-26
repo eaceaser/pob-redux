@@ -1043,6 +1043,7 @@ export interface AffixRollTier {
   modId: string;
   affix: string | null;
   tier: number;
+  flipped: boolean;
   steps: AffixRollStep[];
 }
 
