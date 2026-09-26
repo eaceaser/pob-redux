@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PobText from "$lib/components/PobText.svelte";
   import { tooltip } from "$lib/state/tooltip.svelte";
 
   const GAP = 6;
@@ -33,7 +34,7 @@
     style:top="{pos?.y ?? 0}px"
     style:visibility={pos ? "visible" : "hidden"}
   >
-    {tooltip.text}
+    <PobText text={tooltip.text} />
   </div>
 {/if}
 
