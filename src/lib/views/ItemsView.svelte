@@ -60,6 +60,9 @@
   let detailLoading = $state(false);
   let previewSlot = $state("");
   let detailPane = $state<HTMLDivElement | undefined>();
+  let detailFocus: HTMLElement | null = null;
+  let scrollAnchor: { pane: HTMLDivElement; element: HTMLElement | null; top: number; scrollTop: number } | null = null;
+  const scrollReserves = new WeakMap<HTMLDivElement, { basePadding: number; height: number; restoring: boolean }>();
   let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
   let previewStamp = 0;
   let alive = true;
@@ -81,18 +84,75 @@
     previewLoading = false;
   }
 
+  function captureDetailAnchor() {
+    const pane = detailPane;
+    if (!pane) return;
+    const active = document.activeElement;
+    const element = active instanceof HTMLElement && pane.contains(active) ? active
+      : detailFocus?.isConnected && pane.contains(detailFocus) ? detailFocus : null;
+    scrollAnchor = { pane, element, top: element?.getBoundingClientRect().top ?? 0, scrollTop: pane.scrollTop };
+  }
+
+  function setAffixPending(pending: boolean) {
+    if (pending) captureDetailAnchor();
+    affixPending = pending;
+  }
+
+  function reserveState(pane: HTMLDivElement) {
+    let state = scrollReserves.get(pane);
+    if (!state) {
+      state = { basePadding: parseFloat(getComputedStyle(pane).paddingBottom) || 0, height: 0, restoring: false };
+      scrollReserves.set(pane, state);
+    }
+    return state;
+  }
+
+  function setScrollReserve(pane: HTMLDivElement, height: number) {
+    const state = reserveState(pane);
+    state.height = height;
+    if (height) pane.style.paddingBottom = `${state.basePadding + height}px`;
+    else pane.style.removeProperty("padding-bottom");
+  }
+
+  function releaseScrollReserve(event: Event) {
+    const pane = event.currentTarget as HTMLDivElement;
+    const state = scrollReserves.get(pane);
+    if (state?.height && !state.restoring && pane.scrollTop <= pane.scrollHeight - state.height - pane.clientHeight) {
+      setScrollReserve(pane, 0);
+    }
+  }
+
   function holdDetailScroll(pane: HTMLDivElement | undefined) {
     if (!pane) return () => {};
-    const scrollTop = pane.scrollTop;
-    const tooltip = pane.querySelector<HTMLElement>(".ttbox, .frame");
-    const minHeight = tooltip?.style.minHeight ?? "";
-    if (tooltip) tooltip.style.minHeight = `${tooltip.getBoundingClientRect().height}px`;
+    const anchor = scrollAnchor?.pane === pane ? scrollAnchor : { pane, element: null, top: 0, scrollTop: pane.scrollTop };
+    scrollAnchor = null;
+    const state = reserveState(pane);
+    state.restoring = true;
+    const held = [pane.querySelector<HTMLElement>(".ttbox, .frame"), pane.querySelector<HTMLElement>("fieldset.controls")]
+      .filter((element): element is HTMLElement => element !== null)
+      .map((element) => {
+        const minHeight = element.style.minHeight;
+        element.style.minHeight = `${element.getBoundingClientRect().height}px`;
+        return { element, minHeight };
+      });
+    function restoreAnchor() {
+      if (!pane || !pane.isConnected || pane !== detailPane) return;
+      setScrollReserve(pane, 0);
+      const element = anchor.element?.isConnected && pane.contains(anchor.element) ? anchor.element : null;
+      const scrollTop = element ? pane.scrollTop + element.getBoundingClientRect().top - anchor.top : anchor.scrollTop;
+      setScrollReserve(pane, Math.max(0, Math.ceil(scrollTop + pane.clientHeight - pane.scrollHeight)));
+      pane.scrollTop = scrollTop;
+    }
     return () => {
       void tick().then(() => {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (tooltip) tooltip.style.minHeight = minHeight;
-          if (pane.isConnected && pane === detailPane) pane.scrollTop = scrollTop;
-        }));
+        requestAnimationFrame(() => {
+          restoreAnchor();
+          requestAnimationFrame(() => {
+            for (const { element, minHeight } of held) element.style.minHeight = minHeight;
+            restoreAnchor();
+            state.restoring = false;
+          });
+        });
       });
     };
   }
@@ -143,6 +203,7 @@
 
   async function customizePreview(edit: ItemCustomizationEdit) {
     if (!preview || previewLoading || previewCommitting) return false;
+    if (!affixPending || scrollAnchor?.pane !== detailPane) captureDetailAnchor();
     const stamp = ++previewStamp;
     previewLoading = true;
     previewError = null;
@@ -156,6 +217,7 @@
       if (alive && stamp === previewStamp) previewError = String(e);
       return false;
     } finally {
+      scrollAnchor = null;
       if (alive && stamp === previewStamp) previewLoading = false;
     }
   }
@@ -276,12 +338,16 @@
   async function customizeSavedItem(edit: ItemCustomizationEdit) {
     const itemId = selectedItem;
     if (itemId == null) return;
+    if (!affixPending || scrollAnchor?.pane !== detailPane) captureDetailAnchor();
     const result = await build.run(async () => {
       const customization = await engine.customizeItem({ itemId, generation }, edit);
       pendingDetail = { itemId, customization };
       return customization;
     });
-    if (!result && pendingDetail?.itemId === itemId) pendingDetail = null;
+    if (!result) {
+      if (pendingDetail?.itemId === itemId) pendingDetail = null;
+      scrollAnchor = null;
+    }
     return result;
   }
 
@@ -662,7 +728,8 @@
           <span class="label">{m.items_preview_title()}</span>
           <button class="btn sm ghost" onclick={discardPreview} disabled={itemBusy}>{m.items_preview_discard()}</button>
         </div>
-        <div class="scroll detailpane" bind:this={detailPane}>
+        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}
+          onfocusin={(e) => (detailFocus = e.target instanceof HTMLElement ? e.target : null)}>
           <p class="dim small">{m.items_preview_note()}</p>
           {#if preview.tooltip.header}
             <ItemFrame lines={preview.tooltip.lines} header={preview.tooltip.header} runic={preview.tooltip.runic} uniqueGem={preview.tooltip.uniqueGem} />
@@ -694,7 +761,7 @@
             busy={itemBusy}
             sourceSlot={previewSlot || undefined}
             onchange={customizePreview}
-            onpendingchange={(pending) => (affixPending = pending)}
+            onpendingchange={setAffixPending}
           />
         </div>
       {:else if selectedItem != null && detail?.itemId === selectedItem}
@@ -703,7 +770,8 @@
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
           <button class="btn sm ghost" onclick={() => selectItem(null)} disabled={itemBusy}>{m.items_back_to_database()}</button>
         </div>
-        <div class="scroll detailpane" bind:this={detailPane}>
+        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}
+          onfocusin={(e) => (detailFocus = e.target instanceof HTMLElement ? e.target : null)}>
           {#if detail.tt.header}
             <div class="ttbox">
               <ItemFrame lines={detail.tt.lines} header={detail.tt.header} runic={detail.tt.runic} uniqueGem={detail.tt.uniqueGem} itemArt={detail.tt.itemArt} />
@@ -725,7 +793,7 @@
             target={{ itemId: selectedItem, generation }}
             busy={itemBusy}
             onchange={customizeSavedItem}
-            onpendingchange={(pending) => (affixPending = pending)}
+            onpendingchange={setAffixPending}
           />
 
           <div class="craftsec">
