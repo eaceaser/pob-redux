@@ -5,11 +5,47 @@
   import MinionLibrary from "./MinionLibrary.svelte";
   import { engine, type BreakdownSection } from "$lib/engine.svelte";
   import { build } from "$lib/state/build.svelte";
-  import { groupSidebar } from "$lib/sidebar-groups";
-  import { stripPobText } from "$lib/pobtext";
+  import { groupSidebar, type SidebarSection } from "$lib/sidebar-groups";
+  import { parsePobText, stripPobText } from "$lib/pobtext";
   import { m } from "$lib/paraglide/messages";
 
   let libraryOpen = $state(false);
+
+  const COLLAPSED_KEY = "pob-redux:stats-collapsed";
+  let collapsed = $state<Set<string>>(new Set());
+  try {
+    collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
+  } catch {}
+  function toggleGroup(key: string) {
+    const next = new Set(collapsed);
+    next.has(key) ? next.delete(key) : next.add(key);
+    collapsed = next;
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+    } catch {}
+  }
+
+  // What a collapsed group still shows in its header: the first of these stats PoB lists, or all of them when `all`.
+  const HEADLINE: Record<string, { stats: string[]; all?: boolean }> = {
+    offence: { stats: ["FullDPS", "CombinedDPS", "TotalDPS", "TotalDotDPS", "AverageDamage", "AverageHit"] },
+    attributes: { stats: ["Str", "Dex", "Int"], all: true },
+    resources: { stats: ["Life", "EnergyShield", "Mana"] },
+    mitigation: { stats: ["TotalEHP"] },
+    resistances: { stats: ["FireResist", "ColdResist", "LightningResist", "ChaosResist"], all: true },
+    fulldps: { stats: ["FullDPS"] },
+  };
+  function headline(sec: SidebarSection): { text: string; color: string | null }[] {
+    const h = HEADLINE[sec.key];
+    if (!h) return [];
+    const byStat = new Map(sec.items.filter((i) => i.row.stat && i.row.rhs).map((i) => [i.row.stat!, i.row]));
+    const found = h.stats.flatMap((k) => (byStat.has(k) ? [byStat.get(k)!] : []));
+    if (!h.all) return found.slice(0, 1).map((r) => ({ text: r.rhs!, color: null }));
+    // Several values share one line: drop PoB's "(+40%)" overcap and take each label's colour.
+    return found.map((r) => ({
+      text: stripPobText(r.rhs).replace(/\s*\(.*\)\s*$/, ""),
+      color: parsePobText(r.lhs).find((sp) => sp.text.trim())?.color ?? null,
+    }));
+  }
 
   // breakdown popup for hovered/pinned stat rows
   let bd = $state<{ sections: BreakdownSection[]; row: number; y: number; pinned: boolean } | null>(null);
@@ -360,42 +396,66 @@
     <div class="stats" class:busy={build.busy > 0}>
       {#if side}
         {#each sections as sec (sec.key)}
-          {#if sec.label}
-            <div class="sgroup"><span>{sec.label}</span></div>
-          {/if}
-          {#each sec.items as { row: r, index: rowIndex } (rowIndex)}
-            {@const k = kind(r)}
-            {#if k === "space"}
-              <div class="space"></div>
-            {:else if k === "head"}
-              <div class="shead"><PobText text={r.lhs} /></div>
-            {:else if k === "center"}
-              <div class="scenter"><PobText text={r.lhs} defaultColor="var(--fg-2)" /></div>
-            {:else}
-              <div
-                class="srow"
-                class:hasbd={r.hasBreakdown}
-                class:pinnedrow={bd?.pinned && bd.row === rowIndex + 1}
-                role="button"
-                tabindex={r.hasBreakdown ? 0 : -1}
-                onmouseenter={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, false)}
-                onmouseleave={rowLeave}
-                onclick={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, true)}
-                onkeydown={(e) => e.key === "Enter" && r.hasBreakdown && rowBreakdown(200, rowIndex + 1, true)}
-              >
-                <span class="k"><PobText text={r.lhs?.replace(/:\s*$/, "")} defaultColor="var(--fg-1)" /></span>
-                <span class="v num"><PobText text={r.rhs} /></span>
+          {@const open = !sec.label || !collapsed.has(sec.key)}
+          <section class="scard">
+            {#if sec.label}
+              <button class="cardhead" aria-expanded={open} onclick={() => toggleGroup(sec.key)}>
+                <span class="caret" class:open>▸</span>
+                <span class="cardname">{sec.label}</span>
+                {#if !open}
+                  <span class="cardsum num">
+                    {#each headline(sec) as v, i}{#if i}<span class="sep">/</span>{/if}<PobText text={v.text} defaultColor={v.color} />{/each}
+                  </span>
+                {/if}
+              </button>
+            {/if}
+            {#if open}
+              <div class="cardbody">
+                {#each sec.items as { row: r, index: rowIndex } (rowIndex)}
+                  {@const k = kind(r)}
+                  {#if k === "space"}
+                    <div class="space"></div>
+                  {:else if k === "head"}
+                    <div class="shead"><PobText text={r.lhs} /></div>
+                  {:else if k === "center"}
+                    <div class="scenter"><PobText text={r.lhs} defaultColor="var(--fg-2)" /></div>
+                  {:else}
+                    <div
+                      class="srow"
+                      class:hasbd={r.hasBreakdown}
+                      class:pinnedrow={bd?.pinned && bd.row === rowIndex + 1}
+                      role="button"
+                      tabindex={r.hasBreakdown ? 0 : -1}
+                      onmouseenter={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, false)}
+                      onmouseleave={rowLeave}
+                      onclick={(e) => r.hasBreakdown && rowBreakdown(e.clientY, rowIndex + 1, true)}
+                      onkeydown={(e) => e.key === "Enter" && r.hasBreakdown && rowBreakdown(200, rowIndex + 1, true)}
+                    >
+                      <span class="k"><PobText text={r.lhs?.replace(/:\s*$/, "")} defaultColor="var(--fg-1)" /></span>
+                      <span class="v num"><PobText text={r.rhs} /></span>
+                    </div>
+                  {/if}
+                {/each}
               </div>
             {/if}
-          {/each}
+          </section>
         {/each}
         {#if side.warnings.length}
-          <div class="warnings">
-            <div class="label" style:color="var(--warn)">{m.sidebar_warnings()}</div>
-            {#each side.warnings as w}
-              <div class="warn">{w}</div>
-            {/each}
-          </div>
+          {@const open = !collapsed.has("warnings")}
+          <section class="scard warncard">
+            <button class="cardhead" aria-expanded={open} onclick={() => toggleGroup("warnings")}>
+              <span class="caret" class:open>▸</span>
+              <span class="cardname">{m.sidebar_warnings()}</span>
+              <span class="cardsum num">{side.warnings.length}</span>
+            </button>
+            {#if open}
+              <div class="cardbody warnings">
+                {#each side.warnings as w}
+                  <div class="warn">{w}</div>
+                {/each}
+              </div>
+            {/if}
+          </section>
         {/if}
       {/if}
     </div>
@@ -589,34 +649,83 @@
   .stats {
     flex: 1;
     overflow-y: auto;
-    padding: 8px 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 8px 16px;
+    background: var(--bg-0);
+    scrollbar-width: none;
     transition: opacity 120ms;
+  }
+  .stats::-webkit-scrollbar {
+    display: none;
+  }
+  .scard {
+    flex: none;
+    background: var(--bg-1);
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-2);
+    overflow: clip;
+  }
+  .cardhead {
+    appearance: none;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border: 0;
+    border-bottom: 1px solid var(--line-1);
+    background: var(--bg-3);
+    color: var(--fg-0);
+    text-align: left;
+  }
+  .cardhead[aria-expanded="false"] {
+    border-bottom: 0;
+  }
+  .cardhead:hover {
+    background: var(--bg-hover);
+  }
+  .caret {
+    display: inline-block;
+    width: 9px;
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
+    transition: transform 100ms;
+  }
+  .caret.open {
+    transform: rotate(90deg);
+  }
+  .cardname {
+    flex: 1 0 auto;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .cardsum {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--fs-xs);
+    color: var(--fg-0);
+    white-space: nowrap;
+  }
+  .cardsum .sep {
+    margin: 0 4px;
+    color: var(--fg-3);
+  }
+  .warncard .cardname {
+    color: var(--warn);
+  }
+  .cardbody {
+    padding: 5px 10px 6px;
   }
   .stats.busy {
     opacity: 0.6;
   }
   .space {
     height: 7px;
-  }
-  .sgroup {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 14px 0 4px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--fg-2);
-  }
-  .sgroup::after {
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: var(--line-0);
-  }
-  .sgroup:first-child {
-    padding-top: 4px;
   }
   .shead {
     padding: 8px 0 3px;
@@ -694,9 +803,6 @@
     font-size: var(--fs-xs);
   }
   .warnings {
-    margin-top: 12px;
-    padding-top: 10px;
-    border-top: 1px solid var(--line-0);
     display: flex;
     flex-direction: column;
     gap: 5px;
