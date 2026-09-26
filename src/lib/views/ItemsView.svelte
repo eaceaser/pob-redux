@@ -81,11 +81,21 @@
     previewLoading = false;
   }
 
-  function restoreDetailScroll(pane: HTMLDivElement | undefined, scrollTop: number | undefined) {
-    if (!pane || scrollTop === undefined) return;
-    void tick().then(() => {
-      if (pane.isConnected && pane === detailPane) pane.scrollTop = scrollTop;
-    });
+  function holdDetailScroll(pane: HTMLDivElement | undefined) {
+    if (!pane) return () => {};
+    const scrollTop = pane.scrollTop;
+    const tooltip = pane.querySelector<HTMLElement>(".ttbox, .frame");
+    const minHeight = tooltip?.style.minHeight ?? "";
+    // WebKit briefly removes tooltip lines before rendering replacements, which can clamp scrollTop.
+    if (tooltip) tooltip.style.minHeight = `${tooltip.getBoundingClientRect().height}px`;
+    return () => {
+      void tick().then(() => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (tooltip) tooltip.style.minHeight = minHeight;
+          if (pane.isConnected && pane === detailPane) pane.scrollTop = scrollTop;
+        }));
+      });
+    };
   }
 
   async function requestPreview(
@@ -118,9 +128,9 @@
         break;
       }
       const pane = updated && preview ? detailPane : undefined;
-      const scrollTop = pane?.scrollTop;
+      const restoreScroll = holdDetailScroll(pane);
       preview = { ...result, text, customization };
-      restoreDetailScroll(pane, scrollTop);
+      restoreScroll();
       if (!result.slots.some((s) => s.slot === previewSlot)) previewSlot = result.slots[0]?.slot ?? "";
       hideTip();
       return true;
@@ -248,9 +258,9 @@
         .then(([tt, customization]) => {
           if (active) {
             const pane = detail?.itemId === id ? detailPane : undefined;
-            const scrollTop = pane?.scrollTop;
+            const restoreScroll = holdDetailScroll(pane);
             detail = { itemId: id, tt, customization };
-            restoreDetailScroll(pane, scrollTop);
+            restoreScroll();
           }
         })
         .catch(() => {
