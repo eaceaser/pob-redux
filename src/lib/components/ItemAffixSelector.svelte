@@ -98,7 +98,7 @@
         if (!input.isConnected || input.matches(":disabled")) return;
         observer?.disconnect();
         observer = null;
-        if (document.activeElement === document.body) input.focus();
+        if (document.activeElement === document.body) input.focus({ preventScroll: true });
       });
       observer.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
     }

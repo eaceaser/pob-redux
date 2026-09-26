@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { readText } from "@tauri-apps/plugin-clipboard-manager";
   import {
     engine,
@@ -59,6 +59,7 @@
   let affixPending = $state(false);
   let detailLoading = $state(false);
   let previewSlot = $state("");
+  let detailPane = $state<HTMLDivElement | undefined>();
   let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
   let previewStamp = 0;
   let alive = true;
@@ -78,6 +79,13 @@
     preview = null;
     previewError = null;
     previewLoading = false;
+  }
+
+  function restoreDetailScroll(pane: HTMLDivElement | undefined, scrollTop: number | undefined) {
+    if (!pane || scrollTop === undefined) return;
+    void tick().then(() => {
+      if (pane.isConnected && pane === detailPane) pane.scrollTop = scrollTop;
+    });
   }
 
   async function requestPreview(
@@ -109,7 +117,10 @@
         if (revision !== build.rev || showDifferences !== statDiff) continue;
         break;
       }
+      const pane = updated && preview ? detailPane : undefined;
+      const scrollTop = pane?.scrollTop;
       preview = { ...result, text, customization };
+      restoreDetailScroll(pane, scrollTop);
       if (!result.slots.some((s) => s.slot === previewSlot)) previewSlot = result.slots[0]?.slot ?? "";
       hideTip();
       return true;
@@ -235,7 +246,12 @@
       pendingDetail = null;
       Promise.all([engine.itemTooltip({ itemId: id }), customization ?? engine.itemCustomization({ itemId: id, generation })])
         .then(([tt, customization]) => {
-          if (active) detail = { itemId: id, tt, customization };
+          if (active) {
+            const pane = detail?.itemId === id ? detailPane : undefined;
+            const scrollTop = pane?.scrollTop;
+            detail = { itemId: id, tt, customization };
+            restoreDetailScroll(pane, scrollTop);
+          }
         })
         .catch(() => {
           if (active) {
@@ -637,7 +653,7 @@
           <span class="label">{m.items_preview_title()}</span>
           <button class="btn sm ghost" onclick={discardPreview} disabled={itemBusy}>{m.items_preview_discard()}</button>
         </div>
-        <div class="scroll detailpane">
+        <div class="scroll detailpane" bind:this={detailPane}>
           <p class="dim small">{m.items_preview_note()}</p>
           {#if preview.tooltip.header}
             <ItemFrame lines={preview.tooltip.lines} header={preview.tooltip.header} runic={preview.tooltip.runic} uniqueGem={preview.tooltip.uniqueGem} />
@@ -678,7 +694,7 @@
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
           <button class="btn sm ghost" onclick={() => selectItem(null)} disabled={itemBusy}>{m.items_back_to_database()}</button>
         </div>
-        <div class="scroll detailpane">
+        <div class="scroll detailpane" bind:this={detailPane}>
           {#if detail.tt.header}
             <div class="ttbox">
               <ItemFrame lines={detail.tt.lines} header={detail.tt.header} runic={detail.tt.runic} uniqueGem={detail.tt.uniqueGem} itemArt={detail.tt.itemArt} />
