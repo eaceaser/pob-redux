@@ -61,7 +61,13 @@
   let previewSlot = $state("");
   let detailPane = $state<HTMLDivElement | undefined>();
   let scrollPosition: { pane: HTMLDivElement; scrollTop: number } | null = null;
-  const scrollReserves = new WeakMap<HTMLDivElement, { basePadding: number; height: number; restoring: boolean }>();
+  const scrollReserves = new WeakMap<HTMLDivElement, {
+    spacer: HTMLDivElement;
+    height: number;
+    restoring: boolean;
+    scrollTop: number;
+    observer?: ResizeObserver;
+  }>();
   let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
   let previewStamp = 0;
   let alive = true;
@@ -97,7 +103,7 @@
   function reserveState(pane: HTMLDivElement) {
     let state = scrollReserves.get(pane);
     if (!state) {
-      state = { basePadding: parseFloat(getComputedStyle(pane).paddingBottom) || 0, height: 0, restoring: false };
+      state = { spacer: pane.querySelector<HTMLDivElement>(".scrollreserve")!, height: 0, restoring: false, scrollTop: 0 };
       scrollReserves.set(pane, state);
     }
     return state;
@@ -106,14 +112,15 @@
   function setScrollReserve(pane: HTMLDivElement, height: number) {
     const state = reserveState(pane);
     state.height = height;
-    if (height) pane.style.paddingBottom = `${state.basePadding + height}px`;
-    else pane.style.removeProperty("padding-bottom");
+    state.spacer.style.height = height ? `${height}px` : "";
   }
 
   function releaseScrollReserve(event: Event) {
     const pane = event.currentTarget as HTMLDivElement;
     const state = scrollReserves.get(pane);
-    if (state?.height && !state.restoring && pane.scrollTop <= pane.scrollHeight - state.height - pane.clientHeight) {
+    if (!state || state.restoring) return;
+    state.scrollTop = pane.scrollTop;
+    if (state.height && pane.scrollTop <= pane.scrollHeight - state.height - pane.clientHeight) {
       setScrollReserve(pane, 0);
     }
   }
@@ -123,36 +130,40 @@
     const scrollTop = scrollPosition?.pane === pane ? scrollPosition.scrollTop : pane.scrollTop;
     scrollPosition = null;
     const state = reserveState(pane);
+    state.scrollTop = scrollTop;
     state.restoring = true;
-    const held = [pane.querySelector<HTMLElement>(".ttbox, .frame"), pane.querySelector<HTMLElement>("fieldset.controls")]
-      .filter((element): element is HTMLElement => element !== null)
-      .map((element) => {
-        const minHeight = element.style.minHeight;
-        element.style.minHeight = `${element.getBoundingClientRect().height}px`;
-        return { element, minHeight };
-      });
-    function restoreScroll() {
-      if (!pane || !pane.isConnected || pane !== detailPane) return;
-      setScrollReserve(pane, 0);
-      setScrollReserve(pane, Math.max(0, Math.ceil(scrollTop + pane.clientHeight - pane.scrollHeight)));
-      pane.scrollTop = scrollTop;
-    }
+    if (scrollTop > 0) setScrollReserve(pane, Math.max(state.height, scrollTop + pane.clientHeight));
     return () => {
       void tick().then(() => {
-        requestAnimationFrame(() => {
-          restoreScroll();
-          requestAnimationFrame(() => {
-            for (const { element, minHeight } of held) element.style.minHeight = minHeight;
-            restoreScroll();
-            requestAnimationFrame(() => {
-              restoreScroll();
-              state.restoring = false;
-            });
-          });
+        if (!alive || !pane.isConnected || pane !== detailPane) return;
+        restoreDetailScroll(pane);
+        state.observer?.disconnect();
+        state.observer = new ResizeObserver(() => {
+          state.restoring = true;
+          restoreDetailScroll(pane);
+          state.restoring = false;
         });
+        state.observer.observe(pane);
+        for (const child of pane.children) {
+          if (child !== state.spacer) state.observer.observe(child);
+        }
+        state.restoring = false;
       });
     };
   }
+
+  function restoreDetailScroll(pane: HTMLDivElement) {
+    if (!pane.isConnected || pane !== detailPane) return;
+    const state = reserveState(pane);
+    const naturalHeight = pane.scrollHeight - state.height;
+    setScrollReserve(pane, Math.max(0, Math.ceil(state.scrollTop + pane.clientHeight - naturalHeight)));
+    pane.scrollTop = state.scrollTop;
+  }
+
+  $effect(() => {
+    const pane = detailPane;
+    return () => { if (pane) scrollReserves.get(pane)?.observer?.disconnect(); };
+  });
 
   async function requestPreview(
     text: string, stamp = ++previewStamp, normalise?: boolean, reportUnrecognized = false, updated?: ItemCustomization,
@@ -759,6 +770,7 @@
             onchange={customizePreview}
             onpendingchange={setAffixPending}
           />
+          <div class="scrollreserve"></div>
         </div>
       {:else if selectedItem != null && detail?.itemId === selectedItem}
         <div class="panel-head">
@@ -800,6 +812,7 @@
               {/if}
             </div>
           </div>
+          <div class="scrollreserve"></div>
         </div>
       {:else}
       <div class="panel-head">
@@ -1153,6 +1166,14 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-height: 0;
+  }
+  .detailpane > :global(*) {
+    flex-shrink: 0;
+  }
+  .scrollreserve {
+    height: 0;
+    margin-top: -12px;
   }
   .ttbox.plain {
     padding: 10px 12px;
