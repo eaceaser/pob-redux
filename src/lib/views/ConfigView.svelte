@@ -13,7 +13,11 @@
   let customBlocks = $state<CustomModBlock[]>([]);
   let relevantOnly = $state(true);
   let filter = $state("");
+  const COLLAPSED_KEY = "pob-redux:config-collapsed";
   let collapsed = $state<Set<string>>(new Set());
+  try {
+    collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]"));
+  } catch {}
   let renamingSet = $state(false);
   let setDraft = $state("");
 
@@ -61,11 +65,23 @@
   function set(o: ConfigOption, value: unknown) {
     build.run(() => engine.setConfig(o.var, value));
   }
+  function saveCollapsed(next: Set<string>) {
+    collapsed = next;
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+    } catch {}
+  }
   function toggle(name: string) {
     const s = new Set(collapsed);
     s.has(name) ? s.delete(name) : s.add(name);
-    collapsed = s;
+    saveCollapsed(s);
   }
+  const allNames = $derived(["__custom", ...sections.map((x) => x.name)]);
+  const allCollapsed = $derived(allNames.every((n) => collapsed.has(n)));
+  function toggleAll() {
+    saveCollapsed(allCollapsed ? new Set() : new Set(allNames));
+  }
+  const isSet = (v: unknown) => v !== undefined && v !== null && v !== false;
 
   // PoB pads some list labels with spaces and then search keywords, which its narrow dropdown clips off.
   function listLabel(label: string | null | undefined): string {
@@ -151,18 +167,19 @@
       <input type="checkbox" bind:checked={relevantOnly} disabled={!visibility} />
       {m.config_relevant_only()}
     </label>
-    <span class="dim small">
+    <button class="btn sm ghost" onclick={toggleAll}>{allCollapsed ? m.config_expand_all() : m.config_collapse_all()}</button>
+    <span class="dim small count">
       {#if visibility}
         {m.config_apply_count({ shown: Object.values(visibility).filter(Boolean).length, total: options.length })}
       {/if}
     </span>
   </div>
   <div class="scroll">
-    <div class="section">
-      <button class="shead" onclick={() => toggle("__custom")}>
+    <section class="card custom">
+      <button class="chead" aria-expanded={!collapsed.has("__custom")} onclick={() => toggle("__custom")}>
         <span class="caret" class:open={!collapsed.has("__custom")}>▸</span>
-        <span>{m.config_custom_mods()}</span>
-        <span class="dim num">{customBlocks.length}</span>
+        <span class="cname">{m.config_custom_mods()}</span>
+        <span class="ccount num">{customBlocks.length}</span>
       </button>
       {#if !collapsed.has("__custom")}
         <div class="blocks">
@@ -208,40 +225,48 @@
           <button class="btn sm ghost addblock" onclick={() => build.run(() => engine.addCustomModBlock())}>{m.config_add_block()}</button>
         </div>
       {/if}
+    </section>
+
+    {#if sections.length === 0}
+      <p class="dim small empty">{m.config_no_match()}</p>
+    {/if}
+    <div class="cards">
+      {#each sections as sec (sec.name)}
+        {@const changed = sec.items.filter((o) => isSet(config[o.var])).length}
+        <section class="card">
+          <button class="chead" aria-expanded={!collapsed.has(sec.name)} onclick={() => toggle(sec.name)}>
+            <span class="caret" class:open={!collapsed.has(sec.name)}>▸</span>
+            <span class="cname">{sec.name}</span>
+            {#if changed}<span class="cset num">{m.config_set_count({ count: changed })}</span>{/if}
+            <span class="ccount num">{sec.items.length}</span>
+          </button>
+          {#if !collapsed.has(sec.name)}
+            <div class="items">
+              {#each sec.items as o (o.var)}
+                {@const v = config[o.var]}
+                <label class="opt" class:set={isSet(v)} title={o.tooltip ?? undefined}>
+                  <span class="olabel"><PobText text={o.label ?? o.var} /></span>
+                  {#if o.type === "check"}
+                    <input type="checkbox" checked={v === true} onchange={(e) => set(o, (e.target as HTMLInputElement).checked ? true : null)} />
+                  {:else if o.type === "list" && o.list}
+                    <select class="select sm" value={v ?? ""} onchange={(e) => { const raw = (e.target as HTMLSelectElement).value; const opt = o.list!.find((x) => String(x.val ?? "") === raw); set(o, opt ? opt.val : null); }}>
+                      <option value="">{placeholder[o.var] != null ? `(${listLabel(o.list.find((x) => String(x.val) === String(placeholder[o.var]))?.label) || placeholder[o.var]})` : "—"}</option>
+                      {#each o.list as e}
+                        <option value={String(e.val ?? "")}>{listLabel(e.label)}</option>
+                      {/each}
+                    </select>
+                  {:else if o.type === "count" || o.type === "integer" || o.type === "countAllowZero"}
+                    <input class="input sm num" type="number" value={v ?? ""} placeholder={placeholder[o.var] != null ? String(placeholder[o.var]) : ""} onchange={(e) => { const s = (e.target as HTMLInputElement).value; set(o, s === "" ? null : Number(s)); }} />
+                  {:else}
+                    <input class="input sm" type="text" value={v ?? ""} placeholder={placeholder[o.var] != null ? String(placeholder[o.var]) : ""} onchange={(e) => { const s = (e.target as HTMLInputElement).value; set(o, s === "" ? null : s); }} />
+                  {/if}
+                </label>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/each}
     </div>
-    {#each sections as s}
-      <div class="section">
-        <button class="shead" onclick={() => toggle(s.name)}>
-          <span class="caret" class:open={!collapsed.has(s.name)}>▸</span>
-          <span>{s.name}</span>
-          <span class="dim num">{s.items.length}</span>
-        </button>
-        {#if !collapsed.has(s.name)}
-          <div class="items">
-            {#each s.items as o}
-              {@const v = config[o.var]}
-              <label class="opt" class:set={v !== undefined && v !== null && v !== false} title={o.tooltip ?? o.var}>
-                <span class="olabel"><PobText text={o.label ?? o.var} /></span>
-                {#if o.type === "check"}
-                  <input type="checkbox" checked={v === true} onchange={(e) => set(o, (e.target as HTMLInputElement).checked ? true : null)} />
-                {:else if o.type === "list" && o.list}
-                  <select class="select sm" value={v ?? ""} onchange={(e) => { const raw = (e.target as HTMLSelectElement).value; const opt = o.list!.find((x) => String(x.val ?? "") === raw); set(o, opt ? opt.val : null); }}>
-                    <option value="">{placeholder[o.var] != null ? `(${listLabel(o.list.find((x) => String(x.val) === String(placeholder[o.var]))?.label) || placeholder[o.var]})` : "—"}</option>
-                    {#each o.list as e}
-                      <option value={String(e.val ?? "")}>{listLabel(e.label)}</option>
-                    {/each}
-                  </select>
-                {:else if o.type === "count" || o.type === "integer" || o.type === "countAllowZero"}
-                  <input class="input sm num" type="number" value={v ?? ""} placeholder={placeholder[o.var] != null ? String(placeholder[o.var]) : ""} onchange={(e) => { const s = (e.target as HTMLInputElement).value; set(o, s === "" ? null : Number(s)); }} />
-                {:else}
-                  <input class="input sm" type="text" value={v ?? ""} placeholder={placeholder[o.var] != null ? String(placeholder[o.var]) : ""} onchange={(e) => { const s = (e.target as HTMLInputElement).value; set(o, s === "" ? null : s); }} />
-                {/if}
-              </label>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/each}
   </div>
 </div>
 
@@ -302,33 +327,71 @@
   .scroll {
     flex: 1;
     overflow-y: auto;
+    padding: 14px;
   }
-  .section {
-    border-bottom: 1px solid var(--line-0);
+  .count {
+    margin-left: auto;
   }
-  .shead {
+  .empty {
+    margin: 4px 2px 14px;
+  }
+  .cards {
+    columns: 380px;
+    column-gap: 14px;
+  }
+  .card {
+    break-inside: avoid;
+    margin-bottom: 14px;
+    background: var(--bg-1);
+    border: 1px solid var(--line-1);
+    border-radius: var(--r-2);
+    overflow: clip;
+  }
+  .card.custom {
+    margin-bottom: 14px;
+  }
+  .chead {
     appearance: none;
     width: 100%;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
+    padding: 9px 12px;
     border: 0;
-    background: var(--bg-1);
+    border-bottom: 1px solid var(--line-1);
+    background: var(--bg-3);
     color: var(--fg-0);
+    text-align: left;
+  }
+  .chead[aria-expanded="false"] {
+    border-bottom: 0;
+  }
+  .chead:hover {
+    background: var(--bg-hover);
+  }
+  .cname {
+    flex: 1;
+    min-width: 0;
     font-size: var(--fs-sm);
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
-    cursor: pointer;
-    text-align: left;
-    position: sticky;
-    top: 0;
-    z-index: 1;
+  }
+  .ccount {
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
+  }
+  .cset {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--focus) var(--sel-mix), var(--bg-1));
+    color: var(--fg-0);
+    font-size: var(--fs-2xs);
   }
   .caret {
     display: inline-block;
-    color: var(--fg-3);
+    width: 10px;
+    color: var(--fg-2);
     transition: transform 100ms;
   }
   .caret.open {
@@ -343,7 +406,7 @@
   }
   .block {
     width: 380px;
-    background: var(--bg-1);
+    background: var(--bg-0);
     border: 1px solid var(--line-0);
     border-radius: var(--r-2);
     padding: 8px;
@@ -389,10 +452,10 @@
     display: flex;
     gap: 6px;
     align-items: baseline;
-    color: var(--red, #e06c75);
+    color: var(--bad);
   }
   .bline.partial {
-    color: var(--yellow, #d4a04c);
+    color: var(--warn);
   }
   .bline .mark {
     width: 10px;
@@ -405,41 +468,53 @@
     align-self: flex-start;
   }
   .items {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-    gap: 0 1px;
-    background: var(--line-0);
+    display: flex;
+    flex-direction: column;
   }
   .opt {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
-    padding: 4px 12px;
-    background: var(--bg-0);
+    padding: 5px 12px;
     border-bottom: 1px solid var(--line-0);
     font-size: var(--fs-sm);
     color: var(--fg-2);
-    min-height: 30px;
+    min-height: 32px;
+    cursor: pointer;
+  }
+  .opt:last-child {
+    border-bottom: 0;
+  }
+  .opt:hover {
+    background: var(--bg-hover);
+    color: var(--fg-1);
   }
   .opt.set {
     color: var(--fg-0);
+    box-shadow: inset 2px 0 0 var(--focus);
+  }
+  .opt input[type="text"],
+  .opt input[type="number"] {
+    cursor: text;
   }
   .olabel {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
   }
   .sm {
     height: 22px;
     font-size: var(--fs-xs);
   }
   .input.sm {
+    flex: none;
     width: 90px;
     text-align: right;
   }
   .select.sm {
-    max-width: 200px;
+    flex: none;
+    max-width: 180px;
   }
   .small {
     font-size: var(--fs-xs);
