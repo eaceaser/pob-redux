@@ -136,7 +136,7 @@ fn base_url(app: &AppHandle, p: &Provider) -> String {
 
 /// Chat providers and decision backends share the credential store.
 fn known(id: &str) -> Result<(), String> {
-    if PROVIDERS.iter().any(|p| p.id == id) || crate::decide::BACKENDS.iter().any(|b| b.id == id) {
+    if PROVIDERS.iter().any(|p| p.id == id) || crate::decide::BACKENDS.iter().any(|b| b.key_id == id) {
         Ok(())
     } else {
         Err(format!("unknown provider {id}"))
@@ -155,8 +155,10 @@ pub(crate) fn stored_key(app: &AppHandle, id: &str) -> Option<String> {
 }
 
 pub(crate) fn stored_keys(app: &AppHandle) -> Vec<String> {
-    let ids = PROVIDERS.iter().map(|p| p.id).chain(crate::decide::BACKENDS.iter().map(|b| b.id));
-    ids.filter_map(|id| stored_key(app, id)).collect()
+    let mut ids: Vec<&str> = PROVIDERS.iter().map(|p| p.id).chain(crate::decide::BACKENDS.iter().map(|b| b.key_id)).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.into_iter().filter_map(|id| stored_key(app, id)).collect()
 }
 
 /// Last four characters, so the user can tell which key is stored.

@@ -4,6 +4,7 @@ import type { ToolDef } from "$lib/ai/tools";
 
 export interface BackendStatus {
   id: string;
+  key_id: string;
   label: string;
   needs_key: boolean;
   keys_url: string | null;

@@ -13,6 +13,8 @@ use crate::ai;
 
 pub struct Backend {
     pub id: &'static str,
+    /// Credential slot; OpenRouter's is the chat provider's, so one key serves both.
+    pub key_id: &'static str,
     pub label: &'static str,
     pub default_base: &'static str,
     pub default_model: &'static str,
@@ -23,6 +25,7 @@ pub struct Backend {
 pub const BACKENDS: &[Backend] = &[
     Backend {
         id: "typesafe",
+        key_id: "typesafe",
         label: "TypeSafe Jev",
         default_base: "https://api.typesafe.ai",
         default_model: "jev-latest",
@@ -30,8 +33,18 @@ pub const BACKENDS: &[Backend] = &[
         keys_url: Some("https://console.typesafe.ai/keys"),
     },
     Backend {
+        id: "openrouter",
+        key_id: "openrouter",
+        label: "OpenRouter",
+        default_base: "https://openrouter.ai/api",
+        default_model: "jaredpalmer/kev-4b",
+        needs_key: true,
+        keys_url: Some("https://openrouter.ai/keys"),
+    },
+    Backend {
         id: "kev",
-        label: "Kev",
+        key_id: "kev",
+        label: "Kev (local)",
         default_base: "http://127.0.0.1:8009",
         default_model: "kev-latest",
         needs_key: false,
@@ -113,6 +126,7 @@ fn endpoint(base: &str) -> String {
 #[derive(Serialize)]
 pub struct BackendStatus {
     id: &'static str,
+    key_id: &'static str,
     label: &'static str,
     needs_key: bool,
     keys_url: Option<&'static str>,
@@ -139,9 +153,10 @@ pub fn decide_status(app: AppHandle) -> DecideStatus {
         backends: BACKENDS
             .iter()
             .map(|b| {
-                let key = ai::stored_key(&app, b.id);
+                let key = ai::stored_key(&app, b.key_id);
                 BackendStatus {
                     id: b.id,
+                    key_id: b.key_id,
                     label: b.label,
                     needs_key: b.needs_key,
                     keys_url: b.keys_url,
@@ -187,7 +202,7 @@ pub async fn decide_ask(app: AppHandle, state: Value, questions: Value, timeout_
         let b = c.active();
         (b, c.base(b), c.model(b))
     };
-    let key = ai::stored_key(&app, b.id);
+    let key = ai::stored_key(&app, b.key_id);
     if b.needs_key && key.is_none() {
         return Err(format!("no {} key stored", b.label));
     }
@@ -228,8 +243,8 @@ fn explain(b: &Backend, status: u16, body: &str) -> String {
         401 | 403 => format!("{} rejected the key.", b.label),
         404 => format!("{} has no System One endpoint at this address.", b.label),
         422 => format!("{} rejected the request: {detail}", b.label),
-        429 => format!("{} is rate limiting this key. Wait a moment and try again.", b.label),
-        503 | 529 => format!("{} is overloaded. Try again shortly.", b.label),
+        429 => format!("{} is rate limiting this key. Wait a moment and try again. {detail}", b.label),
+        503 | 529 => format!("{} is overloaded. Try again shortly. {detail}", b.label),
         _ => format!("{} returned {status}: {detail}", b.label),
     }
 }
@@ -243,8 +258,16 @@ mod tests {
         for b in BACKENDS {
             assert!(b.default_base.starts_with("http://") || b.default_base.starts_with("https://"), "{}", b.id);
             assert!(!b.default_base.ends_with('/'), "{}", b.id);
-            assert!(ai::PROVIDERS.iter().all(|p| p.id != b.id), "{} shares a key slot with a chat provider", b.id);
+            let shared = ai::PROVIDERS.iter().any(|p| p.id == b.key_id);
+            assert_eq!(shared, b.id == "openrouter", "{} key slot", b.id);
         }
+    }
+
+    #[test]
+    fn openrouter_reaches_its_systemone_route() {
+        let b = find("openrouter").unwrap();
+        assert_eq!(endpoint(b.default_base), "https://openrouter.ai/api/v1/systemone");
+        assert_eq!(endpoint("https://openrouter.ai/api/v1"), "https://openrouter.ai/api/v1/systemone");
     }
 
     #[test]

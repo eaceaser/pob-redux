@@ -69,7 +69,7 @@
   let modelDraft = $derived(dm && dm.model !== dm.default_model ? dm.model : "");
   async function saveDecideKey() {
     if (!dm || !keyDraft.trim()) return;
-    await decider.saveKey(dm.id, keyDraft.trim());
+    await decider.saveKey(dm.key_id, keyDraft.trim());
     keyDraft = "";
   }
 
@@ -373,7 +373,10 @@
                 {m.experimental_key()}
                 {#if dm.has_key}
                   <span class="hint mono">···{dm.hint}</span>
-                {:else if !dm.needs_key}
+                {/if}
+                {#if dm.key_id === "openrouter"}
+                  <span class="hint">{m.experimental_key_shared()}</span>
+                {:else if !dm.has_key && !dm.needs_key}
                   <span class="hint">{m.experimental_key_optional()}</span>
                 {/if}
                 {#if dm.keys_url}
@@ -389,15 +392,15 @@
                   onkeydown={(e) => e.key === "Enter" && saveDecideKey()}
                 />
                 <button class="btn sm" disabled={decider.busy || !keyDraft.trim()} onclick={saveDecideKey}>{m.common_save()}</button>
-                {#if dm.has_key}
-                  <button class="btn sm ghost" disabled={decider.busy} onclick={() => decider.removeKey(dm.id)}>{m.provider_remove()}</button>
+                {#if dm.has_key && dm.key_id !== "openrouter"}
+                  <button class="btn sm ghost" disabled={decider.busy} onclick={() => decider.removeKey(dm.key_id)}>{m.provider_remove()}</button>
                 {/if}
               </div>
             </div>
             <div class="opt">
               <span>
                 {m.experimental_address()}
-                <span class="hint">{m.experimental_address_hint()}</span>
+                <span class="hint">{dm.id === "openrouter" ? m.experimental_openrouter_models() : m.experimental_address_hint()}</span>
               </span>
               <div class="row">
                 <input class="input mono addr" bind:value={baseDraft} placeholder={dm.default_base} aria-label={m.experimental_address()} />

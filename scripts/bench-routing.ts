@@ -4,6 +4,7 @@
  *   bun scripts/bench-routing.ts --keyword                                   # the keyword matcher, no API
  *   TYPESAFE_API_KEY=... bun scripts/bench-routing.ts                        # Jev
  *   bun scripts/bench-routing.ts --base http://127.0.0.1:8009 --model kev-latest
+ *   OPENROUTER_API_KEY=... bun scripts/bench-routing.ts --base https://openrouter.ai/api           # Kev 4B
  *   bun scripts/bench-routing.ts --app                                       # the backend and key set in the running app
  *   ... --strategy noul      # one yes/no per tool instead of one pick-one question
  *   ... --verbose            # list every miss at the app's threshold
@@ -31,8 +32,8 @@ const has = (name: string) => argv.includes(name);
 
 const strategy = has("--keyword") ? "keyword" : (flag("--strategy") ?? "choice");
 const base = (flag("--base") ?? "https://api.typesafe.ai").replace(/\/+$/, "");
-const model = flag("--model") ?? (base.includes("typesafe") ? "jev-latest" : "kev-latest");
-const key = process.env.TYPESAFE_API_KEY ?? process.env.KEV_API_KEY ?? "";
+const model = flag("--model") ?? (base.includes("typesafe") ? "jev-latest" : base.includes("openrouter") ? "jaredpalmer/kev-4b" : "kev-latest");
+const key = (base.includes("openrouter") ? process.env.OPENROUTER_API_KEY : process.env.TYPESAFE_API_KEY ?? process.env.KEV_API_KEY) ?? "";
 const APP_MIN = 0.15;
 const APP_MAX = 3;
 const PRICE_PER_TOKEN = 0.042 / 1e6;
