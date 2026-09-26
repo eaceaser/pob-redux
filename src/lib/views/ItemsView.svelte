@@ -60,8 +60,7 @@
   let detailLoading = $state(false);
   let previewSlot = $state("");
   let detailPane = $state<HTMLDivElement | undefined>();
-  let detailFocus: HTMLElement | null = null;
-  let scrollAnchor: { pane: HTMLDivElement; element: HTMLElement | null; top: number; scrollTop: number } | null = null;
+  let scrollPosition: { pane: HTMLDivElement; scrollTop: number } | null = null;
   const scrollReserves = new WeakMap<HTMLDivElement, { basePadding: number; height: number; restoring: boolean }>();
   let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
   let previewStamp = 0;
@@ -84,17 +83,14 @@
     previewLoading = false;
   }
 
-  function captureDetailAnchor() {
+  function captureDetailScroll() {
     const pane = detailPane;
     if (!pane) return;
-    const active = document.activeElement;
-    const element = active instanceof HTMLElement && pane.contains(active) ? active
-      : detailFocus?.isConnected && pane.contains(detailFocus) ? detailFocus : null;
-    scrollAnchor = { pane, element, top: element?.getBoundingClientRect().top ?? 0, scrollTop: pane.scrollTop };
+    scrollPosition = { pane, scrollTop: pane.scrollTop };
   }
 
   function setAffixPending(pending: boolean) {
-    if (pending) captureDetailAnchor();
+    if (pending) captureDetailScroll();
     affixPending = pending;
   }
 
@@ -124,8 +120,8 @@
 
   function holdDetailScroll(pane: HTMLDivElement | undefined) {
     if (!pane) return () => {};
-    const anchor = scrollAnchor?.pane === pane ? scrollAnchor : { pane, element: null, top: 0, scrollTop: pane.scrollTop };
-    scrollAnchor = null;
+    const scrollTop = scrollPosition?.pane === pane ? scrollPosition.scrollTop : pane.scrollTop;
+    scrollPosition = null;
     const state = reserveState(pane);
     state.restoring = true;
     const held = [pane.querySelector<HTMLElement>(".ttbox, .frame"), pane.querySelector<HTMLElement>("fieldset.controls")]
@@ -135,22 +131,23 @@
         element.style.minHeight = `${element.getBoundingClientRect().height}px`;
         return { element, minHeight };
       });
-    function restoreAnchor() {
+    function restoreScroll() {
       if (!pane || !pane.isConnected || pane !== detailPane) return;
       setScrollReserve(pane, 0);
-      const element = anchor.element?.isConnected && pane.contains(anchor.element) ? anchor.element : null;
-      const scrollTop = element ? pane.scrollTop + element.getBoundingClientRect().top - anchor.top : anchor.scrollTop;
       setScrollReserve(pane, Math.max(0, Math.ceil(scrollTop + pane.clientHeight - pane.scrollHeight)));
       pane.scrollTop = scrollTop;
     }
     return () => {
       void tick().then(() => {
         requestAnimationFrame(() => {
-          restoreAnchor();
+          restoreScroll();
           requestAnimationFrame(() => {
             for (const { element, minHeight } of held) element.style.minHeight = minHeight;
-            restoreAnchor();
-            state.restoring = false;
+            restoreScroll();
+            requestAnimationFrame(() => {
+              restoreScroll();
+              state.restoring = false;
+            });
           });
         });
       });
@@ -203,7 +200,7 @@
 
   async function customizePreview(edit: ItemCustomizationEdit) {
     if (!preview || previewLoading || previewCommitting) return false;
-    if (!affixPending || scrollAnchor?.pane !== detailPane) captureDetailAnchor();
+    if (!affixPending || scrollPosition?.pane !== detailPane) captureDetailScroll();
     const stamp = ++previewStamp;
     previewLoading = true;
     previewError = null;
@@ -217,7 +214,7 @@
       if (alive && stamp === previewStamp) previewError = String(e);
       return false;
     } finally {
-      scrollAnchor = null;
+      scrollPosition = null;
       if (alive && stamp === previewStamp) previewLoading = false;
     }
   }
@@ -338,7 +335,7 @@
   async function customizeSavedItem(edit: ItemCustomizationEdit) {
     const itemId = selectedItem;
     if (itemId == null) return;
-    if (!affixPending || scrollAnchor?.pane !== detailPane) captureDetailAnchor();
+    if (!affixPending || scrollPosition?.pane !== detailPane) captureDetailScroll();
     const result = await build.run(async () => {
       const customization = await engine.customizeItem({ itemId, generation }, edit);
       pendingDetail = { itemId, customization };
@@ -346,7 +343,7 @@
     });
     if (!result) {
       if (pendingDetail?.itemId === itemId) pendingDetail = null;
-      scrollAnchor = null;
+      scrollPosition = null;
     }
     return result;
   }
@@ -728,8 +725,7 @@
           <span class="label">{m.items_preview_title()}</span>
           <button class="btn sm ghost" onclick={discardPreview} disabled={itemBusy}>{m.items_preview_discard()}</button>
         </div>
-        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}
-          onfocusin={(e) => (detailFocus = e.target instanceof HTMLElement ? e.target : null)}>
+        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}>
           <p class="dim small">{m.items_preview_note()}</p>
           {#if preview.tooltip.header}
             <ItemFrame lines={preview.tooltip.lines} header={preview.tooltip.header} runic={preview.tooltip.runic} uniqueGem={preview.tooltip.uniqueGem} />
@@ -770,8 +766,7 @@
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
           <button class="btn sm ghost" onclick={() => selectItem(null)} disabled={itemBusy}>{m.items_back_to_database()}</button>
         </div>
-        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}
-          onfocusin={(e) => (detailFocus = e.target instanceof HTMLElement ? e.target : null)}>
+        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}>
           {#if detail.tt.header}
             <div class="ttbox">
               <ItemFrame lines={detail.tt.lines} header={detail.tt.header} runic={detail.tt.runic} uniqueGem={detail.tt.uniqueGem} itemArt={detail.tt.itemArt} />
