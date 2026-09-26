@@ -4545,7 +4545,6 @@ local function affixSlotOptions(item, affixType, tableName, outputIndex)
 	return opts
 end
 
--- Keep these helpers on M to stay within Lua's top-level local variable limit.
 M._affix = {}
 
 function M._affix.render(mod, range)

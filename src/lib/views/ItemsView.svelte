@@ -86,7 +86,6 @@
     const scrollTop = pane.scrollTop;
     const tooltip = pane.querySelector<HTMLElement>(".ttbox, .frame");
     const minHeight = tooltip?.style.minHeight ?? "";
-    // WebKit briefly removes tooltip lines before rendering replacements, which can clamp scrollTop.
     if (tooltip) tooltip.style.minHeight = `${tooltip.getBoundingClientRect().height}px`;
     return () => {
       void tick().then(() => {
