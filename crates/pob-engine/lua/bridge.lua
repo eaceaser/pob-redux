@@ -4640,7 +4640,7 @@ function M._affix.rollTiers(item, tableName, index, seriesId, options)
 		local steps = array({})
 		local hasRange = table.concat(mod, "/"):match("%(%-?[%d%.]+%-%-?[%d%.]+%)") ~= nil
 		local lastValue
-		local prior, nextTier = tiers[tierIndex - 1], tiers[tierIndex + 1]
+		local prior, nextTier = tiers[tierIndex - 1], tierIndex + 1 < #tiers and tiers[tierIndex + 1] or nil
 		local flip = prior and flipRange(item.affixes[prior], mod)
 			or not prior and nextTier and flipRange(mod, item.affixes[nextTier]) or false
 		for percent = 0, hasRange and 100 or 0 do

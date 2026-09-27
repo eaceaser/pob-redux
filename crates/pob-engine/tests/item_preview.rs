@@ -753,6 +753,39 @@ fn affix_family_edit_chooses_and_returns_rolls_in_one_command() {
         .any(|tier| tier["modId"] == discrete_edit["affixes"]["suffixes"][0]["modId"]));
     assert_eq!(snapshot(&engine), before);
 
+    if poe1 {
+        let charm = "Rarity: Rare\nExposure charm\nCorvine Charm\nCrafted: true\nItem Level: 80\nImplicits: 0";
+        let charm_data = engine
+            .call("item_customization", &json!({"raw":charm}))
+            .unwrap();
+        let exposure = charm_data["affixes"]["prefixes"][0]["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|series| {
+                series["modIds"] == json!([
+                    "AnimalCharmExposureExtraResistance1",
+                    "AnimalCharmExposureExtraResistance2"
+                ])
+            })
+            .unwrap();
+        let rolls = engine.call("item_affix_rolls", &json!({
+            "raw":charm, "table":"prefixes", "index":1, "seriesId":exposure["id"]
+        })).unwrap();
+        assert_eq!(rolls["tiers"][0]["flipped"], false);
+        assert_eq!(rolls["tiers"][1]["flipped"], true);
+        let edited = engine.call("item_customize", &json!({
+            "raw":charm, "operation":"affix", "table":"prefixes", "index":1,
+            "seriesId":exposure["id"], "relativePosition":0.0
+        })).unwrap();
+        assert_eq!(
+            edited["affixes"]["prefixes"][0]["modId"],
+            "AnimalCharmExposureExtraResistance1"
+        );
+        assert_eq!(edited["affixes"]["prefixes"][0]["range"], 0.0);
+        assert_eq!(snapshot(&engine), before);
+    }
+
     let saved = engine.call("item_edit", &json!({"text":raw})).unwrap();
     let edited = engine
         .call("item_customize", &json!({
