@@ -61,13 +61,15 @@
   let previewSlot = $state("");
   let detailPane = $state<HTMLDivElement | undefined>();
   let scrollPosition: { pane: HTMLDivElement; scrollTop: number } | null = null;
-  const scrollReserves = new WeakMap<HTMLDivElement, {
+  type ScrollReserve = {
+    pane: HTMLDivElement;
     spacer: HTMLDivElement;
     height: number;
     restoring: boolean;
     scrollTop: number;
     observer?: ResizeObserver;
-  }>();
+  };
+  let scrollReserve: ScrollReserve | null = null;
   let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
   let previewStamp = 0;
   let alive = true;
@@ -102,27 +104,25 @@
   }
 
   function reserveState(pane: HTMLDivElement) {
-    let state = scrollReserves.get(pane);
-    if (!state) {
-      state = { spacer: pane.querySelector<HTMLDivElement>(".scrollreserve")!, height: 0, restoring: false, scrollTop: 0 };
-      scrollReserves.set(pane, state);
+    if (scrollReserve?.pane !== pane) {
+      scrollReserve?.observer?.disconnect();
+      scrollReserve = { pane, spacer: pane.querySelector<HTMLDivElement>(".scrollreserve")!, height: 0, restoring: false, scrollTop: 0 };
     }
-    return state;
+    return scrollReserve;
   }
 
-  function setScrollReserve(pane: HTMLDivElement, height: number) {
-    const state = reserveState(pane);
+  function setScrollReserve(state: ScrollReserve, height: number) {
     state.height = height;
     state.spacer.style.height = height ? `${height}px` : "";
   }
 
   function releaseScrollReserve(event: Event) {
     const pane = event.currentTarget as HTMLDivElement;
-    const state = scrollReserves.get(pane);
-    if (!state || state.restoring) return;
+    const state = scrollReserve;
+    if (state?.pane !== pane || state.restoring) return;
     state.scrollTop = pane.scrollTop;
     if (state.height && pane.scrollTop <= pane.scrollHeight - state.height - pane.clientHeight) {
-      setScrollReserve(pane, 0);
+      setScrollReserve(state, 0);
     }
   }
 
@@ -133,16 +133,16 @@
     const state = reserveState(pane);
     state.scrollTop = scrollTop;
     state.restoring = true;
-    if (scrollTop > 0) setScrollReserve(pane, Math.max(state.height, scrollTop + pane.clientHeight));
+    if (scrollTop > 0) setScrollReserve(state, Math.max(state.height, scrollTop + pane.clientHeight));
     state.observer?.disconnect();
     state.observer = undefined;
     return () => {
       void tick().then(() => {
-        if (!alive || !pane.isConnected || pane !== detailPane) return;
-        restoreDetailScroll(pane);
+        if (!alive || !pane.isConnected || pane !== detailPane || scrollReserve !== state) return;
+        restoreDetailScroll(state);
         const observer = new ResizeObserver(() => {
           state.restoring = true;
-          restoreDetailScroll(pane);
+          restoreDetailScroll(state);
           state.restoring = false;
           observer.disconnect();
           if (state.observer === observer) state.observer = undefined;
@@ -157,17 +157,23 @@
     };
   }
 
-  function restoreDetailScroll(pane: HTMLDivElement) {
-    if (!pane.isConnected || pane !== detailPane) return;
-    const state = reserveState(pane);
+  function restoreDetailScroll(state: ScrollReserve) {
+    const pane = state.pane;
+    if (!pane.isConnected || pane !== detailPane || scrollReserve !== state) return;
     const naturalHeight = pane.scrollHeight - state.height;
-    setScrollReserve(pane, Math.max(0, Math.ceil(state.scrollTop + pane.clientHeight - naturalHeight)));
+    setScrollReserve(state, Math.max(0, Math.ceil(state.scrollTop + pane.clientHeight - naturalHeight)));
     pane.scrollTop = state.scrollTop;
   }
 
   $effect(() => {
     const pane = detailPane;
-    return () => { if (pane) scrollReserves.get(pane)?.observer?.disconnect(); };
+    return () => {
+      const state = scrollReserve;
+      if (state && state.pane === pane) {
+        state.observer?.disconnect();
+        scrollReserve = null;
+      }
+    };
   });
 
   async function requestPreview(
