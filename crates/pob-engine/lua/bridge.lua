@@ -154,6 +154,23 @@ end
 local GAME = (tostring(APP_NAME or ""):find("PoE2", 1, true) or tostring(liveTargetVersion or ""):match("^0_")) and "poe2" or "poe1"
 local IS_POE2 = GAME == "poe2"
 
+-- CalcSetup's addExtraSupports sets fromItem on the shared data.skills support, so it leaks into
+-- every later build; PoB resets its caches through wipeGlobalCache, so restore the shipped flags there.
+do
+	local shipped = {}
+	for id, ge in pairs(data.skills) do
+		if ge.support then shipped[id] = ge.fromItem or false end
+	end
+	local wipe = wipeGlobalCache
+	function wipeGlobalCache(...)
+		for id, flag in pairs(shipped) do
+			local ge = data.skills[id]
+			if ge and (ge.fromItem or false) ~= flag then ge.fromItem = flag or nil end
+		end
+		return wipe(...)
+	end
+end
+
 -- PoE1 keeps set copy/rename/delete inside its list controls and has no
 -- loadout API; PoE2's methods are supplied here so the rest of the bridge is
 -- the same for both games. Mirrors ItemSetListControl.lua,
@@ -294,18 +311,33 @@ if not IS_POE2 then
 			end
 			return names
 		end
+		-- As the buildLoadouts dropdown: an exact title, else the set carrying the name's {linkId}.
 		function build:GetLoadoutByName(name)
-			local specId
-			for i, spec in ipairs(self.treeTab.specList) do
-				if (spec.title or "Default") == name then specId = i break end
+			local link = name:match("%{(%w+)%}")
+			if link and not self.treeListSpecialLinks then self:SyncLoadouts() end
+			local function linked(links)
+				return link and links and links[link] and links[link].setId
 			end
+			local function setId(orderList, sets, links)
+				if #orderList == 1 then return orderList[1] end
+				return setByTitle(orderList, sets, name) or linked(links)
+			end
+			local specId
+			for i, specName in ipairs(self.treeTab:GetSpecList()) do
+				if specName == name then specId = i break end
+			end
+			for i, spec in ipairs(self.treeTab.specList) do
+				if specId then break end
+				if (spec.title or "Default") == name then specId = i end
+			end
+			specId = specId or linked(self.treeListSpecialLinks)
 			if not specId then return nil end
 			return {
 				name = name,
 				specId = specId,
-				itemSetId = setByTitle(self.itemsTab.itemSetOrderList, self.itemsTab.itemSets, name),
-				skillSetId = setByTitle(self.skillsTab.skillSetOrderList, self.skillsTab.skillSets, name),
-				configSetId = setByTitle(self.configTab.configSetOrderList, self.configTab.configSets, name),
+				itemSetId = setId(self.itemsTab.itemSetOrderList, self.itemsTab.itemSets, self.itemListSpecialLinks),
+				skillSetId = setId(self.skillsTab.skillSetOrderList, self.skillsTab.skillSets, self.skillListSpecialLinks),
+				configSetId = setId(self.configTab.configSetOrderList, self.configTab.configSets, self.configListSpecialLinks),
 			}
 		end
 		function build:SetActiveLoadout(lo)
@@ -382,7 +414,11 @@ end
 -- and the base support socket count that comes with it.
 local GEM_TIER_LEVEL = { 1, 3, 6, 10, 14, 18, 22, 26, 31, 36, 41, 46, 52, 58, 64, 66, 72, 78, 84, 90 }
 
-local function gemReqLevel(tier)
+local function gemReqLevel(tier, gemData)
+	if not IS_POE2 then
+		local lv = gemData and gemData.grantedEffect and gemData.grantedEffect.levels and gemData.grantedEffect.levels[1]
+		return lv and lv.levelRequirement or nil
+	end
 	return tier and GEM_TIER_LEVEL[tier] or nil
 end
 
@@ -503,7 +539,15 @@ end
 -- Skills that need no keypress once set up: persistent buffs stay on, triggers
 -- and meta gems fire from their own condition. Warcries carry PoB's `trigger`
 -- tag because they exert attacks, but the player still presses them.
-local function gemPressClass(gemData)
+local function gemPressClass(gemData, activeSkill)
+	if not IS_POE2 then
+		-- PoE1 gems carry no persistent or meta tags; the calculated skill types say the same.
+		local types = activeSkill and activeSkill.skillTypes or (gemData and gemData.grantedEffect and gemData.grantedEffect.skillTypes)
+		if not types then return "active" end
+		if types[SkillType.Triggered] then return "trigger" end
+		if types[SkillType.HasReservation] or types[SkillType.Stance] then return "persistent" end
+		return "active"
+	end
 	local tags = gemData and gemData.tags
 	if not tags then return "active" end
 	if tags.warcry then return "active" end
@@ -516,7 +560,7 @@ end
 -- Quest passive points are campaign progress, not level, so this is the total
 -- available once an act is finished. PoE2 0.5.5: 4 per act plus 8 across the
 -- interludes; acts 5 and 6 replace the interludes at 1.0. PoE1: PoB's own act
--- table (Build.lua), 23 points over ten acts, the bandit reward included.
+-- table (Build.lua), 23 points over ten acts; killing the bandits adds 1 through ExtraPoints.
 local QUEST_POINTS_BY_ACT = { 4, 8, 12, 16 }
 local QUEST_POINTS_MAX = 24
 local POE1_ACTS = {
@@ -526,20 +570,27 @@ local POE1_ACTS = {
 	{ level = 64, questPoints = 20 }, { level = 67, questPoints = 23 },
 }
 
-local function questPointsForLevel(level)
+local function questPointsForLevel(level, extra)
+	extra = extra or 0
 	if not IS_POE2 then
 		local act = 1
 		while POE1_ACTS[act + 1] and level >= POE1_ACTS[act + 1].level do act = act + 1 end
-		return POE1_ACTS[act].questPoints, POE1_ACTS[math.min(act + 1, #POE1_ACTS)].questPoints
+		-- The kill-all bandit point is in ExtraPoints from level 1, but Build.lua only counts it after Act 2.
+		local input = build and build.configTab and build.configTab.input or {}
+		local bandit = input.bandit or (build and build.bandit)
+		local killAll = bandit ~= "Oak" and bandit ~= "Kraityn" and bandit ~= "Alira"
+		local function extraAt(a) return extra - ((killAll and a <= 2) and 1 or 0) end
+		local high = math.min(act + 1, #POE1_ACTS)
+		return POE1_ACTS[act].questPoints, POE1_ACTS[high].questPoints, extraAt(act), extraAt(high)
 	end
 	-- Act boundaries by level, used only to bracket the budget when the caller
 	-- has not said how far through the campaign they are.
 	local act = 0
-	if level >= 60 then return QUEST_POINTS_MAX, QUEST_POINTS_MAX end
+	if level >= 60 then return QUEST_POINTS_MAX, QUEST_POINTS_MAX, extra, extra end
 	if level >= 45 then act = 4 elseif level >= 32 then act = 3 elseif level >= 20 then act = 2 elseif level >= 12 then act = 1 end
 	local low = act > 0 and QUEST_POINTS_BY_ACT[act] or 0
 	local high = QUEST_POINTS_BY_ACT[math.min(act + 1, 4)] or QUEST_POINTS_MAX
-	return low, high
+	return low, high, extra, extra
 end
 
 local function decodeCode(code)
@@ -1411,8 +1462,8 @@ M.get_tree_state = function()
 	end
 	local used, ascUsed, secondaryAscUsed, socketCount, ws1Used, ws2Used = countAllocNodes(spec)
 	local level = build.characterLevel or 1
-	local questLow, questHigh = questPointsForLevel(level)
 	local extra = (build.calcsTab.mainOutput or {}).ExtraPoints or 0
+	local questLow, questHigh, extraLow, extraHigh = questPointsForLevel(level, extra)
 	return {
 		treeVersion = spec.treeVersion,
 		classId = spec.curClassId,
@@ -1441,8 +1492,8 @@ M.get_tree_state = function()
 		questPointsMin = questLow,
 		questPointsMax = questHigh,
 		extraPoints = extra,
-		pointsAvailableMin = math.max(0, level - 1) + questLow + extra,
-		pointsAvailableMax = math.max(0, level - 1) + questHigh + extra,
+		pointsAvailableMin = math.max(0, level - 1) + questLow + extraLow,
+		pointsAvailableMax = math.max(0, level - 1) + questHigh + extraHigh,
 		ascendancyPointsAvailable = 8,
 		overrides = overrides,
 		sockets = sockets,
@@ -2425,6 +2476,16 @@ end
 M.alloc_node = function(p)
 	ensureBuild()
 	local node = requireNode(p)
+	if not IS_POE2 and node.type == "Mastery" and node.masteryEffects then
+		if p.effect ~= nil then return M.select_mastery(p) end
+		if not node.alloc then
+			local options = {}
+			for _, o in ipairs(masteryOptions(node)) do
+				if o.takenBy == null then options[#options + 1] = string.format("%d (%s)", o.effect, table.concat(o.stats, " / ")) end
+			end
+			error(string.format("mastery %d needs an effect: pass effect as one of %s", node.id, table.concat(options, "; ")), 0)
+		end
+	end
 	build.spec:AllocNode(node)
 	build.spec:AddUndoState()
 	refresh()
@@ -2967,6 +3028,18 @@ end
 
 M.get_skills = function()
 	ensureBuild()
+	-- SkillsTab's slot.count.shown; local here because the main chunk is at LuaJIT's 200-local limit.
+	local function gemCountable(group, gi, gem)
+		if IS_POE2 and gi == 1 and (group.source or group.sourceItem or group.sourceNode) then return false end
+		local list = gem.gemData and gem.gemData.grantedEffectList or { gem.grantedEffect }
+		for n, ge in ipairs(list) do
+			local hidden = IS_POE2 and ge.hideFromSideBar or (not IS_POE2 and ge.unsupported)
+			if not ge.support and not hidden and (not ge.hasGlobalEffect or gem["enableGlobal" .. n]) then
+				return true
+			end
+		end
+		return false
+	end
 	local groups = array({})
 	for i, group in ipairs(build.skillsTab.socketGroupList) do
 		local gems = array({})
@@ -2986,6 +3059,7 @@ M.get_skills = function()
 				color = opt(gem.color),
 				socketColour = opt(gd and gd.grantedEffect and ({ "R", "G", "B", "W" })[gd.grantedEffect.color]),
 				count = opt(gem.count),
+				countable = gemCountable(group, gi, gem),
 				errMsg = opt(gem.errMsg),
 				-- Set for skills the game grants (default weapon attacks, Raise
 				-- Shield, unique-granted skills): not a socket the player filled.
@@ -3421,7 +3495,7 @@ M.gem_names = function()
 				kind = "support"
 			else
 				local press = gemPressClass(gemData)
-				if press == "persistent" or press == "meta" then kind = "spirit" end
+				if IS_POE2 and (press == "persistent" or press == "meta") then kind = "spirit" end
 			end
 			out[#out + 1] = { name = gemData.name, gemId = gemId, kind = kind }
 		end
@@ -3451,12 +3525,17 @@ M.skill_info = function(p)
 	local tags = {}
 	for k, v in pairs(gd.tags or {}) do if v then tags[#tags + 1] = k end end
 	table.sort(tags)
+	local calculated
+	local env = build.calcsTab.mainEnv
+	for _, activeSkill in ipairs(env and env.player and env.player.activeSkillList or {}) do
+		if activeSkill.activeEffect and activeSkill.activeEffect.srcInstance == gem then calculated = activeSkill break end
+	end
 	return {
 		name = gd.name,
 		gemId = gd.id,
 		level = gem.level,
 		support = (gd.grantedEffect and gd.grantedEffect.support) and true or false,
-		press = gemPressClass(gd),
+		press = gemPressClass(gd, calculated),
 		tags = tags,
 		lines = lines,
 	}
@@ -3629,7 +3708,10 @@ M.set_gem = function(p)
 	if p.level ~= nil then gem.level = tonumber(p.level) end
 	if p.quality ~= nil then gem.quality = tonumber(p.quality) end
 	if p.enabled ~= nil then gem.enabled = p.enabled end
-	if p.count ~= nil then gem.count = tonumber(p.count) end
+	if p.count ~= nil then
+		local count = math.max(0, tonumber(p.count) or 1)
+		gem.count = IS_POE2 and count or math.floor(count)
+	end
 	if p.gemId ~= nil then gem.gemId = p.gemId; gem.skillId = nil end
 	if p.nameSpec ~= nil then gem.nameSpec = p.nameSpec end
 	build.skillsTab:ProcessSocketGroup(group)
@@ -3673,8 +3755,13 @@ M.list_gems = function(p)
 			include = (gemData.name and gemData.name:lower():find(query, 1, true)) ~= nil
 				or gemId:lower():find(query, 1, true) ~= nil
 		end
+		-- PoE1's gem picker hides legacy gems unless the Skills tab asks for them.
+		if include and not IS_POE2 and gemData.grantedEffect and gemData.grantedEffect.legacy
+			and not (build and build.skillsTab and build.skillsTab.showLegacyGems) then
+			include = false
+		end
 		local tier = gemData.Tier and gemData.Tier > 0 and gemData.Tier or nil
-		local reqLevel = gemReqLevel(tier)
+		local reqLevel = gemReqLevel(tier, gemData)
 		if include and maxLevel and reqLevel and reqLevel > maxLevel then
 			hiddenByLevel = hiddenByLevel + 1
 			include = false
@@ -3704,8 +3791,8 @@ M.list_gems = function(p)
 					tags = gemData.tagString and opt(gemData.tagString) or null,
 					color = opt(gemData.color),
 					tier = opt(tier),
-					-- The character level the gem needs. Not in PoB's data; derived
-					-- from the tier ladder.
+					-- The character level the gem needs: PoE2 derives it from the tier
+					-- ladder, PoE1 reads the gem's own level-1 requirement.
 					req_level = opt(reqLevel),
 					-- Support sockets the gem has before Jeweller's Orbs. Scales with
 					-- tier, so a low-tier gem cannot hold five supports.
@@ -3728,9 +3815,10 @@ M.list_gems = function(p)
 	-- Earliest first: a caller building for a given level wants the gems that
 	-- exist by then, not an alphabetical mix of tier 1 and tier 14. An untiered
 	-- gem carries the `null` sentinel rather than nil, so sort on type.
+	local rank = IS_POE2 and "tier" or "req_level"
 	table.sort(out, function(a, b)
-		local at = type(a.tier) == "number" and a.tier or 99
-		local bt = type(b.tier) == "number" and b.tier or 99
+		local at = type(a[rank]) == "number" and a[rank] or 999
+		local bt = type(b[rank]) == "number" and b[rank] or 999
 		if at ~= bt then return at < bt end
 		return (a.name or "") < (b.name or "")
 	end)
@@ -3742,7 +3830,7 @@ M.list_gems = function(p)
 		hiddenByLevel = hiddenByLevel,
 		-- Each support socketed adds 5 to one build-wide requirement source for
 		-- its colour, compared against the other sources rather than added.
-		supportAttributeCost = 5,
+		supportAttributeCost = IS_POE2 and 5 or nil,
 	}
 end
 
@@ -3782,11 +3870,12 @@ M.list_valid_supports = function(p)
 	end
 	local limit = tonumber(p.limit) or 0
 	for gemId, gemData in pairs(data.gems) do
-		if gemData.grantedEffect and gemData.grantedEffect.support then
+		local hidden = not IS_POE2 and gemData.grantedEffect and gemData.grantedEffect.legacy and not build.skillsTab.showLegacyGems
+		if gemData.grantedEffect and gemData.grantedEffect.support and not hidden then
 			local ok, supports = pcall(calcLib.canGrantedEffectSupportActiveSkill, gemData.grantedEffect, activeSkill)
 			if ok and supports then
 				local tier = gemData.Tier and gemData.Tier > 0 and gemData.Tier or nil
-				local reqLevel = gemReqLevel(tier)
+				local reqLevel = gemReqLevel(tier, gemData)
 				if not (reqLevel and reqLevel > level) then
 					local row = {
 						gemId = gemId,
@@ -3822,7 +3911,7 @@ M.list_valid_supports = function(p)
 	-- when it exceeds every item and skill gem requirement for that attribute.
 	return {
 		supports = results,
-		attributeCostPerSupport = 5,
+		attributeCostPerSupport = IS_POE2 and 5 or nil,
 		requirements = requirementSummary(),
 		characterLevel = level,
 		dpsField = opt(dpsField),
@@ -4333,7 +4422,7 @@ M.list_affixes = function(p)
 	p = p or {}
 	local entry = findBase(p.type, p.baseName)
 	local item = makeCraftedItem(entry, "RARE", "Pool")
-	local itemLevel = tonumber(p.itemLevel) or 82
+	local itemLevel = tonumber(p.itemLevel) or (IS_POE2 and 82 or 86)
 	item.itemLevel = itemLevel
 	local query = p.query and tostring(p.query):lower() or nil
 	if not item.affixes then
@@ -4410,7 +4499,7 @@ M.craft_rare = function(p)
 	range = math.max(0, math.min(1, range))
 	local item = makeCraftedItem(entry, "RARE", p.title, range)
 	if not item.affixes then error(entry.name .. " cannot carry affixes", 0) end
-	local itemLevel = tonumber(p.itemLevel) or 82
+	local itemLevel = tonumber(p.itemLevel) or (IS_POE2 and 82 or 86)
 	item.itemLevel = itemLevel
 	local chosen = array({})
 	local usedGroups = {}
@@ -8105,14 +8194,20 @@ function keystone.profile()
 		local ok, v = pcall(function() return env.modDB:Sum("BASE", nil, name) end)
 		return ok and tonumber(v) or 0
 	end
-	local esToMana = math.min(sum("EnergyShieldConvertToMana"), 100)
+	local function flag(name)
+		local ok, v = pcall(function() return env.modDB:Flag(nil, name) end)
+		return ok and v == true
+	end
+	-- PoE1's Eldritch Battery and Iron Reflexes are flags; PoE2's are conversions.
+	local esToMana = IS_POE2 and math.min(sum("EnergyShieldConvertToMana"), 100) or 0
 	local manaFirst = math.min(tonumber(o.sharedMindOverMatter) or 0, 100)
 	return {
 		chaosImmune = o.ChaosInoculation == true,
 		noMana = (o.Mana or 0) <= 0,
 		esToMana = esToMana,
+		esProtectsMana = not IS_POE2 and flag("EnergyShieldProtectsMana"),
 		manaFirst = manaFirst,
-		evasionToArmour = math.min(sum("EvasionConvertToArmour"), 100),
+		evasionToArmour = IS_POE2 and math.min(sum("EvasionConvertToArmour"), 100) or (flag("IronReflexes") and 100 or 0),
 		manaPool = esToMana > 0 or manaFirst > 0,
 	}
 end
@@ -8144,6 +8239,9 @@ function keystone.rules(k)
 	end
 	if k.esToMana > 0 then
 		rules[#rules + 1] = string.format("%d%% of energy shield becomes mana (Eldritch Battery): energy shield lines raise mana.", k.esToMana)
+	end
+	if k.esProtectsMana then
+		rules[#rules + 1] = "Energy shield protects mana instead of life (Eldritch Battery): energy shield lines stop protecting life."
 	end
 	if k.manaFirst > 0 then
 		rules[#rules + 1] = string.format("%d%% of damage is taken from mana before life (Mind Over Matter): mana is a defensive pool, so mana lines count as defence.", k.manaFirst)
@@ -8370,7 +8468,7 @@ local function pickBaseForSlot(slotName, level, o)
 		end
 		return nil, "no " .. family .. " base at level " .. level
 	end
-	return nil, "slot is not optimised"
+	return nil, "slot is not optimized"
 end
 
 local function optimiseSlot(slotName, cfg, w, base, itemLevel, range, title)
@@ -8574,9 +8672,9 @@ local function runGearOpt(p)
 		bases = type(p.bases) == "table" and p.bases or nil,
 		keys = keystone.profile(),
 	}
-	-- Mods need an item level the character could have found; past 82 nothing
+	-- Mods need an item level the character could have found; past 82 (PoE1: 86) nothing
 	-- new rolls.
-	local itemLevel = tonumber(p.itemLevel) or math.min(82, build.characterLevel or 82)
+	local itemLevel = tonumber(p.itemLevel) or math.min(IS_POE2 and 82 or 86, build.characterLevel or 86)
 	local range = tonumber(p.range)
 	if range == nil then range = 1 end
 	range = math.max(0, math.min(1, range))
@@ -8611,7 +8709,7 @@ local function runGearOpt(p)
 			optProgress(i - 1, #slots, slotName, slotName)
 			coroutine.yield()
 			local stepBefore = optHeadline(build.calcsTab.mainOutput or {})
-			local title = (p.titlePrefix or "Optimised") .. " " .. slotName
+			local title = (p.titlePrefix or "Optimized") .. " " .. slotName
 			local prop, why = optimiseSlot(slotName, cfg, w, before, itemLevel, range, title)
 			if prop then
 				-- Equip it for the rest of the run so the next slot is scored
@@ -8640,7 +8738,7 @@ local function runGearOpt(p)
 	for _, item in ipairs(added) do build.itemsTab:DeleteItem(item, true) end
 	build.itemsTab:PopulateSlots()
 	refresh()
-	if not ok then error("gear optimiser failed: " .. tostring(err), 0) end
+	if not ok then error("gear optimizer failed: " .. tostring(err), 0) end
 	optProgress(#slots, #slots, nil, "done")
 	local d = optDelta(before, after)
 	local parts = {}
@@ -8688,14 +8786,26 @@ M.set_gem_levels = function(p)
 	ensureBuild()
 	p = p or {}
 	local level = tonumber(p.level) or build.characterLevel or 1
-	local cap = maxGemLevelFor(level)
+	local cap = IS_POE2 and maxGemLevelFor(level) or nil
 	local changed = 0
 	for _, group in ipairs(build.skillsTab.socketGroupList) do
 		for _, gem in ipairs(group.gemList) do
 			local gd = gem.gemData
-			if gd and gd.grantedEffect and not gd.grantedEffect.support then
-				local max = gd.naturalMaxLevel or 20
-				local want = math.min(cap, max)
+			if gd and gd.grantedEffect and (not IS_POE2 or not gd.grantedEffect.support) then
+				local want
+				if IS_POE2 then
+					want = math.min(cap, gd.naturalMaxLevel or 20)
+				else
+					-- PoE1 gem levels, supports and corrupted 21s included, carry their own requirement; only lower.
+					local levels = gd.grantedEffect.levels or {}
+					want = gem.level
+					if levels[gem.level] and (levels[gem.level].levelRequirement or 0) > level then
+						want = 1
+						for i = 1, gem.level do
+							if levels[i] and (levels[i].levelRequirement or 0) <= level then want = i end
+						end
+					end
+				end
 				if gem.level ~= want then
 					gem.level = want
 					changed = changed + 1
@@ -8706,7 +8816,7 @@ M.set_gem_levels = function(p)
 	end
 	build.skillsTab:AddUndoState()
 	refresh()
-	return { level = level, gemLevelCap = cap, changed = changed }
+	return { level = level, gemLevelCap = opt(cap), changed = changed }
 end
 
 M.gear_opt_start = function(p)
@@ -8719,7 +8829,7 @@ end
 
 M.gear_opt_step = function(p)
 	ensureBuild()
-	if not gearOpt or not gearOpt.co then error("no gear optimisation is running", 0) end
+	if not gearOpt or not gearOpt.co then error("no gear optimization is running", 0) end
 	local budget = tonumber(p and p.budgetMs) or 150
 	local t0 = GetTime()
 	while gearOpt.co and coroutine.status(gearOpt.co) ~= "dead" and GetTime() - t0 < budget do
@@ -8738,7 +8848,7 @@ M.gear_opt_step = function(p)
 end
 
 M.gear_opt_result = function()
-	if not gearOpt or not gearOpt.result then error("no gear optimisation result", 0) end
+	if not gearOpt or not gearOpt.result then error("no gear optimization result", 0) end
 	return gearOpt.result
 end
 
@@ -9423,55 +9533,70 @@ M.build_summary = function()
 	local spec = build.spec
 	local used, ascUsed, _, socketCount, ws1, ws2 = countAllocNodes(spec)
 	local level = build.characterLevel or 1
-	local questLow, questHigh = questPointsForLevel(level)
+	local questLow, questHigh, extraLow, extraHigh = questPointsForLevel(level, o.ExtraPoints)
 
 	local active, persistent, trigger, meta = 0, 0, 0, 0
 	local mainSupports, mainName = 0, null
 	local skills = array({})
 	local granted = 0
+	local calculated = {}
+	local env = build.calcsTab.mainEnv
+	for _, activeSkill in ipairs(env and env.player and env.player.activeSkillList or {}) do
+		local src = activeSkill.activeEffect and activeSkill.activeEffect.srcInstance
+		if src and not calculated[src] then calculated[src] = activeSkill end
+	end
 	for gi, group in ipairs(build.skillsTab.socketGroupList) do
-		local supports, skillName, press, gemNote = 0, nil, nil, nil
+		local supports, picked = 0, {}
 		for _, gem in ipairs(group.gemList) do
 			local gd = gem.gemData
-			local isSupport = (gd and gd.grantedEffect and gd.grantedEffect.support) and true or false
-			if isSupport then
+			if gd and gd.grantedEffect and gd.grantedEffect.support then
 				supports = supports + 1
-			elseif not skillName then
-				skillName = gd and gd.name or gem.nameSpec
-				press = gemPressClass(gd)
-				gemNote = grantedGemNote(gd)
+			elseif IS_POE2 and #picked == 0 then
+				picked[1] = gem
+			elseif not IS_POE2 and gem.enabled ~= false then
+				-- A PoE1 link can carry several skills, e.g. three auras on Enlighten.
+				picked[#picked + 1] = gem
 			end
 		end
+		if #picked == 0 and group.source then picked[1] = false end
 		local isMain = gi == build.mainSocketGroup
-		-- Item-granted groups (group.source) are not something the player socketed
-		-- or presses.
-		if group.source then
-			skillName = (skillName and skillName ~= "") and skillName or group.displayLabel or "granted"
-			press = "granted"
-		end
-		if skillName and skillName ~= "" then
-			-- A default weapon attack or Raise Shield is there because of the
-			-- weapon; it is a button only if the build plays it, so it is
-			-- counted apart from the skills the player chose.
-			if group.enabled ~= false and press ~= "granted" and gemNote then
-				granted = granted + 1
-			elseif group.enabled ~= false and press ~= "granted" then
-				if press == "active" then active = active + 1
-				elseif press == "persistent" then persistent = persistent + 1
-				elseif press == "trigger" then trigger = trigger + 1
-				else meta = meta + 1 end
+		local mainIndex = math.max(1, math.min(#picked, group.mainActiveSkill or 1))
+		for pi, gem in ipairs(picked) do
+			local gd = gem and gem.gemData
+			local skillName = gem and (gd and gd.name or gem.nameSpec) or nil
+			local press = gem and gemPressClass(gd, calculated[gem]) or nil
+			local gemNote = gem and grantedGemNote(gd) or nil
+			-- Item-granted groups (group.source) are not something the player socketed
+			-- or presses.
+			if group.source then
+				skillName = (skillName and skillName ~= "") and skillName or group.displayLabel or "granted"
+				press = "granted"
 			end
-			if isMain then mainSupports, mainName = supports, skillName end
-			skills[#skills + 1] = {
-				group = gi,
-				skill = skillName,
-				press = press,
-				supports = supports,
-				enabled = group.enabled ~= false,
-				main = isMain,
-				grantedBy = grantedBy(group),
-				granted = opt(gemNote),
-			}
+			if skillName and skillName ~= "" then
+				-- A default weapon attack or Raise Shield is there because of the
+				-- weapon; it is a button only if the build plays it, so it is
+				-- counted apart from the skills the player chose.
+				if group.enabled ~= false and press ~= "granted" and gemNote then
+					granted = granted + 1
+				elseif group.enabled ~= false and press ~= "granted" then
+					if press == "active" then active = active + 1
+					elseif press == "persistent" then persistent = persistent + 1
+					elseif press == "trigger" then trigger = trigger + 1
+					else meta = meta + 1 end
+				end
+				local main = isMain and pi == mainIndex
+				if main then mainSupports, mainName = supports, skillName end
+				skills[#skills + 1] = {
+					group = gi,
+					skill = skillName,
+					press = press,
+					supports = supports,
+					enabled = group.enabled ~= false,
+					main = main,
+					grantedBy = grantedBy(group),
+					granted = opt(gemNote),
+				}
+			end
 		end
 	end
 	-- Mark an item's copy of a skill that is also socketed with supports.
@@ -9483,21 +9608,11 @@ M.build_summary = function()
 		if k.grantedBy ~= null and byName[k.skill] then k.duplicateOf = byName[k.skill] end
 	end
 
-	-- Charm slots come from the belt. PoB's EmptyCharms counts charms not
-	-- toggled active rather than empty slots, so count the slots directly.
-	local charmLimit = o.CharmLimit or 0
-	local emptyCharms, charmsEquipped = 0, 0
-	for i = 1, 3 do
-		local slot = build.itemsTab.slots["Charm " .. i]
-		local filled = slot and slot.selItemId and slot.selItemId ~= 0
-		if filled then charmsEquipped = charmsEquipped + 1 end
-		if i <= charmLimit and not filled then emptyCharms = emptyCharms + 1 end
-	end
 	local resists = {}
 	for _, r in ipairs({ "FireResist", "ColdResist", "LightningResist", "ChaosResist" }) do
 		resists[r] = o[r] or 0
 	end
-	return {
+	local out = {
 		characterLevel = level,
 		className = spec.curClassName,
 		ascendancyName = opt(spec.curAscendClassName),
@@ -9518,22 +9633,13 @@ M.build_summary = function()
 		pointsUsed = used,
 		passivePointsSpent = used - math.min(ws1, ws2),
 		extraPoints = o.ExtraPoints or 0,
-		pointsAvailableMin = math.max(0, level - 1) + questLow + (o.ExtraPoints or 0),
-		pointsAvailableMax = math.max(0, level - 1) + questHigh + (o.ExtraPoints or 0),
+		pointsAvailableMin = math.max(0, level - 1) + questLow + extraLow,
+		pointsAvailableMax = math.max(0, level - 1) + questHigh + extraHigh,
 		ascendancyPointsUsed = ascUsed,
 		jewelSocketsUsed = socketCount,
-		weaponSetPointsUsed = ws1 + ws2,
 		life = o.Life or 0,
 		energyShield = o.EnergyShield or 0,
 		mana = o.Mana or 0,
-		spirit = o.Spirit or 0,
-		spiritReserved = o.SpiritReserved or 0,
-		spiritUnreserved = o.SpiritUnreserved or 0,
-		charmLimit = charmLimit,
-		emptyCharms = emptyCharms,
-		charmsEquipped = charmsEquipped,
-		-- PoB only applies a charm the user has toggled active, as with flasks.
-		charmsActive = math.max(0, charmLimit - (o.EmptyCharms or charmLimit)),
 		fireResist = resists.FireResist,
 		coldResist = resists.ColdResist,
 		lightningResist = resists.LightningResist,
@@ -9545,10 +9651,57 @@ M.build_summary = function()
 		-- support-gem source), as PoB computes it. Never add sources together.
 		requirements = requirementSummary(),
 		movementSpeedMod = o.MovementSpeedMod or 0,
-		totalDPS = o.TotalDPS or o.CombinedDPS or 0,
+		totalDPS = o.CombinedDPS or o.TotalDPS or 0,
+		-- A minion skill's damage is the minions', not the player's.
+		minionDPS = o.Minion and opt(o.Minion.CombinedDPS or o.Minion.TotalDPS) or null,
 		keystones = keystone.names(),
 		keystoneRules = keystone.rules(keystone.profile()),
 	}
+	if IS_POE2 then
+		-- Charm slots come from the belt. PoB's EmptyCharms counts charms not
+		-- toggled active rather than empty slots, so count the slots directly.
+		local charmLimit = o.CharmLimit or 0
+		local emptyCharms, charmsEquipped = 0, 0
+		for i = 1, 3 do
+			local slot = build.itemsTab.slots["Charm " .. i]
+			local filled = slot and slot.selItemId and slot.selItemId ~= 0
+			if filled then charmsEquipped = charmsEquipped + 1 end
+			if i <= charmLimit and not filled then emptyCharms = emptyCharms + 1 end
+		end
+		out.weaponSetPointsUsed = ws1 + ws2
+		out.spirit = o.Spirit or 0
+		out.spiritReserved = o.SpiritReserved or 0
+		out.spiritUnreserved = o.SpiritUnreserved or 0
+		out.charmLimit = charmLimit
+		out.emptyCharms = emptyCharms
+		out.charmsEquipped = charmsEquipped
+		-- PoB only applies a charm the user has toggled active, as with flasks.
+		out.charmsActive = math.max(0, charmLimit - (o.EmptyCharms or charmLimit))
+	else
+		local flasksEquipped, flasksActive = 0, 0
+		for i = 1, 5 do
+			local slot = build.itemsTab.slots["Flask " .. i]
+			if slot and slot.selItemId and slot.selItemId ~= 0 then
+				flasksEquipped = flasksEquipped + 1
+				if slot.active then flasksActive = flasksActive + 1 end
+			end
+		end
+		out.manaReserved = o.ManaReserved or 0
+		out.manaReservedPercent = o.ManaReservedPercent or 0
+		out.manaUnreserved = o.ManaUnreserved or 0
+		out.lifeReserved = o.LifeReserved or 0
+		out.lifeReservedPercent = o.LifeReservedPercent or 0
+		out.lifeUnreserved = o.LifeUnreserved or 0
+		out.flasksEquipped = flasksEquipped
+		out.flasksActive = flasksActive
+		-- The config holds what set_config changed; build.bandit and the god fields are only set on load.
+		local input = build.configTab and build.configTab.input or {}
+		local bandit = input.bandit or build.bandit
+		out.bandit = opt((bandit == "None" or bandit == "Eramir") and "Kill all" or bandit)
+		out.pantheonMajorGod = opt(input.pantheonMajorGod or build.pantheonMajorGod)
+		out.pantheonMinorGod = opt(input.pantheonMinorGod or build.pantheonMinorGod)
+	end
+	return out
 end
 
 M.sanity_check = function()
@@ -9571,11 +9724,13 @@ M.sanity_check = function()
 	if #uncapped > 0 then
 		add(worst < 50 and "high" or "medium", "resistances",
 			string.format("below the 75%% cap: %s", table.concat(uncapped, ", ")),
-			"Characters start at -50%. Quest rewards first, then suffixes on belt, boots, rings and body armour. An elemental rune in an armour piece is +14%.")
+			IS_POE2 and "Characters start at -50%. Quest rewards first, then suffixes on belt, boots, rings and body armour. An elemental rune in an armour piece is +14%."
+				or "The campaign leaves -60% after Act 10. Resistance suffixes on rings, amulet, belt, boots, gloves and helmet close it; a Purity aura or a resistance flask covers a gap.")
 	end
 	if s.chaosResist < 0 and not keys.chaosImmune then
 		add("low", "resistances", string.format("chaos resistance is %.0f%%", s.chaosResist),
-			"Chaos damage removes twice as much energy shield, and poison bypasses it entirely.")
+			IS_POE2 and "Chaos damage removes twice as much energy shield, and poison bypasses it entirely."
+				or "Chaos damage bypasses energy shield and hits life directly.")
 	end
 
 	-- Live characters hold one point more than PoB's quest data allows.
@@ -9594,14 +9749,27 @@ M.sanity_check = function()
 		add("medium", "ascendancy", string.format("%d of 8 ascendancy points allocated", s.ascendancyPointsUsed))
 	end
 
-	if s.mainSkillSupports < 4 and s.mainSkill ~= null then
+	if IS_POE2 and s.mainSkillSupports < 4 and s.mainSkill ~= null then
 		add("high", "supports", string.format("main skill %s has %d supports", tostring(s.mainSkill), s.mainSkillSupports),
 			"Published builds run 4-5 supports on the damage skill. Call list_valid_supports for the legal options.")
 	end
-	if s.activeSkills > 6 then
+	local linkSkills, itemSkill = 0, false
+	for _, k in ipairs(s.skills) do
+		if k.group == s.mainSkillGroup then
+			linkSkills = linkSkills + 1
+			itemSkill = itemSkill or k.grantedBy ~= null
+		end
+	end
+	-- A PoE1 link that holds several skills (Bane and its curses) or an item's skill says nothing about supports.
+	if not IS_POE2 and s.mainSkill ~= null and linkSkills == 1 and not itemSkill
+		and s.characterLevel >= 68 and s.mainSkillSupports < (s.characterLevel >= 85 and 5 or 4) then
+		add(s.mainSkillSupports < 3 and "high" or "medium", "supports", string.format("main skill %s has %d supports", tostring(s.mainSkill), s.mainSkillSupports),
+			"246 of 324 ladder characters in our PoE1 corpus run their largest link with 5 supports, a 6-link. Call list_valid_supports for the legal options.")
+	end
+	if s.activeSkills > (IS_POE2 and 6 or 10) then
 		add("low", "buttons", string.format("%d skills need a keypress", s.activeSkills),
 			IS_POE2 and "Most builds settle at 4-5. Extra power is usually better spent on a persistent buff, trigger or meta gem."
-				or "Most builds settle at 4-5. Extra power is usually better spent on an aura, a trigger setup or a guard skill.")
+				or "Nine in ten builds in our PoE1 corpus press 10 skills or fewer. Extra power is usually better spent on an aura, a trigger setup or a guard skill.")
 	end
 
 	if not IS_POE2 then
@@ -9621,22 +9789,28 @@ M.sanity_check = function()
 			add("low", "pantheon", "no pantheon gods chosen",
 				"Pantheon powers are free defences unlocked in the campaign; set them on the Config tab so the calculation includes them.")
 		end
+		if o.ManaCostWarning or o.LifeCostWarning then
+			local pool = o.ManaCostWarning and "mana" or "life"
+			add("high", "reservation", string.format("the main skill costs more %s than is left unreserved", pool),
+				"PoB counts the skill as unusable. Drop or swap an aura, move a reservation to the other pool, or add reservation efficiency.")
+		end
 	end
 
-	-- 30 spirit is the cheapest herald, so below that there is nothing to spend on.
-	if s.spiritUnreserved >= 30 then
-		add(s.spiritReserved == 0 and "medium" or "low", "spirit",
-			string.format("%d of %d spirit unreserved", s.spiritUnreserved, s.spirit),
-			"Spirit is only useful when spent. A herald reserves 30; meta gems reserve more.")
-	end
-
-	if s.charmLimit > 0 and s.emptyCharms > 0 then
-		add("medium", "charms", string.format("%d of %d charm slots empty", s.emptyCharms, s.charmLimit),
-			"Charms trigger automatically and are the cheapest answer to a specific ailment. Unique charms add a large rider on top.")
-	end
-	if s.charmsEquipped > s.charmLimit then
-		add("low", "charms", string.format("%d charms equipped but the belt gives %d charm slot(s)", s.charmsEquipped, s.charmLimit),
-			"The extra charms do nothing. Charm slots are a belt property; a Heavy Belt base can carry up to 3.")
+	if IS_POE2 then
+		-- 30 spirit is the cheapest herald, so below that there is nothing to spend on.
+		if s.spiritUnreserved >= 30 then
+			add(s.spiritReserved == 0 and "medium" or "low", "spirit",
+				string.format("%d of %d spirit unreserved", s.spiritUnreserved, s.spirit),
+				"Spirit is only useful when spent. A herald reserves 30; meta gems reserve more.")
+		end
+		if s.charmLimit > 0 and s.emptyCharms > 0 then
+			add("medium", "charms", string.format("%d of %d charm slots empty", s.emptyCharms, s.charmLimit),
+				"Charms trigger automatically and are the cheapest answer to a specific ailment. Unique charms add a large rider on top.")
+		end
+		if s.charmsEquipped > s.charmLimit then
+			add("low", "charms", string.format("%d charms equipped but the belt gives %d charm slot(s)", s.charmsEquipped, s.charmLimit),
+				"The extra charms do nothing. Charm slots are a belt property; a Heavy Belt base can carry up to 3.")
+		end
 	end
 
 	if s.characterLevel >= 30 and s.life < 500 and s.energyShield < 500 and not (keys.manaFirst > 0 and s.mana >= 500) then
@@ -9646,7 +9820,8 @@ M.sanity_check = function()
 	-- movementSpeedMod is a multiplier, so 1.0 is no bonus.
 	if s.characterLevel >= 15 and s.movementSpeedMod < 1.15 then
 		add("medium", "movement", string.format("movement speed is %+.0f%%", (s.movementSpeedMod - 1) * 100),
-			"57 of 63 published builds carry movement speed on boots, usually 20-35%. It shortens the campaign and is a primary avoidance layer.")
+			IS_POE2 and "57 of 63 published builds carry movement speed on boots, usually 20-35%. It shortens the campaign and is a primary avoidance layer."
+				or "317 of 327 ladder characters in our PoE1 corpus have at least +15% and 302 at least +30%, counting their flasks as active as PoB does. It shortens the campaign and is a primary avoidance layer.")
 	end
 
 	if IS_POE2 and s.characterLevel >= 60 and s.weaponSetPointsUsed == 0 then

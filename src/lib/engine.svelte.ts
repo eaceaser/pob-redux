@@ -75,7 +75,6 @@ export interface AppPaths {
   chat_log: string | null;
   chat_provider: string | null;
   chat_model: string | null;
-  chat_mode: string | null;
   initial_view: string | null;
   chat_open: string | null;
   chat_ask: string | null;
@@ -647,6 +646,7 @@ export interface GemInfo {
   /** Physical socket colour from PoB's gem data. */
   socketColour?: string | null;
   count: number | null;
+  countable: boolean;
   errMsg: string | null;
   /** Set when the game hands the skill out (a weapon's default attack, Raise Shield, a unique's skill): says what it comes with. */
   granted: string | null;
