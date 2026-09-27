@@ -60,16 +60,12 @@
   let detailLoading = $state(false);
   let previewSlot = $state("");
   let detailPane = $state<HTMLDivElement | undefined>();
-  let scrollPosition: { pane: HTMLDivElement; scrollTop: number } | null = null;
-  type ScrollReserve = {
+  type ScrollHold = {
     pane: HTMLDivElement;
-    spacer: HTMLDivElement;
-    height: number;
-    restoring: boolean;
-    scrollTop: number;
-    observer?: ResizeObserver;
+    content: HTMLDivElement;
+    top: number;
   };
-  let scrollReserve: ScrollReserve | null = null;
+  let scrollHold: ScrollHold | null = null;
   let pendingPaste = $state<{ text: string; stamp: number } | null>(null);
   let previewStamp = 0;
   let alive = true;
@@ -92,10 +88,14 @@
     previewLoading = false;
   }
 
-  function captureDetailScroll() {
-    const pane = detailPane;
-    if (!pane) return;
-    scrollPosition = { pane, scrollTop: pane.scrollTop };
+  function captureDetailScroll(pane = detailPane) {
+    if (!pane) return null;
+    if (scrollHold?.pane !== pane) {
+      scrollHold = { pane, content: pane.querySelector<HTMLDivElement>(".detailcontent")!, top: 0 };
+    }
+    scrollHold.top = pane.scrollTop;
+    scrollHold.content.style.minHeight = `calc(100% + ${Math.ceil(scrollHold.top)}px)`;
+    return scrollHold;
   }
 
   function setAffixPending(pending: boolean) {
@@ -103,75 +103,31 @@
     affixPending = pending;
   }
 
-  function reserveState(pane: HTMLDivElement) {
-    if (scrollReserve?.pane !== pane) {
-      scrollReserve?.observer?.disconnect();
-      scrollReserve = { pane, spacer: pane.querySelector<HTMLDivElement>(".scrollreserve")!, height: 0, restoring: false, scrollTop: 0 };
-    }
-    return scrollReserve;
-  }
-
-  function setScrollReserve(state: ScrollReserve, height: number) {
-    state.height = height;
-    state.spacer.style.height = height ? `${height}px` : "";
-  }
-
-  function releaseScrollReserve(event: Event) {
-    const pane = event.currentTarget as HTMLDivElement;
-    const state = scrollReserve;
-    if (state?.pane !== pane || state.restoring) return;
-    state.scrollTop = pane.scrollTop;
-    if (state.height && pane.scrollTop <= pane.scrollHeight - state.height - pane.clientHeight) {
-      setScrollReserve(state, 0);
-    }
+  function followDetailScroll(event: Event) {
+    const hold = scrollHold;
+    if (!hold || hold.pane !== event.currentTarget) return;
+    hold.top = hold.pane.scrollTop;
+    hold.content.style.minHeight = `calc(100% + ${Math.ceil(hold.top)}px)`;
   }
 
   function holdDetailScroll(pane: HTMLDivElement | undefined) {
-    if (!pane) return () => {};
-    const scrollTop = scrollPosition?.pane === pane ? scrollPosition.scrollTop : pane.scrollTop;
-    scrollPosition = null;
-    const state = reserveState(pane);
-    state.scrollTop = scrollTop;
-    state.restoring = true;
-    if (scrollTop > 0) setScrollReserve(state, Math.max(state.height, scrollTop + pane.clientHeight));
-    state.observer?.disconnect();
-    state.observer = undefined;
+    const hold = captureDetailScroll(pane);
+    if (!hold) return () => {};
     return () => {
       void tick().then(() => {
-        if (!alive || !pane.isConnected || pane !== detailPane || scrollReserve !== state) return;
-        restoreDetailScroll(state);
-        const observer = new ResizeObserver(() => {
-          state.restoring = true;
-          restoreDetailScroll(state);
-          state.restoring = false;
-          observer.disconnect();
-          if (state.observer === observer) state.observer = undefined;
-        });
-        state.observer = observer;
-        observer.observe(pane);
-        for (const child of pane.children) {
-          if (child !== state.spacer) observer.observe(child);
-        }
-        state.restoring = false;
+        if (!alive || !pane?.isConnected || pane !== detailPane || scrollHold !== hold) return;
+        pane.scrollTop = hold.top;
       });
     };
-  }
-
-  function restoreDetailScroll(state: ScrollReserve) {
-    const pane = state.pane;
-    if (!pane.isConnected || pane !== detailPane || scrollReserve !== state) return;
-    const naturalHeight = pane.scrollHeight - state.height;
-    setScrollReserve(state, Math.max(0, Math.ceil(state.scrollTop + pane.clientHeight - naturalHeight)));
-    pane.scrollTop = state.scrollTop;
   }
 
   $effect(() => {
     const pane = detailPane;
     return () => {
-      const state = scrollReserve;
-      if (state && state.pane === pane) {
-        state.observer?.disconnect();
-        scrollReserve = null;
+      const hold = scrollHold;
+      if (hold && hold.pane === pane) {
+        hold.content.style.minHeight = "";
+        scrollHold = null;
       }
     };
   });
@@ -222,7 +178,7 @@
 
   async function customizePreview(edit: ItemCustomizationEdit) {
     if (!preview || previewLoading || previewCommitting) return false;
-    if (!affixPending || scrollPosition?.pane !== detailPane) captureDetailScroll();
+    captureDetailScroll();
     const stamp = ++previewStamp;
     previewLoading = true;
     previewError = null;
@@ -236,7 +192,6 @@
       if (alive && stamp === previewStamp) previewError = String(e);
       return false;
     } finally {
-      scrollPosition = null;
       if (alive && stamp === previewStamp) previewLoading = false;
     }
   }
@@ -357,7 +312,7 @@
   async function customizeSavedItem(edit: ItemCustomizationEdit) {
     const itemId = selectedItem;
     if (itemId == null) return;
-    if (!affixPending || scrollPosition?.pane !== detailPane) captureDetailScroll();
+    captureDetailScroll();
     const result = await build.run(async () => {
       const customization = await engine.customizeItem({ itemId, generation }, edit);
       pendingDetail = { itemId, customization };
@@ -365,7 +320,6 @@
     });
     if (!result) {
       if (pendingDetail?.itemId === itemId) pendingDetail = null;
-      scrollPosition = null;
     }
     return result;
   }
@@ -751,41 +705,42 @@
           <span class="label">{m.items_preview_title()}</span>
           <button class="btn sm ghost" onclick={discardPreview} disabled={itemTransitionBusy}>{m.items_preview_discard()}</button>
         </div>
-        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}>
-          <p class="dim small">{m.items_preview_note()}</p>
-          {#if preview.tooltip.header}
-            <ItemFrame lines={preview.tooltip.lines} header={preview.tooltip.header} runic={preview.tooltip.runic} uniqueGem={preview.tooltip.uniqueGem} />
-          {:else}
-            <div class="ttbox plain">
-              {#each preview.tooltip.lines as l}
-                {#if l.sep}<div class="tsep"></div>
-                {:else}<div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>{/if}
-              {/each}
-            </div>
-          {/if}
-          <div class="modrow">
-            <button class="btn sm" onclick={editPreview} disabled={itemTransitionBusy}>{m.items_preview_edit()}</button>
-            <button class="btn sm primary" onclick={() => addPreview(false)} disabled={itemBusy || previewStale}>{m.items_preview_add()}</button>
-          </div>
-          {#if preview.slots.length}
+        <div class="scroll detailpane" bind:this={detailPane} onscroll={followDetailScroll}>
+          <div class="detailcontent">
+            <p class="dim small">{m.items_preview_note()}</p>
+            {#if preview.tooltip.header}
+              <ItemFrame lines={preview.tooltip.lines} header={preview.tooltip.header} runic={preview.tooltip.runic} uniqueGem={preview.tooltip.uniqueGem} />
+            {:else}
+              <div class="ttbox plain">
+                {#each preview.tooltip.lines as l}
+                  {#if l.sep}<div class="tsep"></div>
+                  {:else}<div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>{/if}
+                {/each}
+              </div>
+            {/if}
             <div class="modrow">
-              <select class="select" bind:value={previewSlot} aria-label={m.items_preview_slot()} disabled={itemTransitionBusy}>
-                {#each preview.slots as s}<option value={s.slot}>{s.label}</option>{/each}
-              </select>
-              <button class="btn sm" onclick={() => addPreview(true)} disabled={itemBusy || previewStale}>{m.items_preview_equip()}</button>
+              <button class="btn sm" onclick={editPreview} disabled={itemTransitionBusy}>{m.items_preview_edit()}</button>
+              <button class="btn sm primary" onclick={() => addPreview(false)} disabled={itemBusy || previewStale}>{m.items_preview_add()}</button>
             </div>
-          {:else}
-            <p class="dim small">{m.items_preview_no_slot()}</p>
-          {/if}
-          <ItemCustomizationControls
-            data={preview.customization}
-            target={{ raw: preview.text, generation }}
-            busy={itemBusy}
-            sourceSlot={previewSlot || undefined}
-            onchange={customizePreview}
-            onpendingchange={setAffixPending}
-          />
-          <div class="scrollreserve"></div>
+            {#if preview.slots.length}
+              <div class="modrow">
+                <select class="select" bind:value={previewSlot} aria-label={m.items_preview_slot()} disabled={itemTransitionBusy}>
+                  {#each preview.slots as s}<option value={s.slot}>{s.label}</option>{/each}
+                </select>
+                <button class="btn sm" onclick={() => addPreview(true)} disabled={itemBusy || previewStale}>{m.items_preview_equip()}</button>
+              </div>
+            {:else}
+              <p class="dim small">{m.items_preview_no_slot()}</p>
+            {/if}
+            <ItemCustomizationControls
+              data={preview.customization}
+              target={{ raw: preview.text, generation }}
+              busy={itemBusy}
+              sourceSlot={previewSlot || undefined}
+              onchange={customizePreview}
+              onpendingchange={setAffixPending}
+            />
+          </div>
         </div>
       {:else if selectedItem != null && detail?.itemId === selectedItem}
         <div class="panel-head">
@@ -793,41 +748,42 @@
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
           <button class="btn sm ghost" onclick={() => selectItem(null)} disabled={itemTransitionBusy}>{m.items_back_to_database()}</button>
         </div>
-        <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}>
-          {#if detail.tt.header}
-            <div class="ttbox">
-              <ItemFrame lines={detail.tt.lines} header={detail.tt.header} runic={detail.tt.runic} uniqueGem={detail.tt.uniqueGem} itemArt={detail.tt.itemArt} />
-            </div>
-          {:else}
-            <div class="ttbox plain">
-              {#each detail.tt.lines as l}
-                {#if l.sep}
-                  <div class="tsep"></div>
-                {:else}
-                  <div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>
+        <div class="scroll detailpane" bind:this={detailPane} onscroll={followDetailScroll}>
+          <div class="detailcontent">
+            {#if detail.tt.header}
+              <div class="ttbox">
+                <ItemFrame lines={detail.tt.lines} header={detail.tt.header} runic={detail.tt.runic} uniqueGem={detail.tt.uniqueGem} itemArt={detail.tt.itemArt} />
+              </div>
+            {:else}
+              <div class="ttbox plain">
+                {#each detail.tt.lines as l}
+                  {#if l.sep}
+                    <div class="tsep"></div>
+                  {:else}
+                    <div class="tline" class:tcenter={l.center} style={lineStyle(l)}><PobText text={l.text} /></div>
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+
+            <ItemCustomizationControls
+              data={detail.customization}
+              target={{ itemId: selectedItem, generation }}
+              busy={itemBusy}
+              onchange={customizeSavedItem}
+              onpendingchange={setAffixPending}
+            />
+
+            <div class="craftsec">
+              <div class="label">{m.items_modify()}</div>
+              <div class="modrow">
+                <button class="btn sm ghost" onclick={() => selectedItem != null && addShared(selectedItem)} disabled={itemBusy}>{m.items_add_to_shared()}</button>
+                {#if selectedEquippedSlot}
+                  <button class="btn sm ghost" title={m.items_find_upgrades_title()} onclick={() => openTrader(selectedEquippedSlot!)}>{m.items_find_upgrades()}</button>
                 {/if}
-              {/each}
-            </div>
-          {/if}
-
-          <ItemCustomizationControls
-            data={detail.customization}
-            target={{ itemId: selectedItem, generation }}
-            busy={itemBusy}
-            onchange={customizeSavedItem}
-            onpendingchange={setAffixPending}
-          />
-
-          <div class="craftsec">
-            <div class="label">{m.items_modify()}</div>
-            <div class="modrow">
-              <button class="btn sm ghost" onclick={() => selectedItem != null && addShared(selectedItem)} disabled={itemBusy}>{m.items_add_to_shared()}</button>
-              {#if selectedEquippedSlot}
-                <button class="btn sm ghost" title={m.items_find_upgrades_title()} onclick={() => openTrader(selectedEquippedSlot!)}>{m.items_find_upgrades()}</button>
-              {/if}
+              </div>
             </div>
           </div>
-          <div class="scrollreserve"></div>
         </div>
       {:else}
       <div class="panel-head">
@@ -1180,18 +1136,18 @@
     padding: 10px 12px;
   }
   .detailpane {
-    padding: 10px 12px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .detailcontent {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    min-height: 0;
-  }
-  .detailpane > :global(*) {
+    padding: 10px 12px;
+    box-sizing: border-box;
     flex-shrink: 0;
-  }
-  .scrollreserve {
-    height: 0;
-    margin-top: -12px;
   }
   .ttbox.plain {
     padding: 10px 12px;
