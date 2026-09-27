@@ -488,7 +488,6 @@
   }
 
   function selectItem(id: number | null) {
-    if (itemTransitionBusy) return;
     hideTip();
     selectedItem = id;
   }
@@ -497,7 +496,6 @@
   let statDiff = $state<boolean | null>(null);
   engine.statDifferences().then((r) => (statDiff = r.show)).catch(() => {});
   async function setStatDiff(show: boolean) {
-    if (itemBusy) return;
     try {
       statDiff = (await engine.statDifferences(show)).show;
       tipCache.clear();
@@ -515,7 +513,7 @@
       if (!e.repeat) void pasteItem();
       return;
     }
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d" && statDiff !== null && !itemBusy) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d" && statDiff !== null) {
       e.preventDefault();
       void setStatDiff(!statDiff);
     }
@@ -558,7 +556,7 @@
   }
 
   async function openEdit(itemId: number | null) {
-    if (itemId == null ? previewCommitting : itemBusy) return;
+    if (itemId == null && previewCommitting) return;
     editError = null;
     editItemId = itemId;
     editingPreview = false;
@@ -631,27 +629,26 @@
 
 <div class="page">
   <div class="toolbar">
-    <select class="select setsel" value={activeSet?.id ?? 1} onchange={(e) => build.run(() => engine.selectItemSet(Number((e.target as HTMLSelectElement).value)))} disabled={itemBusy} title={m.items_set_title()}>
+    <select class="select setsel" value={activeSet?.id ?? 1} onchange={(e) => build.run(() => engine.selectItemSet(Number((e.target as HTMLSelectElement).value)))} disabled={build.busy > 0} title={m.items_set_title()}>
       {#each itemSets as s}
         <option value={s.id}>{stripPobText(s.title)}</option>
       {/each}
     </select>
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.createItemSet())} disabled={itemBusy}>{m.common_new()}</button>
-    <button class="btn sm ghost" onclick={() => build.run(() => engine.copyItemSet())} disabled={itemBusy}>{m.common_copy_button()}</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.createItemSet())}>{m.common_new()}</button>
+    <button class="btn sm ghost" onclick={() => build.run(() => engine.copyItemSet())}>{m.common_copy_button()}</button>
     <button
       class="btn sm ghost"
       onclick={() => {
         const t = prompt(m.items_set_name_prompt(), activeSet?.title ?? "");
         if (t && activeSet) build.run(() => engine.renameItemSet(activeSet.id, t));
-      }}
-      disabled={itemBusy}>{m.common_rename()}</button
+      }}>{m.common_rename()}</button
     >
-    <button class="btn sm ghost" disabled={itemBusy || itemSets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteItemSet(activeSet.id))}>{m.common_delete()}</button>
+    <button class="btn sm ghost" disabled={itemSets.length <= 1} onclick={() => activeSet && build.run(() => engine.deleteItemSet(activeSet.id))}>{m.common_delete()}</button>
     <span class="vr"></span>
     <span class="label">{m.items_weapon_set()}</span>
     <div class="wset">
-      <button class="btn sm" class:on={!slotsResp?.useSecondWeaponSet} onclick={() => build.run(() => engine.setWeaponSet(1))} disabled={itemBusy}>I</button>
-      <button class="btn sm" class:on={slotsResp?.useSecondWeaponSet} onclick={() => build.run(() => engine.setWeaponSet(2))} disabled={itemBusy}>II</button>
+      <button class="btn sm" class:on={!slotsResp?.useSecondWeaponSet} onclick={() => build.run(() => engine.setWeaponSet(1))}>I</button>
+      <button class="btn sm" class:on={slotsResp?.useSecondWeaponSet} onclick={() => build.run(() => engine.setWeaponSet(2))}>II</button>
     </div>
     <span class="vr"></span>
     <button class="btn sm" onclick={openCraft}>{m.items_craft()}</button>
@@ -661,7 +658,7 @@
     {#if statDiff !== null}
       <span class="vr"></span>
       <label class="chk small" title={m.items_stat_diff_title()}>
-        <input type="checkbox" checked={statDiff} onchange={(e) => setStatDiff((e.target as HTMLInputElement).checked)} disabled={itemBusy} />
+        <input type="checkbox" checked={statDiff} onchange={(e) => setStatDiff((e.target as HTMLInputElement).checked)} />
         {m.items_stat_diff()}
       </label>
     {/if}
@@ -704,16 +701,16 @@
             onmouseenter={(e) => showTip(e, `i${it.id}`, () => engine.itemTooltip({ itemId: it.id }))}
             onmouseleave={hideTip}
           >
-            <button class="iname" style:color={rarityColor[it.rarity ?? ""] ?? "var(--fg-1)"} onclick={() => selectItem(it.id)} disabled={itemTransitionBusy}>
+            <button class="iname" style:color={rarityColor[it.rarity ?? ""] ?? "var(--fg-1)"} onclick={() => selectItem(it.id)}>
               {it.name}
             </button>
             <span class="itag dim">{it.equippedSlot ?? ""}</span>
             <span class="iops">
               {#if !it.equippedSlot && it.primarySlot}
-                <button class="mini w" title={m.items_equip_in({ slot: it.primarySlot })} onclick={() => it.primarySlot && build.run(() => engine.equipItem(it.primarySlot!, it.id))} disabled={itemBusy}>{m.items_equip()}</button>
+                <button class="mini w" title={m.items_equip_in({ slot: it.primarySlot })} onclick={() => it.primarySlot && build.run(() => engine.equipItem(it.primarySlot!, it.id))}>{m.items_equip()}</button>
               {/if}
-              <button class="mini w" onclick={() => openEdit(it.id)} disabled={itemBusy}>{m.common_edit()}</button>
-              <button class="mini x" title={m.items_delete()} onclick={() => build.run(() => engine.deleteItem(it.id))} disabled={itemBusy}>✕</button>
+              <button class="mini w" onclick={() => openEdit(it.id)}>{m.common_edit()}</button>
+              <button class="mini x" title={m.items_delete()} onclick={() => build.run(() => engine.deleteItem(it.id))}>✕</button>
             </span>
           </div>
         {/each}
@@ -731,8 +728,8 @@
             <span class="iname" style:color={rarityColor[it.rarity ?? ""] ?? "var(--fg-1)"}>{it.name}</span>
             <span class="itag dim">{it.baseName ?? ""}</span>
             <span class="iops">
-              <button class="mini w" title={m.items_shared_equip_title()} onclick={() => build.run(() => engine.equipSharedItem(it.index))} disabled={itemBusy}>{m.items_equip()}</button>
-              <button class="mini x" title={m.items_shared_remove_title()} onclick={() => removeShared(it)} disabled={itemBusy}>✕</button>
+              <button class="mini w" title={m.items_shared_equip_title()} onclick={() => build.run(() => engine.equipSharedItem(it.index))}>{m.items_equip()}</button>
+              <button class="mini x" title={m.items_shared_remove_title()} onclick={() => removeShared(it)}>✕</button>
             </span>
           </div>
         {/each}
@@ -857,7 +854,7 @@
             <span class="iname" style:color={rarityColor[row.rarity ?? ""] ?? "var(--fg-1)"}>{row.name}</span>
             <span class="itag dim">{row.baseName ?? row.type}</span>
             <span class="iops">
-              <button class="mini w" title={m.items_db_equip_title()} onclick={() => { if (!itemBusy) build.run(() => engine.itemDbEquip(dbTab, row.name)); }} disabled={itemBusy}>{m.items_equip()}</button>
+              <button class="mini w" title={m.items_db_equip_title()} onclick={() => build.run(() => engine.itemDbEquip(dbTab, row.name))}>{m.items_equip()}</button>
             </span>
           </div>
         {/each}
@@ -962,10 +959,7 @@
     border-bottom: 1px solid var(--line-0);
     background: var(--bg-1);
   }
-  .select:disabled,
-  .iname:disabled,
-  .mini:disabled,
-  .toolbar .chk:has(input:disabled) {
+  .select:disabled {
     opacity: var(--fade-off);
   }
   .setsel {
