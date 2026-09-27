@@ -73,7 +73,8 @@
   let alive = true;
   const generation = untrack(() => build.info!.generation);
   const previewStale = $derived(preview?.rev !== build.rev);
-  const itemBusy = $derived(affixPending || previewLoading || previewCommitting || detailLoading || build.busy > 0);
+  const itemTransitionBusy = $derived(affixPending || previewLoading || previewCommitting || detailLoading);
+  const itemBusy = $derived(itemTransitionBusy || build.busy > 0);
 
   onDestroy(() => {
     alive = false;
@@ -235,7 +236,7 @@
   }
 
   async function pasteItem() {
-    if (itemBusy) return;
+    if (previewCommitting) return;
     const stamp = ++previewStamp;
     pendingPaste = null;
     previewLoading = true;
@@ -261,7 +262,7 @@
   });
 
   function editPreview() {
-    if (itemBusy) return;
+    if (itemTransitionBusy) return;
     editItemId = null;
     editingPreview = true;
     editText = preview?.text ?? "";
@@ -405,7 +406,6 @@
   }
 
   async function openCraft() {
-    if (itemBusy) return;
     craftOpen = true;
     if (!craftData) {
       craftData = await engine.craftBases().catch(() => null);
@@ -416,6 +416,7 @@
     }
   }
   async function doCraft() {
+    if (itemBusy) return;
     const r = await build.run(() => engine.craftItem({ type: craftType, baseName: craftBase, rarity: craftRarity, title: craftTitle, equip: craftEquip }));
     if (r) {
       craftOpen = false;
@@ -487,7 +488,7 @@
   }
 
   function selectItem(id: number | null) {
-    if (itemBusy) return;
+    if (itemTransitionBusy) return;
     hideTip();
     selectedItem = id;
   }
@@ -557,7 +558,7 @@
   }
 
   async function openEdit(itemId: number | null) {
-    if (itemBusy) return;
+    if (itemId == null ? previewCommitting : itemBusy) return;
     editError = null;
     editItemId = itemId;
     editingPreview = false;
@@ -570,7 +571,7 @@
     editOpen = true;
   }
   async function saveEdit(asNew: boolean) {
-    if (editBusy) return;
+    if (editBusy || itemBusy) return;
     editBusy = true;
     editError = null;
     try {
@@ -582,9 +583,16 @@
         }
         return;
       }
-      await engine.itemEdit(editText, asNew ? undefined : (editItemId ?? undefined));
-      await build.sync();
-      editOpen = false;
+      const saved = await build.run(async () => {
+        try {
+          return await engine.itemEdit(editText, asNew ? undefined : (editItemId ?? undefined));
+        } catch (e) {
+          editError = String(e);
+          throw e;
+        }
+      });
+      if (saved) editOpen = false;
+      else if (!editError) editError = build.error;
     } catch (e) {
       editError = String(e);
     } finally {
@@ -646,9 +654,9 @@
       <button class="btn sm" class:on={slotsResp?.useSecondWeaponSet} onclick={() => build.run(() => engine.setWeaponSet(2))} disabled={itemBusy}>II</button>
     </div>
     <span class="vr"></span>
-    <button class="btn sm" onclick={openCraft} disabled={itemBusy}>{m.items_craft()}</button>
-    <button class="btn sm" onclick={() => openEdit(null)} disabled={itemBusy}>{m.items_new_from_text()}</button>
-    <button class="btn sm" onclick={pasteItem} disabled={itemBusy} title={m.items_paste_hint()}>{m.items_paste()}</button>
+    <button class="btn sm" onclick={openCraft}>{m.items_craft()}</button>
+    <button class="btn sm" onclick={() => openEdit(null)} disabled={previewCommitting}>{m.items_new_from_text()}</button>
+    <button class="btn sm" onclick={pasteItem} disabled={previewCommitting} title={m.items_paste_hint()}>{m.items_paste()}</button>
     <button class="btn sm ghost" title={m.items_trader_title()} onclick={() => openTrader(null)}>{m.items_trader()}</button>
     {#if statDiff !== null}
       <span class="vr"></span>
@@ -696,7 +704,7 @@
             onmouseenter={(e) => showTip(e, `i${it.id}`, () => engine.itemTooltip({ itemId: it.id }))}
             onmouseleave={hideTip}
           >
-            <button class="iname" style:color={rarityColor[it.rarity ?? ""] ?? "var(--fg-1)"} onclick={() => selectItem(it.id)} disabled={itemBusy}>
+            <button class="iname" style:color={rarityColor[it.rarity ?? ""] ?? "var(--fg-1)"} onclick={() => selectItem(it.id)} disabled={itemTransitionBusy}>
               {it.name}
             </button>
             <span class="itag dim">{it.equippedSlot ?? ""}</span>
@@ -738,7 +746,7 @@
       {#if preview}
         <div class="panel-head">
           <span class="label">{m.items_preview_title()}</span>
-          <button class="btn sm ghost" onclick={discardPreview} disabled={itemBusy}>{m.items_preview_discard()}</button>
+          <button class="btn sm ghost" onclick={discardPreview} disabled={itemTransitionBusy}>{m.items_preview_discard()}</button>
         </div>
         <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}>
           <p class="dim small">{m.items_preview_note()}</p>
@@ -753,12 +761,12 @@
             </div>
           {/if}
           <div class="modrow">
-            <button class="btn sm" onclick={editPreview} disabled={itemBusy}>{m.items_preview_edit()}</button>
+            <button class="btn sm" onclick={editPreview} disabled={itemTransitionBusy}>{m.items_preview_edit()}</button>
             <button class="btn sm primary" onclick={() => addPreview(false)} disabled={itemBusy || previewStale}>{m.items_preview_add()}</button>
           </div>
           {#if preview.slots.length}
             <div class="modrow">
-              <select class="select" bind:value={previewSlot} aria-label={m.items_preview_slot()} disabled={itemBusy}>
+              <select class="select" bind:value={previewSlot} aria-label={m.items_preview_slot()} disabled={itemTransitionBusy}>
                 {#each preview.slots as s}<option value={s.slot}>{s.label}</option>{/each}
               </select>
               <button class="btn sm" onclick={() => addPreview(true)} disabled={itemBusy || previewStale}>{m.items_preview_equip()}</button>
@@ -780,7 +788,7 @@
         <div class="panel-head">
           <span class="label">{m.items_item()}</span>
           <button class="btn sm ghost" onclick={() => (buySimilarFor = selectedItem)} title={m.items_buy_similar_title()}>{m.items_buy_similar()}</button>
-          <button class="btn sm ghost" onclick={() => selectItem(null)} disabled={itemBusy}>{m.items_back_to_database()}</button>
+          <button class="btn sm ghost" onclick={() => selectItem(null)} disabled={itemTransitionBusy}>{m.items_back_to_database()}</button>
         </div>
         <div class="scroll detailpane" bind:this={detailPane} onscroll={releaseScrollReserve}>
           {#if detail.tt.header}
@@ -849,7 +857,7 @@
             <span class="iname" style:color={rarityColor[row.rarity ?? ""] ?? "var(--fg-1)"}>{row.name}</span>
             <span class="itag dim">{row.baseName ?? row.type}</span>
             <span class="iops">
-              <button class="mini w" title={m.items_db_equip_title()} onclick={() => build.run(() => engine.itemDbEquip(dbTab, row.name))}>{m.items_equip()}</button>
+              <button class="mini w" title={m.items_db_equip_title()} onclick={() => { if (!itemBusy) build.run(() => engine.itemDbEquip(dbTab, row.name)); }} disabled={itemBusy}>{m.items_equip()}</button>
             </span>
           </div>
         {/each}
@@ -898,7 +906,7 @@
           <label class="chk small"><input type="checkbox" bind:checked={craftEquip} /> {m.items_equip_after()}</label>
         </div>
         <div class="actions">
-          <button class="btn primary" onclick={doCraft} disabled={!craftBase || build.busy > 0}>{m.common_create()}</button>
+          <button class="btn primary" onclick={doCraft} disabled={!craftBase || itemBusy}>{m.common_create()}</button>
           <button class="btn ghost" onclick={() => (craftOpen = false)}>{m.common_cancel()}</button>
         </div>
       </div>
@@ -913,9 +921,9 @@
         {#if editError}<div class="err small">{editError}</div>{/if}
         <div class="actions">
           {#if editItemId != null}
-            <button class="btn" onclick={() => saveEdit(true)} disabled={editBusy}>{m.items_save_as_copy()}</button>
+            <button class="btn" onclick={() => saveEdit(true)} disabled={editBusy || itemBusy}>{m.items_save_as_copy()}</button>
           {/if}
-          <button class="btn primary" onclick={() => saveEdit(editItemId == null)} disabled={!editText.trim() || editBusy}>
+          <button class="btn primary" onclick={() => saveEdit(editItemId == null)} disabled={!editText.trim() || editBusy || itemBusy}>
             {editItemId != null ? m.common_save() : m.items_preview_action()}
           </button>
           <button class="btn ghost" onclick={() => (editOpen = false)} disabled={editBusy}>{m.common_cancel()}</button>
@@ -953,6 +961,12 @@
     padding: 8px 12px;
     border-bottom: 1px solid var(--line-0);
     background: var(--bg-1);
+  }
+  .select:disabled,
+  .iname:disabled,
+  .mini:disabled,
+  .toolbar .chk:has(input:disabled) {
+    opacity: var(--fade-off);
   }
   .setsel {
     flex: none;
