@@ -133,19 +133,23 @@
     state.scrollTop = scrollTop;
     state.restoring = true;
     if (scrollTop > 0) setScrollReserve(pane, Math.max(state.height, scrollTop + pane.clientHeight));
+    state.observer?.disconnect();
+    state.observer = undefined;
     return () => {
       void tick().then(() => {
         if (!alive || !pane.isConnected || pane !== detailPane) return;
         restoreDetailScroll(pane);
-        state.observer?.disconnect();
-        state.observer = new ResizeObserver(() => {
+        const observer = new ResizeObserver(() => {
           state.restoring = true;
           restoreDetailScroll(pane);
           state.restoring = false;
+          observer.disconnect();
+          if (state.observer === observer) state.observer = undefined;
         });
-        state.observer.observe(pane);
+        state.observer = observer;
+        observer.observe(pane);
         for (const child of pane.children) {
-          if (child !== state.spacer) state.observer.observe(child);
+          if (child !== state.spacer) observer.observe(child);
         }
         state.restoring = false;
       });
