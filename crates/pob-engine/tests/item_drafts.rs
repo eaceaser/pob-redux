@@ -208,11 +208,15 @@ fn draft_crafting_preserves_independent_rolls_custom_mods_and_commit_identity() 
     );
     let saved = engine
         .call(
-            "item_customize",
-            &json!({"itemId":committed["itemId"],"operation":"props","quality":27}),
+            "set_item_props",
+            &json!({"itemId":committed["itemId"],"quality":27}),
         )
         .unwrap();
-    assert_eq!(saved["quality"], 27);
+    assert_eq!(saved["ok"], true);
+    assert_eq!(
+        engine.call("item_customization", &json!({"itemId":committed["itemId"]})).unwrap()["quality"],
+        27
+    );
     let saved_after = build_state(&engine);
     assert!(
         saved_after["build"]["rev"].as_u64().unwrap() > after["build"]["rev"].as_u64().unwrap()
@@ -253,6 +257,18 @@ fn failed_draft_edits_roll_back_and_stale_or_ambiguous_targets_are_rejected() {
     for method in ["item_preview", "item_tooltip", "item_customization", "item_customize", "set_item_props"] {
         assert!(engine.call(method, &json!({"raw":RING,"operation":"props","itemLevel":90})).is_err());
     }
+    for method in [
+        "item_customize", "set_item_props", "set_item_rune", "set_item_variant",
+        "set_item_shape", "set_item_crucible", "set_item_enchant", "set_item_anoint", "corrupt_item",
+    ] {
+        let mut params = target(&updated);
+        params["operation"] = json!("props");
+        params["itemLevel"] = json!(90);
+        assert!(engine.call(method, &params).unwrap_err().to_string()
+            .contains("use item_draft_customize"));
+    }
+    assert_eq!(engine.call("item_draft_get", &target(&updated)).unwrap(), updated);
+    assert_eq!(build_state(&engine), before);
     engine
         .eval(
             r#"

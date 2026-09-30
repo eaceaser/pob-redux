@@ -648,7 +648,7 @@ local function encodeCode(xml)
 	return common.base64.encode(deflated):gsub("+", "-"):gsub("/", "_")
 end
 
-local M = { _draft = { entries = {}, byItem = {}, sequence = 0, count = 0 } }
+local M = { _draft = { entries = {}, byItem = {}, sequence = 0, count = 0, setters = {} } }
 
 -- ---------------------------------------------------------------------------
 -- Meta
@@ -4263,15 +4263,12 @@ do
 	end
 	function D.mutate(p, fn)
 		local entry = D.get(p, true)
-		if entry.editing then return fn(entry) end
 		local restore = checkpoint(entry.item)
-		entry.editing = true
 		local ok, result, changed = pcall(function()
 			local raw = entry.item:BuildRaw()
 			local result = fn(entry)
 			return result, entry.item:BuildRaw() ~= raw
 		end)
-		entry.editing = nil
 		if not ok then
 			restore()
 			error(result, 0)
@@ -4287,17 +4284,6 @@ do
 		result.customization = customization or M.item_customization(target)
 		result.raw = result.customization.raw
 		return result
-	end
-	function D.wrapMutations()
-		-- Direct setters and combined edits share one outer transaction.
-		for _, name in ipairs({ "item_customize", "set_item_props", "set_item_rune", "set_item_variant",
-			"set_item_shape", "set_item_crucible", "set_item_enchant", "set_item_anoint", "corrupt_item" }) do
-			local method = M[name]
-			M[name] = function(p)
-				if p and p.draftId ~= nil then return M._draft.mutate(p, function() return method(p) end) end
-				return method(p)
-			end
-		end
 	end
 end
 
@@ -4397,7 +4383,7 @@ end
 
 M.item_draft_customize = function(p)
 	return M._draft.mutate(p, function(entry)
-		return M._draft.snapshot(entry, M.item_customize(p))
+		return M._draft.snapshot(entry, M._draft.customize(entry.item, p))
 	end)
 end
 
@@ -4490,9 +4476,12 @@ end
 
 local requireItem, commitItemEdit
 do
-	requireItem = function(p)
+	requireItem = function(p, savedOnly)
 		ensureBuild(p)
-		if p and p.draftId ~= nil then return M._draft.get(p).item end
+		if p and p.draftId ~= nil then
+			if savedOnly then error("use item_draft_customize to edit previews", 0) end
+			return M._draft.get(p).item
+		end
 		if p and p.raw ~= nil then
 			error("create an item draft before customizing raw text", 0)
 		end
@@ -5119,9 +5108,7 @@ M.item_runes = function(p)
 	return { socketCount = sockets, runes = runes, options = options }
 end
 
-M.set_item_rune = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.rune = function(item, p)
 	local index = tonumber(p and p.index)
 	if not index or index % 1 ~= 0 or index < 1 or index > (item.itemSocketCount or 0) then error("rune index out of range", 0) end
 	local valid = false
@@ -5134,6 +5121,7 @@ M.set_item_rune = function(p)
 	commitItemEdit(item)
 	return M.item_runes(p)
 end
+M.set_item_rune = function(p) return M._draft.setters.rune(requireItem(p, true), p) end
 
 -- Catalysts (rings/amulets): same list and defaults as ItemsTab's dropdown.
 local catalystNames = {
@@ -5143,9 +5131,7 @@ local catalystNames = {
 	"Necrotic (Minion)",
 }
 
-M.set_item_props = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.props = function(item, p)
 	if p.quality ~= nil and item.base and (item.base.quality or (not IS_POE2 and (item.base.weapon or item.base.armour or item.base.flask or item.base.tincture))) then
 		item.quality = math.max(0, math.min(tonumber(p.quality) or 0, 50))
 	end
@@ -5167,6 +5153,7 @@ M.set_item_props = function(p)
 	commitItemEdit(item)
 	return { ok = true }
 end
+M.set_item_props = function(p) return M._draft.setters.props(requireItem(p, true), p) end
 
 local function variantInfo(item)
 	local picks = array({})
@@ -5184,9 +5171,7 @@ M.item_variants = function(p)
 end
 
 -- params: { itemId, picks = { one variant per pick: its index, name or a substring } }
-M.set_item_variant = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.variant = function(item, p)
 	if not item.variantList then error(item.name .. " has no variants", 0) end
 	local wanted = type(p.picks) == "table" and p.picks or {}
 	local picks, ordinal = {}, 0
@@ -5200,6 +5185,7 @@ M.set_item_variant = function(p)
 	commitItemEdit(item)
 	return variantInfo(item)
 end
+M.set_item_variant = function(p) return M._draft.setters.variant(requireItem(p, true), p) end
 
 -- ---------------------------------------------------------------------------
 -- PoE1 item shape: influence, sockets and links, and cluster jewel crafting.
@@ -5257,9 +5243,7 @@ M.item_shape = function(p)
 	}
 end
 
-M.set_item_shape = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.shape = function(item, p)
 	if p.influences ~= nil then
 		if item.ResetInfluence then item:ResetInfluence() end
 		local byKey = {}
@@ -5297,6 +5281,7 @@ M.set_item_shape = function(p)
 	commitItemEdit(item)
 	return M.item_shape(p)
 end
+M.set_item_shape = function(p) return M._draft.setters.shape(requireItem(p, true), p) end
 
 -- ---------------------------------------------------------------------------
 -- Enchantments (PoE1): ItemsTab:EnchantDisplayItem. An item's enchantments
@@ -5354,9 +5339,7 @@ M.item_enchants = function(p)
 	}
 end
 
-M.set_item_enchant = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.enchant = function(item, p)
 	local info = M.item_enchants(p)
 	if not info.available then error("this item has no enchantments", 0) end
 	local slot = tonumber(p.slot) or 1
@@ -5391,6 +5374,7 @@ M.set_item_enchant = function(p)
 	commitItemEdit(item)
 	return M.item_enchants(p)
 end
+M.set_item_enchant = function(p) return M._draft.setters.enchant(requireItem(p, true), p) end
 
 -- ---------------------------------------------------------------------------
 -- Crucible trees (PoE1): ItemsTab:AddCrucibleModifierToDisplayItem. A weapon
@@ -5470,9 +5454,7 @@ M.item_crucible = function(p)
 	}
 end
 
-M.set_item_crucible = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.crucible = function(item, p)
 	local pool = build.data.crucible
 	if not pool then error("this game has no crucible mods", 0) end
 	if type(p.selected) ~= "table" then error("params.selected is required", 0) end
@@ -5504,6 +5486,7 @@ M.set_item_crucible = function(p)
 	commitItemEdit(item)
 	return M.item_crucible(p)
 end
+M.set_item_crucible = function(p) return M._draft.setters.crucible(requireItem(p, true), p) end
 
 M.catalyst_info = function(p)
 	ensureBuild()
@@ -5579,11 +5562,8 @@ do
 		return { options = result, total = total }
 	end
 
-	M.item_customize = function(p)
-		local item = requireItem(p)
-		local setters = { props = M.set_item_props, rune = M.set_item_rune, variant = M.set_item_variant,
-			shape = M.set_item_shape, crucible = M.set_item_crucible, enchant = M.set_item_enchant,
-			anoint = M.set_item_anoint, corruption = M.corrupt_item }
+	M._draft.customize = function(item, p)
+		local setters = M._draft.setters
 		local selectedRolls
 		if p.operation == "affix" then
 			local tableName, index = M._affix.resolveSlot(item, p)
@@ -5596,7 +5576,7 @@ do
 				M._affix.applyEdit(item, tableName, index, p.modId, p.range)
 			end
 		elseif setters[p.operation] then
-			setters[p.operation](p)
+			setters[p.operation](item, p)
 		else
 			if p.operation == "normalize" then
 				item:NormaliseQuality()
@@ -5648,6 +5628,7 @@ do
 		end
 		return M.item_customization(p, selectedRolls)
 	end
+	M.item_customize = function(p) return M._draft.customize(requireItem(p, true), p) end
 end
 
 -- ---------------------------------------------------------------------------
@@ -5682,9 +5663,7 @@ M.item_anoints = function(p)
 	return { anointable = anointable and true or false, current = current, slots = slots, nodes = nodes }
 end
 
-M.set_item_anoint = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.anoint = function(item, p)
 	local info = M.item_anoints(p)
 	if not info.anointable then error("this item cannot be anointed", 0) end
 	local node
@@ -5699,6 +5678,7 @@ M.set_item_anoint = function(p)
 	commitItemEdit(item)
 	return M.item_anoints(p)
 end
+M.set_item_anoint = function(p) return M._draft.setters.anoint(requireItem(p, true), p) end
 
 -- ---------------------------------------------------------------------------
 -- Corruptions, mirroring ItemsTab:CorruptDisplayItem: corrupted implicits
@@ -5743,9 +5723,7 @@ M.item_corruptions = function(p)
 	}
 end
 
-M.corrupt_item = function(p)
-	ensureBuild()
-	local item = requireItem(p)
+M._draft.setters.corruption = function(item, p)
 	local info = M.item_corruptions(p)
 	if not info.corruptible and not info.corrupted then error("this item cannot be corrupted", 0) end
 	local allowed, groups = {}, {}
@@ -5804,6 +5782,7 @@ M.corrupt_item = function(p)
 	commitItemEdit(item)
 	return { ok = true }
 end
+M.corrupt_item = function(p) return M._draft.setters.corruption(requireItem(p, true), p) end
 
 -- ---------------------------------------------------------------------------
 -- Shared items (main.sharedItemList): PoB stores these in its own settings
@@ -9972,8 +9951,6 @@ M.suggest_unique_jewels = function(p)
 	for _, job in ipairs(plan.jobs) do results[#results + 1] = M.score_jewel_variants(job) end
 	return M.jewel_finish({ results = results })
 end
-
-M._draft.wrapMutations()
 
 -- Exposed for `pobctl eval` scripting: __bridge.tree_click({ id = 123 })
 _G.__bridge = M
