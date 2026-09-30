@@ -199,7 +199,6 @@
       if (alive && stamp === previewStamp) previewError = String(e);
       return false;
     } finally {
-      // A superseded create still owns a Lua draft, even if it never reached UI state.
       if (created && !adopted) releasePreview(created);
       if (alive && stamp === previewStamp) previewLoading = false;
     }
@@ -239,12 +238,10 @@
       if (alive && stamp === previewStamp) {
         if (await publishPreview(updated, stamp, revision, differences, true)) return updated.customization;
       } else if (alive && preview?.draftId === updated.draftId) {
-        // Keep the revision current while a newer paste attempts to replace this draft.
         preview = updated;
       }
       return false;
     } catch (e) {
-      // A failed comparison refresh must not lose an already successful edit.
       if (alive && updated && preview?.draftId === updated.draftId) preview = updated;
       if (alive && stamp === previewStamp) previewError = String(e);
       return false;

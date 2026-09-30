@@ -67,7 +67,6 @@ impl Engine {
         globals.set("__pob_root", slash(&pob_root))?;
         globals.set("__user_dir", slash(&user_dir))?;
         globals.set("__native", native::build_table(&lua, t0)?)?;
-        // Draft handles must not resolve in another worker or a rebooted engine.
         let epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()

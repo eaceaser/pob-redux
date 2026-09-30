@@ -22,7 +22,6 @@ fn draft_params(engine: &Engine, item: Value, mut edits: Value) -> Value {
 }
 
 fn with_target(mut data: Value, target: &Value) -> Value {
-    // Carry the handle alongside customization fields for subsequent test edits.
     for key in ["itemId", "draftId", "draftRevision", "generation"] {
         if !target[key].is_null() {
             data[key] = target[key].clone();

@@ -4218,7 +4218,6 @@ M.item_db_list = function(p)
 	return { items = page, total = total, offset = offset, types = typeList }
 end
 
--- Uncommitted items stay on the main engine, just like native displayItem.
 do
 	local D = M._draft
 	function D.get(p, mutation)
@@ -4238,7 +4237,6 @@ do
 	end
 	local function checkpoint(item)
 		local seen, saved = {}, {}
-		-- Native game definitions are shared, not mutable item state.
 		for _, key in ipairs({ "base", "affixes", "enchantments", "rareLikeUnique", "clusterJewel", "mutatedLines" }) do
 			if type(item[key]) == "table" then seen[item[key]] = true end
 		end
@@ -4253,7 +4251,6 @@ do
 		end
 		capture(item)
 		return function()
-			-- Restore original tables in place to retain aliases, cycles and native identity.
 			for tbl, fields in pairs(saved) do
 				wipeTable(tbl)
 				for key, value in pairs(fields) do rawset(tbl, key, value) end
@@ -4388,7 +4385,6 @@ M.item_draft_customize = function(p)
 end
 
 M.item_draft_dispose = function(p)
-	-- Idempotent even after build/engine replacement, so stale UI cleanup is safe.
 	local entry = p and M._draft.entries[p.draftId]
 	if entry then M._draft.remove(entry) end
 	return { ok = true }
