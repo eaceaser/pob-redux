@@ -59,6 +59,338 @@ fn build_state(engine: &Engine) -> Value {
 }
 
 #[test]
+fn special_jewel_drafts_preserve_native_data_through_edits_rollback_and_commit() {
+    let Some((engine, user_dir)) = boot("special-jewels") else {
+        return;
+    };
+    let poe1 = engine.call("version", &Value::Null).unwrap()["game"] == "poe1";
+    let socket = engine.eval(r#"
+        local candidates = {}
+        for id, node in pairs(launch.main.modes.BUILD.spec.nodes) do
+            if node.type == "Socket" and node.path and
+                (not data.clusterJewels or node.expansionJewel and node.expansionJewel.size == 2) then
+                candidates[#candidates + 1] = id
+            end
+        end
+        table.sort(candidates)
+        return assert(candidates[1], "missing reachable jewel socket")
+    "#).unwrap();
+    engine.call("plan_alloc", &json!({"id":socket})).unwrap();
+    engine.eval(r#"
+        function __edgeState(item)
+            local scalars = {}
+            for k, v in pairs(item.jewelData or {}) do
+                if type(v) == "number" or type(v) == "string" or type(v) == "boolean" then
+                    scalars[k] = v
+                end
+            end
+            return {
+                base = item.baseName, radius = item.jewelRadiusIndex or false,
+                skill = item.clusterJewelSkill or false, nodes = item.clusterJewelNodeCount or false,
+                variant = item.variant or false, jewelData = scalars,
+                conqueredBy = item.jewelData and item.jewelData.conqueredBy or false,
+                notables = item.jewelData and item.jewelData.clusterJewelNotables or false,
+                addedMods = item.jewelData and item.jewelData.clusterJewelAddedMods or false,
+            }
+        end
+    "#).unwrap();
+    let mut fixtures = Vec::new();
+    if poe1 {
+        for size in ["Small", "Medium", "Large"] {
+            fixtures.push((format!("{size} Cluster Jewel"), format!("Rarity: Rare\nEdge Cluster\n{size} Cluster Jewel\nCrafted: true\nItem Level: 85\nPrefix: {{range:0.371}}AfflictionJewelSmallPassivesHaveIncreasedEffect2\nImplicits: 0\n{{custom}}+17 to maximum Mana")));
+        }
+        for name in [
+            "Brutal Restraint",
+            "Elegant Hubris",
+            "Glorious Vanity",
+            "Lethal Pride",
+            "Militant Faith",
+        ] {
+            let raw = engine
+                .eval(&format!(
+                    r#"
+                for _, raw in ipairs(LoadModule("Data/Uniques/jewel")) do
+                    if raw:match("^%s*([^\n]+)") == "{name}" then
+                        return "Rarity: Unique\n" .. raw:gsub("^%s+", "")
+                    end
+                end
+                error("missing timeless fixture")
+            "#
+                ))
+                .unwrap();
+            fixtures.push((name.to_owned(), raw.as_str().unwrap().to_owned()));
+        }
+    } else {
+        for colour in ["Ruby", "Emerald", "Sapphire", "Diamond"] {
+            fixtures.push((format!("Time-Lost {colour}"), format!("Rarity: Rare\nEdge Radius\nTime-Lost {colour}\nCrafted: true\nItem Level: 85\nPrefix: {{range:0.371}}JewelRadiusMediumSize\nImplicits: 0\nUpgrades Radius to Medium\n{{custom}}+17 to maximum Mana")));
+        }
+    }
+    for (name, raw) in fixtures {
+        let raw = if name.contains("Cluster") {
+            engine.eval(&format!(
+                r#"local item = new("Item"):Item({})
+                item.clusterJewelSkill = item.clusterJewel.size == "Medium" and "affliction_area_damage" or next(item.clusterJewel.skills)
+                item.clusterJewelNodeCount = item.clusterJewel.maxNodes
+                if item.clusterJewel.size == "Medium" then
+                    item.suffixes[1] = {{modId = "AfflictionJewelSmallPassivesGrantAreaOfEffect2", range = 0.613}}
+                end
+                item.enchantModLines = {{
+                    {{line = "Adds " .. item.clusterJewelNodeCount .. " Passive Skills", crafted = true}},
+                    {{line = table.concat(item.clusterJewel.skills[item.clusterJewelSkill].enchant, "\n"), crafted = true}},
+                }}
+                if item.clusterJewel.size ~= "Small" then
+                    table.insert(item.enchantModLines, {{line = (item.clusterJewel.size == "Large" and "2" or "1") .. " Added Passive Skills are Jewel Sockets", crafted = true}})
+                end
+                item:Craft()
+                return item:BuildRaw()"#,
+                serde_json::to_string(&raw).unwrap()
+            )).unwrap().as_str().unwrap().to_owned()
+        } else {
+            raw
+        };
+        let before = build_state(&engine);
+        let mut draft = create(&engine, &raw);
+        assert!(draft["draftId"].is_string(), "{name}: {draft}");
+        engine
+            .eval(&format!(
+                r#"
+            __edgeItem = __bridge._draft.get({{draftId="{}",generation={}}}).item
+            __edgeBase = __edgeItem.base
+            __edgeCluster = __edgeItem.clusterJewel
+            __edgeInitialData = __edgeItem.jewelData
+        "#,
+                draft["draftId"].as_str().unwrap(),
+                draft["generation"]
+            ))
+            .unwrap();
+        let initial = engine.eval("return __edgeState(__edgeItem)").unwrap();
+        assert_eq!(
+            engine.call("item_draft_get", &target(&draft)).unwrap(),
+            draft,
+            "{name}"
+        );
+        assert_eq!(
+            engine
+                .eval("return __edgeItem.jewelData == __edgeInitialData")
+                .unwrap(),
+            true,
+            "{name}"
+        );
+        let operation = if name.contains("Cluster") {
+            let shape = engine.call("item_shape", &target(&draft)).unwrap();
+            let skill = shape["cluster"]["skills"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|skill| skill["id"] != shape["cluster"]["skill"])
+                .unwrap()["id"]
+                .clone();
+            json!({"operation":"shape","clusterSkill":skill,"clusterNodeCount":shape["cluster"]["minNodes"]})
+        } else if name.starts_with("Time-Lost") {
+            assert!(initial["radius"].is_number(), "{name}: {initial}");
+            json!({"operation":"affix","table":"prefixes","index":1,"modId":"JewelRadiusLargeSize","range":0.613})
+        } else {
+            assert!(
+                initial["conqueredBy"]["id"].is_number(),
+                "{name}: {initial}"
+            );
+            json!({"operation":"variant","picks":[2]})
+        };
+        let requested = operation.clone();
+        engine
+            .eval(
+                r#"
+            local preview = __bridge.item_preview
+            __bridge.item_preview = function(p)
+                __bridge.item_preview = preview
+                preview(p)
+                error("edge snapshot failure")
+            end
+        "#,
+            )
+            .unwrap();
+        let mut failed = target(&draft);
+        failed
+            .as_object_mut()
+            .unwrap()
+            .extend(operation.as_object().unwrap().clone());
+        assert!(
+            engine
+                .call("item_draft_customize", &failed)
+                .unwrap_err()
+                .to_string()
+                .contains("edge snapshot failure"),
+            "{name}"
+        );
+        assert_eq!(
+            engine.call("item_draft_get", &target(&draft)).unwrap(),
+            draft,
+            "{name}"
+        );
+        assert_eq!(
+            engine.eval("return __edgeState(__edgeItem)").unwrap(),
+            initial,
+            "{name}"
+        );
+        assert_eq!(engine.eval("return __edgeItem.jewelData == __edgeInitialData and __edgeItem.base == __edgeBase and __edgeItem.clusterJewel == __edgeCluster").unwrap(), true, "{name}");
+        draft = edit(&engine, &draft, operation);
+        if !name.contains("Cluster") && !name.starts_with("Time-Lost") {
+            let seed_line = engine
+                .eval(
+                    r#"
+                for index, line in ipairs(__edgeItem.explicitModLines) do
+                    if __edgeItem:CheckModLineVariant(line) and line.line:find("%(%d+%-%d+%)") then
+                        return index
+                    end
+                end
+                error("missing active timeless seed")
+            "#,
+                )
+                .unwrap();
+            let old_seed = engine
+                .eval("return __edgeItem.jewelData.conqueredBy.id")
+                .unwrap();
+            draft = edit(
+                &engine,
+                &draft,
+                json!({"operation":"modifier","section":"explicit","index":seed_line,"range":0.137}),
+            );
+            assert_ne!(
+                engine
+                    .eval("return __edgeItem.jewelData.conqueredBy.id")
+                    .unwrap(),
+                old_seed,
+                "{name}"
+            );
+        }
+        let changed = engine.eval("return __edgeState(__edgeItem)").unwrap();
+        assert_ne!(changed, initial, "{name}");
+        if name.contains("Cluster") {
+            assert_eq!(changed["skill"], requested["clusterSkill"], "{name}");
+            assert_eq!(changed["nodes"], requested["clusterNodeCount"], "{name}");
+        } else if name.starts_with("Time-Lost") {
+            assert_eq!(initial["radius"], 2, "{name}");
+            assert_eq!(changed["radius"], 3, "{name}");
+        }
+        assert_eq!(
+            engine
+                .eval("return __edgeState(new(\"Item\"):Item(__edgeItem:BuildRaw()))")
+                .unwrap(),
+            changed,
+            "{name}"
+        );
+        if name.contains("Cluster") {
+            assert!(
+                draft["raw"]
+                    .as_str()
+                    .unwrap()
+                    .contains("{range:0.371}AfflictionJewelSmallPassivesHaveIncreasedEffect2"),
+                "{name}"
+            );
+            if name == "Medium Cluster Jewel" {
+                assert!(
+                    draft["raw"]
+                        .as_str()
+                        .unwrap()
+                        .contains("AfflictionJewelSmallPassivesGrantAreaOfEffect2"),
+                    "{}",
+                    draft["raw"]
+                );
+                assert!(draft["customization"]["affixes"]["suffixes"][0]["options"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|option| {
+                        option["modIds"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!("AfflictionJewelSmallPassivesGrantAreaOfEffect2"))
+                            && option["label"].as_str().unwrap().contains("Retained")
+                    }));
+            }
+            assert!(
+                draft["raw"]
+                    .as_str()
+                    .unwrap()
+                    .contains("{custom}+17 to maximum Mana"),
+                "{name}"
+            );
+        }
+        assert_eq!(build_state(&engine), before, "{name}");
+        let mut commit = target(&draft);
+        commit["buildRevision"] = draft["rev"].clone();
+        let saved_slots = engine.call("list_slots", &Value::Null).unwrap();
+        let slot = draft["slots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|slot| {
+                saved_slots["slots"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|saved| saved["slot"] == slot["slot"] && saved["nodeId"] == socket)
+            })
+            .expect("allocated jewel socket missing from compatible slots")["slot"]
+            .clone();
+        commit["equip"] = json!(true);
+        commit["slot"] = slot.clone();
+        let saved = engine.call("item_draft_commit", &commit).unwrap();
+        assert_eq!(
+            engine
+                .eval(&format!(
+                    "return launch.main.modes.BUILD.itemsTab.items[{}] == __edgeItem",
+                    saved["itemId"]
+                ))
+                .unwrap(),
+            true,
+            "{name}"
+        );
+        assert_eq!(
+            engine.eval("return __edgeState(__edgeItem)").unwrap(),
+            changed,
+            "{name}"
+        );
+        assert_eq!(
+            engine
+                .call("item_raw", &json!({"itemId":saved["itemId"]}))
+                .unwrap()["raw"],
+            draft["raw"],
+            "{name}"
+        );
+        assert!(
+            engine.call("list_slots", &Value::Null).unwrap()["slots"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["slot"] == slot && entry["itemId"] == saved["itemId"]),
+            "{name}"
+        );
+        if name.contains("Cluster") {
+            assert!(
+                engine
+                    .eval("return __edgeItem.jewelData.clusterJewelValid")
+                    .unwrap()
+                    .is_number(),
+                "{name}"
+            );
+            assert_eq!(
+                engine
+                    .eval(&format!(
+                        "for _, graph in pairs(launch.main.modes.BUILD.spec.subGraphs) do if graph.parentSocket.id == {} then return true end end return false",
+                        socket
+                    ))
+                    .unwrap(),
+                true,
+                "{name}"
+            );
+        }
+    }
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
 fn draft_reads_reuse_the_native_item_and_edits_only_parse_natively() {
     let Some((engine, user_dir)) = boot("identity") else {
         return;
