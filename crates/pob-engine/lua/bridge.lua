@@ -4287,11 +4287,9 @@ local function resolveItem(p)
 		return item, true
 	end
 	if p.raw then
-		local item = new("Item"):Item(p.raw)
-		if not item.base then error("unrecognised item text", 0) end
-		return item, true
+		error("create an item draft before previewing raw text", 0)
 	end
-	error("params.itemId, params.db+name or params.raw is required", 0)
+	error("params.itemId, params.db+name or params.draftId is required", 0)
 end
 
 -- PoB's full item tooltip, including the "Equipping this item in X will give
@@ -4324,22 +4322,10 @@ do
 		return itemTooltip(item, dbMode, p)
 	end
 
-	M.item_prepare_preview = function(p)
-		ensureBuild(p)
-		if not p or type(p.raw) ~= "string" then
-			error("item text is required", 0)
-		end
-		local item
-		-- Capture PoB's candidate without updating the legacy display controls.
-		local tab = setmetatable({ SetDisplayItem = function(_, candidate) item = candidate end }, { __index = build.itemsTab })
-		tab:CreateDisplayItemFromRaw(p.raw, p.normalise ~= false)
-		return { raw = item and item:BuildRaw() }
-	end
-
 	M.item_preview = function(p)
 		ensureBuild(p)
-		if not p or (p.draftId == nil and (type(p.raw) ~= "string" or not p.raw:match("%S"))) then
-			error("item text is required", 0)
+		if not p or p.draftId == nil then
+			error("params.draftId is required", 0)
 		end
 		local item = resolveItem(p)
 		local slots = array({})
@@ -4476,19 +4462,11 @@ end
 
 local requireItem, commitItemEdit
 do
-	local requests = setmetatable({}, { __mode = "k" })
-	local drafts = setmetatable({}, { __mode = "k" })
 	requireItem = function(p)
 		ensureBuild(p)
 		if p and p.draftId ~= nil then return M._draft.get(p).item end
 		if p and p.raw ~= nil then
-			if p.itemId ~= nil then error("provide raw or itemId, not both", 0) end
-			if not requests[p] then
-				if type(p.raw) ~= "string" then error("raw item text is required", 0) end
-				requests[p] = resolveItem({ raw = p.raw })
-				drafts[requests[p]] = true
-			end
-			return requests[p]
+			error("create an item draft before customizing raw text", 0)
 		end
 		local item = build.itemsTab.items[tonumber(p and p.itemId) or -1]
 		if not item then error("unknown item id " .. tostring(p and p.itemId), 0) end
@@ -4496,7 +4474,7 @@ do
 	end
 	commitItemEdit = function(item)
 		item:BuildAndParseRaw()
-		if drafts[item] or M._draft.byItem[item] then return end
+		if M._draft.byItem[item] then return end
 		build.itemsTab:PopulateSlots()
 		build.itemsTab:AddUndoState()
 		refresh()

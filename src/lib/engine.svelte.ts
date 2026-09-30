@@ -1120,9 +1120,8 @@ export interface ItemDraftPreview extends ItemDraftTarget {
 }
 
 export type ItemTarget =
-  | { itemId: number; raw?: never; draftId?: never; draftRevision?: never; generation?: number }
-  | { raw: string; itemId?: never; draftId?: never; draftRevision?: never; generation: number }
-  | (ItemDraftTarget & { itemId?: never; raw?: never });
+  | { itemId: number; draftId?: never; draftRevision?: never; generation?: number }
+  | (ItemDraftTarget & { itemId?: never });
 export type ItemCustomizationEdit =
   | { operation: "props"; quality?: number; itemLevel?: number; corrupted?: boolean; catalyst?: number; catalystQuality?: number }
   | { operation: "affix"; table: "prefixes" | "suffixes"; index: number; modId: string; range?: number }
@@ -1650,12 +1649,8 @@ export const engine = {
   itemDbList: (opts: { db: "unique" | "rare"; query?: string; type?: string; limit?: number; offset?: number }) =>
     call<{ items: ItemDbRow[]; total: number; offset: number; types: { type: string; count: number }[] }>("item_db_list", opts),
   statDifferences: (show?: boolean) => call<{ show: boolean }>("stat_differences", show === undefined ? undefined : { show }),
-  itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; raw?: string; slotName?: string | false }) =>
+  itemTooltip: (opts: { itemId?: number; db?: "unique" | "rare"; name?: string; slotName?: string | false }) =>
     call<Tooltip & { rarity: string | null }>("item_tooltip", opts),
-  prepareItemPreview: (raw: string, generation: number, normalise: boolean) =>
-    call<{ raw?: string }>("item_prepare_preview", { raw, generation, normalise }),
-  itemPreview: (raw: string, generation: number) =>
-    call<{ tooltip: Tooltip; slots: { slot: string; label: string }[]; generation: number; rev: number }>("item_preview", { raw, generation }),
   createItemDraft: (raw: string, generation: number, normalise: boolean) =>
     call<ItemDraftPreview | null>("item_draft_create", { raw, generation, normalise }),
   itemDraft: (target: ItemDraftTarget) => call<ItemDraftPreview>("item_draft_get", target),

@@ -65,13 +65,6 @@ fn draft_reads_reuse_the_native_item_and_edits_only_parse_natively() {
     };
     let before = build_state(&engine);
     let draft = create(&engine, RING);
-    let prepared = engine
-        .call(
-            "item_prepare_preview",
-            &json!({"raw":RING,"normalise":false}),
-        )
-        .unwrap();
-    assert_eq!(draft["raw"], prepared["raw"]);
     assert_eq!(draft["raw"], draft["customization"]["raw"]);
     assert_eq!(draft["draftRevision"], 0);
     engine
@@ -256,6 +249,9 @@ fn failed_draft_edits_roll_back_and_stale_or_ambiguous_targets_are_rejected() {
         let mut params = target(&updated);
         params[conflicting] = json!(RING);
         assert!(engine.call("item_draft_get", &params).is_err());
+    }
+    for method in ["item_preview", "item_tooltip", "item_customization", "item_customize", "set_item_props"] {
+        assert!(engine.call(method, &json!({"raw":RING,"operation":"props","itemLevel":90})).is_err());
     }
     engine
         .eval(
