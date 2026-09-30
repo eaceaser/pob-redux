@@ -300,6 +300,158 @@ fn failed_draft_edits_roll_back_and_stale_or_ambiguous_targets_are_rejected() {
 }
 
 #[test]
+fn failed_draft_edits_restore_exact_native_state_without_reparsing() {
+    let Some((engine, user_dir)) = boot("exact-rollback") else {
+        return;
+    };
+    let before = build_state(&engine);
+    let raw = "Rarity: Rare\nPrecise Draft\nCrude Bow\nCrafted: true\nQuality: 23\nItem Level: 85\nPrefix: {range:0.12349}AddedPhysicalDamage2\nPrefix: {range:0.23456,0.87654}AddedPhysicalDamage3\nImplicits: 0\n{custom}+17 to maximum Mana";
+    let draft = create(&engine, raw);
+    engine.eval(&format!(r#"
+        __rollbackItem = __bridge._draft.get({{draftId="{}",generation={}}}).item
+        __rollbackPrefixes = __rollbackItem.prefixes
+        __rollbackPrefix = __rollbackPrefixes[1]
+        __rollbackPaired = __rollbackPrefixes[2]
+        __rollbackRanges = __rollbackPaired.range
+        __rollbackBase = __rollbackItem.base
+        __rollbackAffixes = __rollbackItem.affixes
+        __rollbackMods = __rollbackItem.baseModList
+        __rollbackRaw = __rollbackItem.raw
+        __rollbackClass = getmetatable(__rollbackItem)
+        __rollbackModsClass = getmetatable(__rollbackMods)
+        __rollbackProbeMeta = {{}}
+        __rollbackProbe = setmetatable({{value=0.12349, alias=__rollbackPrefix, item=__rollbackItem}}, __rollbackProbeMeta)
+        __rollbackProbe.self = __rollbackProbe
+        __rollbackItem.__rollbackProbe = __rollbackProbe
+        __rollbackParseCount = 0
+        local parse = __rollbackClass.ParseRaw
+        __rollbackClass.ParseRaw = function(self, ...)
+            __rollbackParseCount = __rollbackParseCount + 1
+            return parse(self, ...)
+        end
+        function __assertRollbackState()
+            assert(__rollbackItem.prefixes == __rollbackPrefixes)
+            assert(__rollbackItem.prefixes[1] == __rollbackPrefix)
+            assert(__rollbackItem.prefixes[2] == __rollbackPaired)
+            assert(__rollbackPrefix.range == 0.12349)
+            assert(__rollbackPaired.range == __rollbackRanges)
+            assert(__rollbackRanges[1] == 0.23456 and __rollbackRanges[2] == 0.87654)
+            assert(__rollbackItem.base == __rollbackBase)
+            assert(__rollbackItem.affixes == __rollbackAffixes)
+            assert(__rollbackItem.baseModList == __rollbackMods)
+            assert(__rollbackItem.raw == __rollbackRaw)
+            assert(getmetatable(__rollbackItem) == __rollbackClass)
+            assert(getmetatable(__rollbackMods) == __rollbackModsClass)
+            assert(__rollbackItem.__rollbackProbe == __rollbackProbe)
+            assert(__rollbackProbe.value == 0.12349)
+            assert(__rollbackProbe.self == __rollbackProbe)
+            assert(__rollbackProbe.alias == __rollbackPrefix)
+            assert(__rollbackProbe.item == __rollbackItem)
+            assert(getmetatable(__rollbackProbe) == __rollbackProbeMeta)
+            assert(__rollbackItem.__introducedByFailure == nil)
+            assert(__rollbackItem.itemLevel == 85 and __rollbackItem.quality == 23)
+            return true
+        end
+    "#, draft["draftId"].as_str().unwrap(), draft["generation"])).unwrap();
+    assert_eq!(engine.eval("return __assertRollbackState()").unwrap(), true);
+
+    let mut invalid = target(&draft);
+    invalid["operation"] = json!("rune");
+    invalid["index"] = json!(999);
+    invalid["name"] = json!("None");
+    assert!(
+        engine
+            .call("item_draft_customize", &invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("rune index out of range")
+    );
+    assert_eq!(
+        engine.eval("return __rollbackItem.prefixes[1].range").unwrap(),
+        json!(0.12349)
+    );
+    assert_eq!(engine.eval("return __rollbackParseCount").unwrap(), 0);
+    assert_eq!(engine.eval("return __assertRollbackState()").unwrap(), true);
+    assert_eq!(
+        engine.call("item_draft_get", &target(&draft)).unwrap(),
+        draft
+    );
+
+    engine
+        .eval(
+            r#"
+        local rebuild = __rollbackClass.BuildAndParseRaw
+        __rollbackClass.BuildAndParseRaw = function(self)
+            __rollbackClass.BuildAndParseRaw = rebuild
+            __rollbackPrefix.range = 0.99
+            __rollbackRanges[1] = 0.01
+            __rollbackProbe.value = 0.99
+            __rollbackProbe.alias = nil
+            setmetatable(__rollbackProbe, {})
+            self.__introducedByFailure = true
+            rebuild(self)
+            error("failure after native reparse")
+        end
+    "#,
+        )
+        .unwrap();
+    let mut mutation = target(&draft);
+    mutation["operation"] = json!("props");
+    mutation["itemLevel"] = json!(91);
+    assert!(
+        engine
+            .call("item_draft_customize", &mutation)
+            .unwrap_err()
+            .to_string()
+            .contains("failure after native reparse")
+    );
+    assert_eq!(engine.eval("return __rollbackParseCount").unwrap(), 1);
+    assert_eq!(engine.eval("return __assertRollbackState()").unwrap(), true);
+    assert_eq!(
+        engine.call("item_draft_get", &target(&draft)).unwrap(),
+        draft
+    );
+    assert_eq!(build_state(&engine), before);
+
+    engine
+        .eval(
+            r#"
+        local preview = __bridge.item_preview
+        __bridge.item_preview = function(p)
+            __bridge.item_preview = preview
+            preview(p)
+            error("failure calculating draft snapshot")
+        end
+    "#,
+        )
+        .unwrap();
+    assert!(
+        engine
+            .call("item_draft_customize", &mutation)
+            .unwrap_err()
+            .to_string()
+            .contains("failure calculating draft snapshot")
+    );
+    assert_eq!(engine.eval("return __rollbackParseCount").unwrap(), 2);
+    assert_eq!(engine.eval("return __assertRollbackState()").unwrap(), true);
+    assert_eq!(
+        engine.call("item_draft_get", &target(&draft)).unwrap(),
+        draft
+    );
+    assert_eq!(build_state(&engine), before);
+
+    let repaired = edit(&engine, &draft, json!({"operation":"props","itemLevel":91}));
+    assert_eq!(repaired["draftId"], draft["draftId"]);
+    assert_eq!(repaired["draftRevision"], 1);
+    assert_eq!(repaired["customization"]["itemLevel"], 91);
+    assert_eq!(engine.eval("return __rollbackParseCount").unwrap(), 3);
+    assert_eq!(engine.eval(&format!("return __rollbackItem == __bridge._draft.get({{draftId=\"{}\",generation={}}}).item", repaired["draftId"].as_str().unwrap(), repaired["generation"])).unwrap(), true);
+    assert_eq!(build_state(&engine), before);
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
 fn draft_handles_are_disposed_and_scoped_to_build_and_engine_lifetimes() {
     let Some((engine, user_dir)) = boot("lifetime") else {
         return;

@@ -4236,19 +4236,47 @@ do
 		M._draft.entries[entry.id], M._draft.byItem[entry.item] = nil, nil
 		M._draft.count = M._draft.count - 1
 	end
+	local function checkpoint(item)
+		local seen, saved = {}, {}
+		-- Native game definitions are shared, not mutable item state.
+		for _, key in ipairs({ "base", "affixes", "enchantments", "rareLikeUnique", "clusterJewel", "mutatedLines" }) do
+			if type(item[key]) == "table" then seen[item[key]] = true end
+		end
+		local function capture(tbl)
+			if seen[tbl] then return end
+			seen[tbl] = true
+			saved[tbl] = copyTableSafe(tbl, true, true)
+			for key, value in pairs(tbl) do
+				if type(key) == "table" then capture(key) end
+				if type(value) == "table" then capture(value) end
+			end
+		end
+		capture(item)
+		return function()
+			-- Restore original tables in place to retain aliases, cycles and native identity.
+			for tbl, fields in pairs(saved) do
+				wipeTable(tbl)
+				for key, value in pairs(fields) do rawset(tbl, key, value) end
+				setmetatable(tbl, getmetatable(fields))
+			end
+		end
+	end
 	function D.mutate(p, fn)
 		local entry = D.get(p, true)
 		if entry.editing then return fn(entry) end
-		local raw = entry.item:BuildRaw()
+		local restore = checkpoint(entry.item)
 		entry.editing = true
-		local ok, result = pcall(fn, entry)
+		local ok, result, changed = pcall(function()
+			local raw = entry.item:BuildRaw()
+			local result = fn(entry)
+			return result, entry.item:BuildRaw() ~= raw
+		end)
 		entry.editing = nil
 		if not ok then
-			-- Restore the same object if a native setter fails after changing fields.
-			entry.item:ParseRaw(raw)
+			restore()
 			error(result, 0)
 		end
-		if entry.item:BuildRaw() ~= raw then entry.revision = entry.revision + 1 end
+		if changed then entry.revision = entry.revision + 1 end
 		if type(result) == "table" then result.draftId, result.draftRevision = entry.id, entry.revision end
 		return result
 	end
