@@ -156,10 +156,10 @@
   }
 
   async function publishPreview(
-    result: Preview, stamp: number, revision: number, differences: boolean | null, preserveScroll = false,
+    result: Preview, stamp: number, differences: boolean | null, preserveScroll = false,
   ) {
     while (alive && stamp === previewStamp) {
-      if (revision === build.rev && differences === statDiff) {
+      if (result.rev === build.rev && differences === statDiff) {
         const restoreScroll = holdDetailScroll(preserveScroll ? detailPane : undefined);
         preview = result;
         restoreScroll();
@@ -167,7 +167,10 @@
         hideTip();
         return true;
       }
-      revision = build.rev;
+      if (result.rev > build.rev) {
+        await build.sync();
+        continue;
+      }
       differences = statDiff;
       result = await engine.itemDraft(draftTarget(result));
     }
@@ -183,7 +186,6 @@
     let adopted = false;
     try {
       if (!text.trim()) throw new Error(m.items_paste_empty());
-      const revision = build.rev;
       const differences = statDiff;
       created = await engine.createItemDraft(text, generation, normalise);
       if (!alive || stamp !== previewStamp) return false;
@@ -192,7 +194,7 @@
         return false;
       }
       const previous = preview;
-      adopted = await publishPreview(created, stamp, revision, differences);
+      adopted = await publishPreview(created, stamp, differences);
       if (adopted) releasePreview(previous);
       return adopted;
     } catch (e) {
@@ -211,10 +213,9 @@
     previewLoading = true;
     previewError = null;
     try {
-      const revision = build.rev;
       const differences = statDiff;
       const result = await engine.itemDraft(draftTarget(candidate));
-      await publishPreview(result, stamp, revision, differences, true);
+      await publishPreview(result, stamp, differences, true);
     } catch (e) {
       if (alive && stamp === previewStamp) previewError = String(e);
     } finally {
@@ -232,11 +233,10 @@
     previewError = null;
     let updated: Preview | null = null;
     try {
-      const revision = build.rev;
       const differences = statDiff;
       updated = await engine.customizeItemDraft(draftTarget(candidate), edit);
       if (alive && stamp === previewStamp) {
-        if (await publishPreview(updated, stamp, revision, differences, true)) return updated.customization;
+        if (await publishPreview(updated, stamp, differences, true)) return updated.customization;
       } else if (alive && preview?.draftId === updated.draftId) {
         preview = updated;
       }
