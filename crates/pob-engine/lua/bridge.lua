@@ -4362,6 +4362,11 @@ M.item_draft_create = function(p)
 	if M._draft.count >= 64 then error("too many item previews; discard an existing preview", 0) end
 	local item
 	local tab = setmetatable({ SetDisplayItem = function(_, candidate) item = candidate end }, { __index = build.itemsTab })
+	local copyName = IS_POE2 and "CopyAnointsAndAugments" or "CopyAnointsAndEldritchImplicits"
+	tab[copyName] = function(self, candidate, ...)
+		build.itemsTab[copyName](self, candidate, ...)
+		candidate.enchantModLines = copyTableSafe(candidate.enchantModLines, false, true)
+	end
 	tab:CreateDisplayItemFromRaw(p.raw, p.normalise ~= false)
 	if not item then return null end
 	M._draft.sequence = M._draft.sequence + 1

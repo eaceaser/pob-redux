@@ -59,6 +59,86 @@ fn build_state(engine: &Engine) -> Value {
 }
 
 #[test]
+fn poe1_pasted_influenced_amulet_anoints_are_independent_of_equipped_items() {
+    let Some((engine, user_dir)) = boot("anoint-isolation") else {
+        return;
+    };
+    if engine.call("version", &Value::Null).unwrap()["game"] != "poe1" {
+        drop(engine);
+        std::fs::remove_dir_all(user_dir).unwrap();
+        return;
+    }
+    let amulet = "Rarity: Rare\nAnoint Candidate\nJade Amulet\nShaper Item\nItem Level: 85\nImplicits: 0\n+40 to maximum Life";
+    let seed = create(&engine, amulet);
+    let mut params = target(&seed);
+    params["withNodes"] = json!(true);
+    let anoints = engine.call("item_anoints", &params).unwrap();
+    let original_node = &anoints["nodes"][0];
+    let replacement_node = &anoints["nodes"][1];
+    engine
+        .call("item_draft_dispose", &json!({"draftId":seed["draftId"]}))
+        .unwrap();
+    for change_anoint in [true, false] {
+        engine
+            .call("new_build", &json!({"name":"Anoint isolation"}))
+            .unwrap();
+        let equipped = engine.call(
+            "equip_item_raw",
+            &json!({"text":format!("Rarity: Rare\nEquipped Amulet\nJade Amulet\nItem Level: 85\nImplicits: 0\n{{enchant}}Allocates {}\n+70 to maximum Life", original_node["name"].as_str().unwrap()),"slot":"Amulet"}),
+        ).unwrap();
+        let equipped_target = json!({"itemId":equipped["itemId"]});
+        let original_raw = engine.call("item_raw", &equipped_target).unwrap();
+        let before = build_state(&engine);
+        let mut draft = engine
+            .call("item_draft_create", &json!({"raw":amulet,"normalise":true}))
+            .unwrap();
+        let original_anoint = format!("Allocates {}", original_node["name"].as_str().unwrap());
+        assert!(draft["raw"].as_str().unwrap().contains(&original_anoint));
+        assert_eq!(engine.eval(&format!(
+            "local draft = __bridge._draft.get({{draftId=\"{}\",generation={}}}).item; local equipped = launch.main.modes.BUILD.itemsTab.items[{}]; return draft.shaper and draft.enchantModLines ~= equipped.enchantModLines and draft.enchantModLines[1] ~= equipped.enchantModLines[1] and draft.enchantModLines[1].modList ~= equipped.enchantModLines[1].modList",
+            draft["draftId"].as_str().unwrap(), draft["generation"], equipped["itemId"],
+        )).unwrap(), true, "pasting must detach the copied anoint and its parsed modifiers");
+        if change_anoint {
+            draft = edit(
+                &engine,
+                &draft,
+                json!({"operation":"anoint","nodeId":replacement_node["id"],"slot":1}),
+            );
+            assert!(draft["raw"].as_str().unwrap().contains(&format!(
+                "Allocates {}",
+                replacement_node["name"].as_str().unwrap()
+            )));
+            assert_eq!(
+                engine.call("item_raw", &equipped_target).unwrap(),
+                original_raw,
+                "changing the draft anoint must not change the equipped amulet",
+            );
+            assert_eq!(build_state(&engine), before);
+        }
+        let mut commit = target(&draft);
+        commit["buildRevision"] = draft["rev"].clone();
+        commit["equip"] = json!(false);
+        let saved = engine.call("item_draft_commit", &commit).unwrap();
+        assert_eq!(
+            engine.call("item_raw", &equipped_target).unwrap(),
+            original_raw
+        );
+        assert_eq!(
+            engine
+                .call("item_raw", &json!({"itemId":saved["itemId"]}))
+                .unwrap()["raw"],
+            draft["raw"]
+        );
+        assert_eq!(engine.eval(&format!(
+            "local items = launch.main.modes.BUILD.itemsTab.items; return items[{}].enchantModLines ~= items[{}].enchantModLines",
+            saved["itemId"], equipped["itemId"],
+        )).unwrap(), true, "committed and equipped amulets must not share anoint tables");
+    }
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
 fn special_jewel_drafts_preserve_native_data_through_edits_rollback_and_commit() {
     let Some((engine, user_dir)) = boot("special-jewels") else {
         return;
