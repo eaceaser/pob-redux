@@ -237,7 +237,8 @@
       updated = await engine.customizeItemDraft(draftTarget(candidate), edit);
       if (alive && stamp === previewStamp) {
         if (await publishPreview(updated, stamp, differences, true)) return updated.customization;
-      } else if (alive && preview?.draftId === updated.draftId) {
+      }
+      if (alive && preview?.draftId === updated.draftId) {
         preview = updated;
       }
       return false;
