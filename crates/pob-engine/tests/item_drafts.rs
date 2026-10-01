@@ -59,6 +59,224 @@ fn build_state(engine: &Engine) -> Value {
 }
 
 #[test]
+fn failed_draft_commits_restore_build_ownership_and_allow_retry() {
+    let Some((engine, user_dir)) = boot("commit-rollback") else {
+        return;
+    };
+    for (owner, method, equip) in [
+        ("draft", "BuildModList", true),
+        ("items", "AddItem", true),
+        ("slot", "SetSelItemId", true),
+        ("items", "PopulateSlots", true),
+        ("items", "AddUndoState", true),
+        ("build", "RefreshStatList", true),
+        ("build", "RefreshStatList", false),
+    ] {
+        engine
+            .call("new_build", &json!({"name":"Commit rollback"}))
+            .unwrap();
+        let equipped = engine
+            .call("equip_item_raw", &json!({"text":RING,"slot":"Ring 1"}))
+            .unwrap();
+        engine
+            .call(
+                "set_item_props",
+                &json!({"itemId":equipped["itemId"],"itemLevel":81}),
+            )
+            .unwrap();
+        assert_eq!(engine.eval("local b=launch.main.modes.BUILD; b.itemsTab:Undo(); b.buildFlag=true; runCallback('OnFrame'); return #b.itemsTab.redo").unwrap(), 1);
+        let draft = create(&engine, &RING.replace("+70", "+90"));
+        let before = build_state(&engine);
+        engine
+            .eval(&format!(
+                r#"
+            local b = launch.main.modes.BUILD
+            local tab = b.itemsTab
+            __commitItem = __bridge._draft.get({{draftId="{}",generation={}}}).item
+            __commitSaved = tab.items[{}]
+            __commitOutput = b.calcsTab.mainOutput
+            __commitUndo, __commitRedo = tab.undo, tab.redo
+            __commitUndoCount = #tab.undo
+            __commitCount = __bridge._draft.count
+            local owners = {{draft=__commitItem,items=tab,slot=tab.slots["Ring 1"],build=b}}
+            __commitFaultOwner = owners["{owner}"]
+            __commitFaultOriginal = rawget(__commitFaultOwner, "{method}")
+            local original = __commitFaultOwner["{method}"]
+            __commitFaultOwner["{method}"] = function(self, ...)
+                original(self, ...)
+                error("commit fault after {method}")
+            end
+        "#,
+                draft["draftId"].as_str().unwrap(),
+                draft["generation"],
+                equipped["itemId"]
+            ))
+            .unwrap();
+        let mut commit = target(&draft);
+        commit["buildRevision"] = draft["rev"].clone();
+        commit["equip"] = json!(equip);
+        commit["slot"] = json!("Ring 1");
+        let error = engine
+            .call("item_draft_commit", &commit)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("commit fault after {method}")),
+            "{owner}.{method}: {error}"
+        );
+        engine
+            .eval(&format!(
+                "rawset(__commitFaultOwner, '{method}', __commitFaultOriginal); return true"
+            ))
+            .unwrap();
+        assert_eq!(
+            engine
+                .eval(&format!(
+                    r#"
+            local b = launch.main.modes.BUILD
+            local entry = __bridge._draft.get({{draftId="{}",generation={}}})
+            return entry.item == __commitItem and __commitItem.id == nil
+                and __bridge._draft.byItem[__commitItem] == entry
+                and __bridge._draft.count == __commitCount
+                and b.itemsTab.items[{}] == __commitSaved
+                and b.calcsTab.mainOutput == __commitOutput
+                and b.itemsTab.undo == __commitUndo and b.itemsTab.redo == __commitRedo
+        "#,
+                    draft["draftId"].as_str().unwrap(),
+                    draft["generation"],
+                    equipped["itemId"]
+                ))
+                .unwrap(),
+            true,
+            "{owner}.{method}"
+        );
+        assert_eq!(build_state(&engine), before, "{owner}.{method}");
+        assert_eq!(
+            engine.call("item_draft_get", &target(&draft)).unwrap(),
+            draft,
+            "{owner}.{method}"
+        );
+        let saved = engine.call("item_draft_commit", &commit).unwrap();
+        assert_eq!(engine.eval(&format!("return launch.main.modes.BUILD.itemsTab.items[{}] == __commitItem and __bridge._draft.byItem[__commitItem] == nil", saved["itemId"])).unwrap(), true);
+        assert_eq!(
+            engine.call("get_items", &Value::Null).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(engine.eval(&format!("local tab=launch.main.modes.BUILD.itemsTab; return tab.slots['Ring 1'].selItemId == {} and #tab.undo == __commitUndoCount + 1 and #tab.redo == 0", if equip { saved["itemId"].clone() } else { equipped["itemId"].clone() })).unwrap(), true);
+        assert!(engine.call("item_draft_get", &target(&draft)).is_err());
+    }
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
+fn failed_cluster_commits_restore_passive_graphs_and_socket_ownership() {
+    let Some((engine, user_dir)) = boot("cluster-commit-rollback") else {
+        return;
+    };
+    if engine.call("version", &Value::Null).unwrap()["game"] != "poe1" {
+        drop(engine);
+        std::fs::remove_dir_all(user_dir).unwrap();
+        return;
+    }
+    let socket = engine.eval(r#"
+        local candidates = {}
+        for id, node in pairs(launch.main.modes.BUILD.spec.nodes) do
+            if node.type == "Socket" and node.path and node.expansionJewel and node.expansionJewel.size == 2 then
+                candidates[#candidates + 1] = id
+            end
+        end
+        table.sort(candidates)
+        return assert(candidates[1])
+    "#).unwrap();
+    engine.call("plan_alloc", &json!({"id":socket})).unwrap();
+    let slot = format!("Jewel {socket}");
+    let raw = "Rarity: Rare\nRollback Cluster\nLarge Cluster Jewel\nItem Level: 85\nImplicits: 3\n{enchant}Adds 8 Passive Skills\n{enchant}2 Added Passive Skills are Jewel Sockets\n{enchant}Added Small Passive Skills grant: 12% increased Physical Damage\n+17 to maximum Mana";
+    let equipped = engine
+        .call("equip_item_raw", &json!({"text":raw,"slot":slot}))
+        .unwrap();
+    let node = engine
+        .eval(&format!(
+            r#"
+        local spec = launch.main.modes.BUILD.spec
+        for _, graph in pairs(spec.subGraphs) do
+            if graph.parentSocket.id == {socket} then
+                __commitGraph = graph
+                for _, node in pairs(graph.nodes) do
+                    if node.path and not node.alloc then return node.id end
+                end
+            end
+        end
+        error("missing reachable cluster node")
+    "#
+        ))
+        .unwrap();
+    engine.call("plan_alloc", &json!({"id":node})).unwrap();
+    let draft = create(&engine, &raw.replace("Adds 8", "Adds 10"));
+    let before = build_state(&engine);
+    engine.eval(&format!(r#"
+        local spec = launch.main.modes.BUILD.spec
+        __commitNode = spec.nodes[{node}]
+        __commitGraphKey = nil
+        for key, graph in pairs(spec.subGraphs) do
+            if graph.parentSocket.id == {socket} then __commitGraph, __commitGraphKey = graph, key end
+        end
+        __commitGraphMethod = rawget(spec, "BuildClusterJewelGraphs")
+        local original = spec.BuildClusterJewelGraphs
+        spec.BuildClusterJewelGraphs = function(self, ...)
+            original(self, ...)
+            error("cluster commit fault")
+        end
+    "#)).unwrap();
+    let mut commit = target(&draft);
+    commit["buildRevision"] = draft["rev"].clone();
+    commit["equip"] = json!(true);
+    commit["slot"] = json!(slot);
+    assert!(engine
+        .call("item_draft_commit", &commit)
+        .unwrap_err()
+        .to_string()
+        .contains("cluster commit fault"));
+    engine.eval("rawset(launch.main.modes.BUILD.spec, 'BuildClusterJewelGraphs', __commitGraphMethod); return true").unwrap();
+    assert_eq!(
+        engine
+            .eval(&format!(
+                r#"
+        local b = launch.main.modes.BUILD
+        return b.spec.subGraphs[__commitGraphKey] == __commitGraph
+            and b.spec.nodes[{node}] == __commitNode and __commitNode.alloc
+            and b.spec.jewels[{socket}] == {}
+            and b.itemsTab.slots["{slot}"].selItemId == {}
+    "#,
+                equipped["itemId"], equipped["itemId"]
+            ))
+            .unwrap(),
+        true
+    );
+    assert_eq!(build_state(&engine), before);
+    assert_eq!(
+        engine.call("item_draft_get", &target(&draft)).unwrap(),
+        draft
+    );
+    let saved = engine.call("item_draft_commit", &commit).unwrap();
+    assert_eq!(
+        engine
+            .eval(&format!(
+                "return launch.main.modes.BUILD.spec.jewels[{socket}] == {}",
+                saved["itemId"]
+            ))
+            .unwrap(),
+        true
+    );
+    assert!(engine.call("item_draft_get", &target(&draft)).is_err());
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
 fn poe1_pasted_influenced_amulet_anoints_are_independent_of_equipped_items() {
     let Some((engine, user_dir)) = boot("anoint-isolation") else {
         return;

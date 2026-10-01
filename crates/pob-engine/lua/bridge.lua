@@ -4235,13 +4235,22 @@ do
 		M._draft.entries[entry.id], M._draft.byItem[entry.item] = nil, nil
 		M._draft.count = M._draft.count - 1
 	end
-	local function checkpoint(item)
+	local function checkpoint(item, owner)
 		local seen, saved = {}, {}
-		for _, key in ipairs({ "base", "affixes", "enchantments", "rareLikeUnique", "clusterJewel", "mutatedLines" }) do
-			if type(item[key]) == "table" then seen[item[key]] = true end
+		local itemMeta = getmetatable(item)
+		if owner then
+			seen[main], seen[data] = true, true
+			if owner.data then seen[owner.data] = true end
+			for _, spec in ipairs(owner.treeTab.specList) do seen[spec.tree] = true end
+			seen[owner.calcsTab.calcs] = true
 		end
 		local function capture(tbl)
 			if seen[tbl] then return end
+			if getmetatable(tbl) == itemMeta then
+				for _, key in ipairs({ "base", "affixes", "enchantments", "rareLikeUnique", "clusterJewel", "mutatedLines" }) do
+					if type(tbl[key]) == "table" then seen[tbl[key]] = true end
+				end
+			end
 			seen[tbl] = true
 			saved[tbl] = copyTableSafe(tbl, true, true)
 			for key, value in pairs(tbl) do
@@ -4250,6 +4259,7 @@ do
 			end
 		end
 		capture(item)
+		if owner then capture(owner) end
 		return function()
 			for tbl, fields in pairs(saved) do
 				wipeTable(tbl)
@@ -4280,6 +4290,24 @@ do
 		result.draftId, result.draftRevision = entry.id, entry.revision
 		result.customization = customization or M.item_customization(target)
 		result.raw = result.customization.raw
+		return result
+	end
+	function D.commit(entry, slotName)
+		local item = entry.item
+		local restore = checkpoint(item, build)
+		local showErrMsg = rawget(launch, "ShowErrMsg")
+		local ok, result = pcall(function()
+			build.itemsTab:AddItem(item, true)
+			if slotName then build.itemsTab.slots[slotName]:SetSelItemId(item.id) end
+			build.itemsTab:PopulateSlots()
+			build.itemsTab:AddUndoState()
+			launch.ShowErrMsg = function(_, fmt, ...) error(string.format(fmt, ...), 0) end
+			refresh()
+			return { ok = true, itemId = item.id, name = item.name, slot = slotName }
+		end)
+		launch.ShowErrMsg = showErrMsg
+		if not ok then restore(); error(result, 0) end
+		D.remove(entry)
 		return result
 	end
 end
@@ -4405,13 +4433,7 @@ M.item_draft_commit = function(p)
 		if not slotName or not build.itemsTab.slots[slotName] then error("select a compatible item slot", 0) end
 		if not build.itemsTab:IsItemValidForSlot(item, slotName) then error(item.name .. " does not fit " .. slotName, 0) end
 	end
-	build.itemsTab:AddItem(item, true)
-	if slotName then build.itemsTab.slots[slotName]:SetSelItemId(item.id) end
-	build.itemsTab:PopulateSlots()
-	build.itemsTab:AddUndoState()
-	M._draft.remove(entry)
-	refresh()
-	return { ok = true, itemId = item.id, name = item.name, slot = slotName }
+	return M._draft.commit(entry, slotName)
 end
 
 -- PoB's Ctrl+D: whether item tooltips carry the "removing this item" lines.
