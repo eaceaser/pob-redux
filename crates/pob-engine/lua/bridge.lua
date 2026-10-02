@@ -4220,6 +4220,7 @@ end
 
 do
 	local D = M._draft
+	local accessSequence = 0
 	function D.get(p, mutation)
 		ensureBuild(p)
 		if p.raw ~= nil or p.itemId ~= nil or p.db ~= nil then error("provide only one item target", 0) end
@@ -4229,6 +4230,8 @@ do
 		if mutation and p.draftRevision ~= entry.revision then
 			error("item preview changed; refresh it before editing", 0)
 		end
+		accessSequence = accessSequence + 1
+		entry.lastUsed = accessSequence
 		return entry
 	end
 	function D.remove(entry)
@@ -4383,7 +4386,6 @@ end
 M.item_draft_create = function(p)
 	ensureBuild(p)
 	if not p or type(p.raw) ~= "string" or not p.raw:match("%S") then error("item text is required", 0) end
-	if M._draft.count >= 64 then error("too many item previews; discard an existing preview", 0) end
 	local item
 	local tab = setmetatable({ SetDisplayItem = function(_, candidate) item = candidate end }, { __index = build.itemsTab })
 	local copyName = IS_POE2 and "CopyAnointsAndAugments" or "CopyAnointsAndEldritchImplicits"
@@ -4400,6 +4402,13 @@ M.item_draft_create = function(p)
 	M._draft.count = M._draft.count + 1
 	local ok, result = pcall(M._draft.snapshot, entry)
 	if not ok then M._draft.remove(entry); error(result, 0) end
+	if M._draft.count > 64 then
+		local oldest
+		for _, candidate in pairs(M._draft.entries) do
+			if not oldest or candidate.lastUsed < oldest.lastUsed then oldest = candidate end
+		end
+		M._draft.remove(oldest)
+	end
 	return result
 end
 

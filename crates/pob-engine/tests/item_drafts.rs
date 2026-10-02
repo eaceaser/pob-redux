@@ -1199,6 +1199,142 @@ fn failed_draft_edits_restore_exact_native_state_without_reparsing() {
 }
 
 #[test]
+fn draft_capacity_evicts_least_recently_used_previews_without_touching_saved_items() {
+    let Some((engine, user_dir)) = boot("lru") else {
+        return;
+    };
+    let saved = engine
+        .call("equip_item_raw", &json!({"text":RING,"slot":"Ring 1"}))
+        .unwrap();
+    let saved_raw = engine
+        .call("item_raw", &json!({"itemId":saved["itemId"]}))
+        .unwrap();
+    let before = build_state(&engine);
+    let drafts: Vec<_> = (0..64).map(|_| create(&engine, RING)).collect();
+    engine
+        .eval(&format!(
+            "__evictedDraftItem = __bridge._draft.entries[\"{}\"].item",
+            drafts[1]["draftId"].as_str().unwrap()
+        ))
+        .unwrap();
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 64);
+    assert_eq!(create(&engine, "this is not an item"), Value::Null);
+    engine
+        .eval(
+            r#"
+        local snapshot = __bridge._draft.snapshot
+        __bridge._draft.snapshot = function(entry)
+            __bridge._draft.snapshot = snapshot
+            snapshot(entry)
+            error("failed new preview")
+        end
+    "#,
+        )
+        .unwrap();
+    assert!(engine
+        .call("item_draft_create", &json!({"raw":RING,"normalise":false}))
+        .unwrap_err()
+        .to_string()
+        .contains("failed new preview"));
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 64);
+    let active = edit(
+        &engine,
+        &drafts[0],
+        json!({"operation":"props","itemLevel":81}),
+    );
+    engine
+        .call("item_modifier_options", &target(&active))
+        .unwrap();
+    engine.call("item_tooltip", &target(&drafts[2])).unwrap();
+    let replacement = create(&engine, RING);
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 64);
+    assert_eq!(
+        engine
+            .eval("return __bridge._draft.byItem[__evictedDraftItem] == nil")
+            .unwrap(),
+        true
+    );
+    engine
+        .eval(
+            r#"
+        __evictedDraftWeak = setmetatable({ __evictedDraftItem }, { __mode = "v" })
+        __evictedDraftItem = nil
+        return true
+    "#,
+        )
+        .unwrap();
+    assert_eq!(
+        engine
+            .eval("jit.flush(); collectgarbage('collect'); return __evictedDraftWeak[1] == nil")
+            .unwrap(),
+        true
+    );
+    assert!(engine
+        .call("item_draft_get", &target(&drafts[1]))
+        .unwrap_err()
+        .to_string()
+        .contains("item preview expired"));
+    engine
+        .call(
+            "item_draft_dispose",
+            &json!({"draftId":drafts[1]["draftId"]}),
+        )
+        .unwrap();
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 64);
+    assert_eq!(
+        engine.call("item_draft_get", &target(&active)).unwrap(),
+        active
+    );
+    assert_eq!(
+        engine.call("item_draft_get", &target(&drafts[2])).unwrap(),
+        drafts[2]
+    );
+    assert_eq!(
+        engine
+            .call("item_draft_get", &target(&replacement))
+            .unwrap(),
+        replacement
+    );
+    create(&engine, RING);
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 64);
+    assert!(engine.call("item_draft_get", &target(&drafts[3])).is_err());
+    assert_eq!(
+        engine.call("item_draft_get", &target(&active)).unwrap(),
+        active
+    );
+    assert_eq!(build_state(&engine), before);
+    assert_eq!(
+        engine
+            .call("item_raw", &json!({"itemId":saved["itemId"]}))
+            .unwrap(),
+        saved_raw
+    );
+    let mut commit = target(&active);
+    commit["buildRevision"] = active["rev"].clone();
+    commit["equip"] = json!(false);
+    engine.call("item_draft_commit", &commit).unwrap();
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 63);
+    engine
+        .call(
+            "item_draft_dispose",
+            &json!({"draftId":replacement["draftId"]}),
+        )
+        .unwrap();
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 62);
+    engine
+        .call("new_build", &json!({"name":"After eviction"}))
+        .unwrap();
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 0);
+    assert!(engine
+        .call("item_draft_get", &target(&replacement))
+        .is_err());
+    create(&engine, RING);
+    assert_eq!(engine.eval("return __bridge._draft.count").unwrap(), 1);
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
 fn draft_handles_are_disposed_and_scoped_to_build_and_engine_lifetimes() {
     let Some((engine, user_dir)) = boot("lifetime") else {
         return;
