@@ -4226,7 +4226,7 @@ do
 		if p.generation ~= main.__reduxBuildGeneration then error("the build changed; paste the item again", 0) end
 		local entry = M._draft.entries[p.draftId]
 		if not entry then error("item preview expired; paste the item again", 0) end
-		if (mutation or p.draftRevision ~= nil) and p.draftRevision ~= entry.revision then
+		if mutation and p.draftRevision ~= entry.revision then
 			error("item preview changed; refresh it before editing", 0)
 		end
 		return entry

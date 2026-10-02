@@ -860,6 +860,98 @@ fn draft_crafting_preserves_independent_rolls_custom_mods_and_commit_identity() 
 }
 
 #[test]
+fn stale_draft_reads_return_current_state_but_writes_remain_revision_checked() {
+    let Some((engine, user_dir)) = boot("stale-reads") else {
+        return;
+    };
+    let raw = engine.eval(r#"
+        local item = new("Item"):Item("Rarity: Rare\nRead Bow\nCrude Bow\nCrafted: true\nItem Level: 85\nImplicits: 0")
+        item:Craft()
+        return item:BuildRaw()
+    "#).unwrap();
+    let original = create(&engine, raw.as_str().unwrap());
+    let updated = edit(
+        &engine,
+        &original,
+        json!({"operation":"props","itemLevel":84}),
+    );
+    assert_ne!(original["draftRevision"], updated["draftRevision"]);
+    let before = build_state(&engine);
+    let series = updated["customization"]["affixes"]["suffixes"][0]["options"][0]["id"].clone();
+    assert!(series.is_string());
+    for (method, extra) in [
+        ("item_draft_get", json!({})),
+        ("item_preview", json!({})),
+        ("item_tooltip", json!({})),
+        ("item_customization", json!({})),
+        ("item_modifier_options", json!({"source":"Suffix"})),
+        (
+            "item_affix_rolls",
+            json!({"table":"suffixes","index":1,"seriesId":series}),
+        ),
+        ("item_enchants", json!({})),
+        ("item_anoints", json!({"withNodes":true})),
+    ] {
+        let mut stale = target(&original);
+        let mut current = target(&updated);
+        stale
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        current
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        assert_eq!(
+            engine.call(method, &stale).unwrap(),
+            engine.call(method, &current).unwrap(),
+            "{method}"
+        );
+        stale["generation"] = json!(updated["generation"].as_u64().unwrap() + 1);
+        assert!(engine.call(method, &stale).is_err(), "{method}");
+    }
+    assert_eq!(
+        engine.call("item_draft_get", &target(&original)).unwrap(),
+        updated
+    );
+    for method in ["item_draft_customize", "item_draft_commit"] {
+        for missing in [false, true] {
+            let mut stale = target(&original);
+            if missing {
+                stale.as_object_mut().unwrap().remove("draftRevision");
+            }
+            stale["operation"] = json!("props");
+            stale["itemLevel"] = json!(90);
+            stale["buildRevision"] = updated["rev"].clone();
+            stale["equip"] = json!(false);
+            assert!(
+                engine
+                    .call(method, &stale)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("item preview changed"),
+                "{method}"
+            );
+        }
+    }
+    assert_eq!(
+        engine.call("item_draft_get", &target(&updated)).unwrap(),
+        updated
+    );
+    assert_eq!(build_state(&engine), before);
+    engine
+        .call("item_draft_dispose", &json!({"draftId":updated["draftId"]}))
+        .unwrap();
+    assert!(engine
+        .call("item_draft_get", &target(&original))
+        .unwrap_err()
+        .to_string()
+        .contains("item preview expired"));
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
 fn failed_draft_edits_roll_back_and_stale_or_ambiguous_targets_are_rejected() {
     let Some((engine, user_dir)) = boot("rollback") else {
         return;
