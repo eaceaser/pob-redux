@@ -744,7 +744,16 @@ fn draft_reads_reuse_the_native_item_and_edits_only_parse_natively() {
         &updated,
         json!({"operation":"props","itemLevel":84}),
     );
-    assert_eq!(unchanged, updated);
+    let mut expected = updated.clone();
+    expected["draftRevision"] = json!(2);
+    assert_eq!(unchanged, expected);
+    let mut stale = target(&updated);
+    stale["operation"] = json!("props");
+    stale["itemLevel"] = json!(90);
+    assert!(engine.call("item_draft_customize", &stale).is_err());
+    stale["buildRevision"] = updated["rev"].clone();
+    stale["equip"] = json!(false);
+    assert!(engine.call("item_draft_commit", &stale).is_err());
     assert_eq!(build_state(&engine), before);
     engine
         .call(
@@ -755,7 +764,7 @@ fn draft_reads_reuse_the_native_item_and_edits_only_parse_natively() {
     let changed_build = build_state(&engine);
     let refreshed = engine.call("item_draft_get", &target(&updated)).unwrap();
     assert_eq!(refreshed["raw"], updated["raw"]);
-    assert_eq!(refreshed["draftRevision"], updated["draftRevision"]);
+    assert_eq!(refreshed["draftRevision"], unchanged["draftRevision"]);
     assert_ne!(refreshed["rev"], updated["rev"]);
     assert_eq!(build_state(&engine), changed_build);
     drop(engine);

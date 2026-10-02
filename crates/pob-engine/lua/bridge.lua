@@ -4271,16 +4271,12 @@ do
 	function D.mutate(p, fn)
 		local entry = D.get(p, true)
 		local restore = checkpoint(entry.item)
-		local ok, result, changed = pcall(function()
-			local raw = entry.item:BuildRaw()
-			local result = fn(entry)
-			return result, entry.item:BuildRaw() ~= raw
-		end)
+		local ok, result = pcall(fn, entry)
 		if not ok then
 			restore()
 			error(result, 0)
 		end
-		if changed then entry.revision = entry.revision + 1 end
+		entry.revision = entry.revision + 1
 		if type(result) == "table" then result.draftId, result.draftRevision = entry.id, entry.revision end
 		return result
 	end
