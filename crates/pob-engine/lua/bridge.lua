@@ -2959,6 +2959,14 @@ local function resolveSlotName(name)
 	error("unknown slot " .. raw .. "; slots: " .. table.concat(names, ", "), 0)
 end
 
+local function addItem(item, slotName)
+	build.itemsTab:AddItem(item, true)
+	if slotName then build.itemsTab.slots[slotName]:SetSelItemId(item.id) end
+	build.itemsTab:PopulateSlots()
+	build.itemsTab:AddUndoState()
+	refresh()
+end
+
 M.equip_item_raw = function(p)
 	ensureBuild(p)
 	if not p or type(p.text) ~= "string" then error("params.text (raw item text) is required", 0) end
@@ -2979,10 +2987,7 @@ M.equip_item_raw = function(p)
 	if not slotName or not build.itemsTab.slots[slotName] then
 		error("no compatible slot found for this item; pass params.slot", 0)
 	end
-	build.itemsTab:AddItem(item, true)
-	build.itemsTab.slots[slotName]:SetSelItemId(item.id)
-	build.itemsTab:AddUndoState()
-	refresh()
+	addItem(item, slotName)
 	return { ok = true, itemId = item.id, slot = slotName, itemName = item.name }
 end
 
@@ -4296,12 +4301,8 @@ do
 		local restore = checkpoint(item, build)
 		local showErrMsg = rawget(launch, "ShowErrMsg")
 		local ok, result = pcall(function()
-			build.itemsTab:AddItem(item, true)
-			if slotName then build.itemsTab.slots[slotName]:SetSelItemId(item.id) end
-			build.itemsTab:PopulateSlots()
-			build.itemsTab:AddUndoState()
 			launch.ShowErrMsg = function(_, fmt, ...) error(string.format(fmt, ...), 0) end
-			refresh()
+			addItem(item, slotName)
 			return { ok = true, itemId = item.id, name = item.name, slot = slotName }
 		end)
 		launch.ShowErrMsg = showErrMsg
@@ -4495,10 +4496,7 @@ M.item_edit = function(p)
 		if not build.itemsTab.items[tonumber(p.itemId)] then error("unknown item id", 0) end
 		item.id = tonumber(p.itemId)
 	end
-	build.itemsTab:AddItem(item, true)
-	build.itemsTab:PopulateSlots()
-	build.itemsTab:AddUndoState()
-	refresh()
+	addItem(item)
 	return { ok = true, itemId = item.id, name = item.name }
 end
 
@@ -4629,7 +4627,7 @@ local function makeCraftedItem(base, rarity, title, range)
 	return item
 end
 
-local function equipFirstValid(item, slotName)
+local function firstValidSlot(item, slotName)
 	slotName = resolveSlotName(slotName)
 	if slotName then
 		local slot = build.itemsTab.slots[slotName]
@@ -4637,12 +4635,10 @@ local function equipFirstValid(item, slotName)
 		if not build.itemsTab:IsItemValidForSlot(item, slotName) then
 			error(item.baseName .. " does not fit slot " .. slotName, 0)
 		end
-		slot:SetSelItemId(item.id)
 		return slotName
 	end
 	for _, slot in ipairs(build.itemsTab.orderedSlots) do
 		if not slot.inactive and build.itemsTab:IsItemValidForSlot(item, slot.slotName) then
-			slot:SetSelItemId(item.id)
 			return slot.slotName
 		end
 	end
@@ -4654,11 +4650,7 @@ M.craft_item = function(p)
 	if not p or not p.type or not p.baseName then error("params.type and params.baseName are required", 0) end
 	local entry = findBase(p.type, p.baseName)
 	local item = makeCraftedItem(entry, p.rarity, p.title)
-	build.itemsTab:AddItem(item, true)
-	if p.equip then equipFirstValid(item) end
-	build.itemsTab:PopulateSlots()
-	build.itemsTab:AddUndoState()
-	refresh()
+	addItem(item, p.equip and firstValidSlot(item) or nil)
 	return { ok = true, itemId = item.id, name = item.name, crafted = item.crafted == true }
 end
 
@@ -4851,12 +4843,9 @@ M.craft_rare = function(p)
 		item:UpdateRunes()
 	end
 	item:BuildAndParseRaw()
-	build.itemsTab:AddItem(item, true)
 	local slotName
-	if p.equip ~= false then slotName = equipFirstValid(item, p.slot) end
-	build.itemsTab:PopulateSlots()
-	build.itemsTab:AddUndoState()
-	refresh()
+	if p.equip ~= false then slotName = firstValidSlot(item, p.slot) end
+	addItem(item, slotName)
 	local lines = array({})
 	for _, m in ipairs(item.explicitModLines) do lines[#lines + 1] = m.line end
 	return {
@@ -7943,13 +7932,10 @@ M.compare_copy_item = function(p)
 	local raw = theirItem.raw or theirItem:BuildRaw()
 	local item = new("Item"):Item(raw)
 	if not item.base then error("could not read that item", 0) end
-	build.itemsTab:AddItem(item, true)
 	if not build.itemsTab:IsItemValidForSlot(item, slotName) then
 		error(item.name .. " does not fit " .. slotName, 0)
 	end
-	build.itemsTab.slots[slotName]:SetSelItemId(item.id)
-	build.itemsTab:AddUndoState()
-	refresh()
+	addItem(item, slotName)
 	return { ok = true, slot = slotName, itemName = item.name }
 end
 

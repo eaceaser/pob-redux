@@ -59,6 +59,133 @@ fn build_state(engine: &Engine) -> Value {
 }
 
 #[test]
+fn single_item_insertions_update_equipment_undo_and_calculations_consistently() {
+    let Some((engine, user_dir)) = boot("item-insertion") else {
+        return;
+    };
+    let bases = engine.call("craft_bases", &Value::Null).unwrap();
+    let ring_type = bases["bases"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .find(|(_, entries)| {
+            entries
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["name"] == "Iron Ring")
+        })
+        .unwrap()
+        .0;
+    let mut first_id = Value::Null;
+    let mut first_xml = Value::Null;
+    let mut first_raw = Value::Null;
+    for (method, mut params, slot, replaces) in [
+        (
+            "equip_item_raw",
+            json!({"text":RING,"slot":"ring1"}),
+            Some("Ring 1"),
+            false,
+        ),
+        (
+            "item_edit",
+            json!({"text":RING.replace("+70", "+90")}),
+            Some("Ring 1"),
+            true,
+        ),
+        ("item_edit", json!({"text":RING}), None, false),
+        (
+            "craft_item",
+            json!({"type":ring_type,"baseName":"Iron Ring","equip":true}),
+            Some("Ring 1"),
+            false,
+        ),
+        (
+            "craft_rare",
+            json!({"type":ring_type,"baseName":"Iron Ring","slot":"ring2"}),
+            Some("Ring 2"),
+            false,
+        ),
+        (
+            "compare_copy_item",
+            json!({"slot":"Ring 1"}),
+            Some("Ring 1"),
+            false,
+        ),
+    ] {
+        if replaces {
+            params["itemId"] = first_id.clone();
+        }
+        if method == "compare_copy_item" {
+            engine
+                .call("compare_add", &json!({"xml":first_xml["xml"]}))
+                .unwrap();
+        }
+        let before = build_state(&engine);
+        let result = engine.call(method, &params).unwrap();
+        let after = build_state(&engine);
+        assert_eq!(result["ok"], true, "{method}");
+        assert_eq!(
+            after["undo"]["undo"].as_u64().unwrap(),
+            before["undo"]["undo"].as_u64().unwrap() + 1,
+            "{method}"
+        );
+        assert!(
+            after["build"]["rev"].as_u64().unwrap() > before["build"]["rev"].as_u64().unwrap(),
+            "{method}"
+        );
+        assert_eq!(
+            after["items"]["items"].as_array().unwrap().len(),
+            before["items"]["items"].as_array().unwrap().len() + usize::from(!replaces),
+            "{method}"
+        );
+        if let Some(slot) = slot {
+            let equipped = after["slots"]["slots"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["slot"] == slot)
+                .unwrap();
+            if method == "compare_copy_item" {
+                assert_eq!(
+                    engine
+                        .call("item_raw", &json!({"itemId":equipped["itemId"]}))
+                        .unwrap(),
+                    first_raw
+                );
+            } else {
+                assert_eq!(equipped["itemId"], result["itemId"], "{method}");
+            }
+        }
+        if replaces {
+            assert_eq!(result["itemId"], first_id);
+            assert!(engine
+                .call("item_raw", &json!({"itemId":first_id}))
+                .unwrap()["raw"]
+                .as_str()
+                .unwrap()
+                .contains("+90 to maximum Life"));
+        }
+        if method == "equip_item_raw" {
+            first_id = result["itemId"].clone();
+            first_xml = engine.call("save_build_xml", &Value::Null).unwrap();
+            first_raw = engine
+                .call("item_raw", &json!({"itemId":first_id}))
+                .unwrap();
+        }
+        if method == "item_edit" && !replaces {
+            assert!(after["slots"]["slots"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|entry| entry["itemId"] != result["itemId"]));
+        }
+    }
+    drop(engine);
+    std::fs::remove_dir_all(user_dir).unwrap();
+}
+
+#[test]
 fn failed_draft_commits_restore_build_ownership_and_allow_retry() {
     let Some((engine, user_dir)) = boot("commit-rollback") else {
         return;
